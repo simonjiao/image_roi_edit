@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roi-image-edit"
+version = "0.1.0"
+description = "Iterative ROI image text replacement with local validation and packaged visual prompts."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+classifiers = [
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+dependencies = [
+  "Pillow>=10.0.0",
+  "numpy>=2.0.0",
+  "opencv-python>=4.9.0",
+]
+
+[project.scripts]
+roi-image-edit = "roi_image_edit.cli:main"
+roi-image-edit-web = "roi_image_edit.web_app:main"
+roi-image-edit-run = "roi_image_edit.iterative_pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roi_image_edit = [
+  "prompts/*.txt",
+  "prompts/*.json",
+  "prompts/*.md",
+]

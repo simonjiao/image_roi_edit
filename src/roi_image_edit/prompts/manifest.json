@@ -1,0 +1,11 @@
+{
+  "prompts_directory": "src/roi_image_edit/prompts",
+  "files": [
+    "master_prompt.txt",
+    "candidate_rank_prompt.txt",
+    "tuning_prompt.txt",
+    "font_size_prompt.txt",
+    "darkness_blur_prompt.txt",
+    "final_acceptance_prompt.txt"
+  ]
+}

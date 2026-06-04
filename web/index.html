@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ROI Image Edit</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">ROI Image Edit</div>
+      <label class="upload-button">
+        上传图片
+        <input id="fileInput" type="file" accept="image/*" multiple />
+      </label>
+      <button id="processButton" class="primary-button" disabled>处理全部</button>
+      <div id="statusText" class="status-text">等待图片</div>
+    </header>
+
+    <main id="imageList" class="image-list"></main>
+
+    <template id="imageTemplate">
+      <section class="work-item">
+        <div class="work-header">
+          <div class="file-name"></div>
+          <button class="remove-button" type="button" title="移除">×</button>
+        </div>
+        <div class="panes">
+          <div class="pane source-pane">
+            <div class="pane-title">原图</div>
+            <div class="canvas-shell">
+              <canvas class="source-canvas"></canvas>
+            </div>
+          </div>
+          <div class="pane result-pane">
+            <div class="pane-title">修改后</div>
+            <div class="result-shell">
+              <div class="empty-result">未处理</div>
+              <img class="result-image" alt="" />
+              <div class="vision-status"></div>
+              <button class="drawer-toggle" type="button" title="候选图">&gt;&gt;&gt;</button>
+              <aside class="candidate-drawer">
+                <div class="drawer-title">候选图</div>
+                <div class="candidate-list"></div>
+              </aside>
+            </div>
+          </div>
+        </div>
+        <div class="controls">
+          <input class="instruction-input" placeholder="旧文字替换为新文字" />
+          <button class="secondary-button clear-rects" type="button">清空矩形</button>
+          <div class="region-count">0 个矩形</div>
+        </div>
+      </section>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

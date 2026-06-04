@@ -1,0 +1,12 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+output/
+logs/
+extracted/
+fonts/*
+!fonts/.gitkeep
+.DS_Store
+.idea/

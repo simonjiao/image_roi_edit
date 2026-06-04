@@ -1,0 +1,42 @@
+请只比较字体和字号，不评价背景修补算法。
+
+输入包括：
+1. 原图；
+2. 多个字体/字号候选图；
+3. 每个候选图的字体名称和字号参数；
+4. 代码硬校验报告。
+
+判断重点：
+1. 字体结构是否接近原图；
+2. 是否接近打印宋体/仿宋风格；
+3. 是否过于现代、过于黑体化、过于规整；
+4. 字号是否接近 source_text 旧文字的实际视觉高度；
+5. 新字是否与左侧“名：”比例协调；
+6. 笔画粗细是否接近原字；
+7. 小尺寸下是否自然。
+
+注意：
+这里的 px 是 Pillow/FreeType 的名义字号，不等于最终黑色字形的实际像素高度。
+请根据视觉效果判断，而不是只根据参数判断。
+
+输出 JSON：
+
+{
+  "best_font": "字体名称",
+  "best_font_size": 26,
+  "reason": "为什么选择该字体和字号",
+  "font_rejections": {
+    "字体名称": "主要问题"
+  },
+  "font_size_findings": {
+    "24": "too_small / ok / too_large",
+    "25": "too_small / ok / too_large",
+    "26": "too_small / ok / too_large",
+    "27": "too_small / ok / too_large",
+    "28": "too_small / ok / too_large"
+  },
+  "suggested_next": {
+    "font": "字体名称",
+    "font_size": 26
+  }
+}

@@ -1,0 +1,37 @@
+请只比较新文字的黑度、灰度边缘和模糊程度。
+
+输入包括：
+1. 原图；
+2. 多个透明度/模糊半径候选图；
+3. 每个候选图的 opacity 和 blur 参数；
+4. 代码硬校验报告。
+
+判断重点：
+1. 新字是否比原字明显更黑；
+2. 新字是否比原字明显更浅；
+3. 新字边缘是否过锐，像后贴上去的；
+4. 新字是否过糊，导致可读性下降；
+5. 新字边缘灰度是否接近原图扫描/拍照效果；
+6. 新字是否与左侧“名：”的黑度协调；
+7. 背景中是否存在旧字残影。
+
+不要选择纯黑、最清楚的版本。
+请选择最接近原图清晰程度和灰边效果的版本。
+
+输出 JSON：
+
+{
+  "best_opacity": 0.86,
+  "best_blur": 0.5,
+  "reason": "为什么选择该透明度和模糊半径",
+  "visual_findings": {
+    "darkness": "ok / too_dark / too_light",
+    "edge_gray": "ok / too_hard / too_soft",
+    "sharpness": "ok / too_sharp / too_blurry",
+    "integration": "ok / looks_pasted"
+  },
+  "suggested_next": {
+    "opacity": 0.86,
+    "blur": 0.5
+  }
+}
