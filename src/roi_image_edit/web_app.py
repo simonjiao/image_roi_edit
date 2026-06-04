@@ -33,6 +33,7 @@ from roi_image_edit.iterative_pipeline import (
     dark_runs,
     dedupe_params,
     default_char_offsets,
+    draw_replacement_layer,
     extra_source_slot_cleanup_issues,
     extra_source_slot_cleanup_metrics,
     find_best_candidate_from_model,
@@ -41,6 +42,7 @@ from roi_image_edit.iterative_pipeline import (
     font_style_gate,
     font_style_score,
     generate_candidates,
+    gray_band_counts,
     hard_check,
     is_mostly_cjk,
     local_score,
@@ -217,8 +219,35 @@ def auto_orient_for_instruction(
 
 
 def parse_instruction(text: str) -> tuple[str, str]:
+    details = parse_instruction_details(text)
+    return details["source_text"], details["target_text"]
+
+
+def parse_instruction_details(text: str) -> dict[str, Any]:
     raw = " ".join(str(text or "").strip().split())
     op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|->|=>|→"
+    field_aliases = sorted(
+        (alias for aliases in FIELD_ALIASES.values() for alias in aliases),
+        key=len,
+        reverse=True,
+    )
+    field_alias_pattern = "|".join(re.escape(alias) for alias in field_aliases)
+    field_only_pattern = (
+        rf"^(?P<field>{field_alias_pattern})\s*"
+        r"(?:修改|调整|更改|变更|替换|改|换)\s*(?:为|成|到)?\s*(?P<dst>.+)$"
+        if field_alias_pattern
+        else ""
+    )
+    if field_only_pattern:
+        field_match = re.search(field_only_pattern, raw, flags=re.IGNORECASE)
+        if field_match:
+            return {
+                "raw": raw,
+                "field_key": infer_instruction_field(field_match.group("field")),
+                "source_text": "",
+                "target_text": cleanup_instruction_part(field_match.group("dst")),
+                "source_explicit": False,
+            }
     patterns = (
         rf"把\s*(?P<src>.+?)\s*(?:{op_pattern})\s*(?P<dst>.+)",
         rf"(?P<src>.+?)\s*(?:{op_pattern})\s*(?P<dst>.+)",
@@ -226,13 +255,26 @@ def parse_instruction(text: str) -> tuple[str, str]:
     for pattern in patterns:
         match = re.search(pattern, raw)
         if match:
-            source = cleanup_instruction_part(strip_field_prefix(match.group("src")))
+            raw_source = cleanup_instruction_part(match.group("src"))
+            source = cleanup_instruction_part(strip_field_prefix(raw_source))
             target = cleanup_instruction_part(strip_field_prefix(match.group("dst")))
             if source and target:
-                return source, target
+                return {
+                    "raw": raw,
+                    "field_key": infer_instruction_field(raw) or infer_instruction_field(raw_source),
+                    "source_text": source,
+                    "target_text": target,
+                    "source_explicit": True,
+                }
     if raw:
-        return "", cleanup_instruction_part(raw)
-    return "", ""
+        return {
+            "raw": raw,
+            "field_key": infer_instruction_field(raw),
+            "source_text": "",
+            "target_text": cleanup_instruction_part(raw),
+            "source_explicit": False,
+        }
+    return {"raw": "", "field_key": None, "source_text": "", "target_text": "", "source_explicit": False}
 
 
 def cleanup_instruction_part(value: str) -> str:
@@ -241,6 +283,7 @@ def cleanup_instruction_part(value: str) -> str:
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("姓名", "名字", "患者姓名", "姓名名", "name"),
+    "receive_time": ("接收时间", "接受时间", "采样时间", "收样时间", "receive time"),
     "date": ("日期", "时间", "检查日期", "报告日期", "出生日期", "date"),
     "age": ("年龄", "岁数", "age"),
 }
@@ -1069,6 +1112,83 @@ def source_text_body_y_bounds(
     return body_y1, body_y2
 
 
+def non_cjk_value_slot_after_label(
+    img: Image.Image,
+    roi: tuple[int, int, int, int],
+    *,
+    source_text: str,
+    target_text: str,
+) -> tuple[TextRun, ...]:
+    basis_text = source_text or target_text
+    if not basis_text or is_mostly_cjk(basis_text):
+        return ()
+
+    best: tuple[float, TextRun] | None = None
+    best_line_fallback: tuple[float, TextRun] | None = None
+    for threshold in (150, 135, 120, 165):
+        components = merge_overlapping_text_components(
+            tuple(
+                sorted(
+                    dominant_text_line(component_text_runs(img, roi, threshold=threshold), roi),
+                    key=lambda item: item.x1,
+                )
+            )
+        )
+        if len(components) < 2:
+            continue
+        heights = [text_run_height(run) for run in components]
+        median_h = float(np.median(heights)) if heights else 1.0
+        line_value = merge_text_runs(tuple(components))
+        if line_value is not None:
+            line_w = line_value.x2 - line_value.x1
+            line_h = line_value.y2 - line_value.y1
+            if line_w >= max(12.0, median_h * 0.8) and line_h >= max(6.0, median_h * 0.35):
+                line_score = line_value.area * 0.06 + line_w * 0.22 - abs(threshold - 150) * 0.03
+                if best_line_fallback is None or line_score > best_line_fallback[0]:
+                    best_line_fallback = (line_score, line_value)
+        for idx, separator in enumerate(components):
+            if idx == 0 or not is_colon_like_run(separator, median_h):
+                continue
+            label = components[idx - 1]
+            if separator.x1 - label.x2 > max(22.0, median_h * 0.95):
+                continue
+
+            value_runs: list[TextRun] = []
+            last_x2 = separator.x2
+            for run in components[idx + 1 :]:
+                gap = run.x1 - last_x2
+                if value_runs:
+                    current_center_y = float(np.median([(item.y1 + item.y2) / 2.0 for item in value_runs]))
+                    run_center_y = (run.y1 + run.y2) / 2.0
+                    if abs(run_center_y - current_center_y) > max(8.0, median_h * 0.50):
+                        break
+                if value_runs and gap > max(30.0, median_h * 1.45):
+                    break
+                if not value_runs and gap > max(38.0, median_h * 1.85):
+                    break
+                if is_colon_like_run(run, median_h) and value_runs and gap > median_h * 0.45:
+                    break
+                value_runs.append(run)
+                last_x2 = run.x2
+            if not value_runs:
+                continue
+
+            value = merge_text_runs(tuple(value_runs))
+            if value is None:
+                continue
+            value_w = value.x2 - value.x1
+            value_h = value.y2 - value.y1
+            if value_w < max(12.0, median_h * 0.8) or value_h < max(6.0, median_h * 0.35):
+                continue
+            score = value.area * 0.08 + value_w * 0.28 - abs((value.y1 + value.y2) / 2.0 - (roi[1] + roi[3]) / 2.0)
+            score -= abs(threshold - 150) * 0.03
+            if best is None or score > best[0]:
+                best = (score, value)
+    if best is not None:
+        return (best[1],)
+    return (best_line_fallback[1],) if best_line_fallback is not None else ()
+
+
 def component_slots_for_region(
     img: Image.Image,
     roi: tuple[int, int, int, int],
@@ -1081,6 +1201,14 @@ def component_slots_for_region(
     desired_count = source_count or target_count
     if desired_count <= 0:
         return ()
+    non_cjk_slot = non_cjk_value_slot_after_label(
+        img,
+        roi,
+        source_text=source_text,
+        target_text=target_text,
+    )
+    if non_cjk_slot:
+        return non_cjk_slot
     component_label_slots = source_slots_after_label_components(
         img,
         roi,
@@ -1322,6 +1450,154 @@ def name_field_candidate_rois(
     return tuple(deduped)
 
 
+def inferred_source_placeholder_for_field(
+    field_key: str | None,
+    target_text: str,
+    value_span_width: int,
+    median_h: float,
+) -> str:
+    compact_target = re.sub(r"\s+", "", str(target_text or ""))
+    if field_key == "age":
+        return "00岁" if "岁" in compact_target else "00"
+    if field_key in {"receive_time", "date"}:
+        looks_datetime_width = value_span_width >= max(140, int(round(median_h * 7.8)))
+        if field_key == "receive_time" or looks_datetime_width:
+            return "0000-00-00 00:00:00"
+        return "0000-00-00"
+    return "0" * max(1, len(text_chars(target_text)))
+
+
+def field_value_candidate_rois(
+    img: Image.Image,
+    *,
+    field_key: str | None,
+    target_text: str,
+) -> tuple[tuple[float, tuple[int, int, int, int], str], ...]:
+    if not field_key:
+        return ()
+
+    image_w, image_h = img.size
+    scored: list[tuple[float, tuple[int, int, int, int], str]] = []
+    for group in group_page_text_lines(page_text_components(img)):
+        components = merge_overlapping_text_components(group)
+        if len(components) < 3:
+            continue
+        heights = [text_run_height(run) for run in components]
+        median_h = float(np.median(heights)) if heights else 1.0
+        min_label_h = max(8.0, median_h * 0.48)
+        max_first_gap = max(36.0, median_h * 1.75)
+        max_inner_gap = max(28.0, median_h * 1.35)
+        for idx, separator in enumerate(components):
+            if idx == 0 or not is_colon_like_run(separator, median_h):
+                continue
+            label = components[idx - 1]
+            if text_run_height(label) < min_label_h:
+                continue
+            if separator.x1 - label.x2 > max(22.0, median_h * 0.95):
+                continue
+
+            value_runs: list[TextRun] = []
+            next_field_x = image_w
+            last_x2 = separator.x2
+            for run in components[idx + 1 :]:
+                gap = run.x1 - last_x2
+                if value_runs:
+                    current_centers = [(item.y1 + item.y2) / 2.0 for item in value_runs]
+                    current_center_y = float(np.median(current_centers))
+                    run_center_y = (run.y1 + run.y2) / 2.0
+                    if abs(run_center_y - current_center_y) > max(8.0, median_h * 0.50):
+                        next_field_x = run.x1
+                        break
+                if value_runs and (
+                    gap > max_inner_gap
+                    or (is_colon_like_run(run, median_h) and run.x1 - value_runs[-1].x2 > median_h * 0.45)
+                ):
+                    next_field_x = run.x1
+                    break
+                if not value_runs and gap > max_first_gap:
+                    break
+                if text_run_height(run) < max(5.0, median_h * 0.28) and (run.x2 - run.x1) < median_h * 0.55:
+                    continue
+                value_runs.append(run)
+                last_x2 = run.x2
+
+            if not value_runs:
+                continue
+            value_x1 = min(run.x1 for run in value_runs)
+            value_y1 = min(run.y1 for run in value_runs)
+            value_x2 = max(run.x2 for run in value_runs)
+            value_y2 = max(run.y2 for run in value_runs)
+            value_w = value_x2 - value_x1
+            value_h = value_y2 - value_y1
+            if value_w < max(12.0, median_h * 0.8) or value_h < max(6.0, median_h * 0.35):
+                continue
+
+            source_placeholder = inferred_source_placeholder_for_field(
+                field_key,
+                target_text,
+                value_w,
+                median_h,
+            )
+            if field_key in {"receive_time", "date"}:
+                min_date_width = max(70.0, median_h * 3.8)
+                if value_w < min_date_width:
+                    continue
+            if field_key == "age" and value_w > max(95.0, median_h * 4.2):
+                continue
+
+            pad_x = max(8, int(round(median_h * 0.45)))
+            pad_y = max(4, int(round(median_h * 0.24)))
+            right = min(image_w, value_x2 + max(4, int(round(median_h * 0.24))))
+            if field_key == "receive_time" and source_placeholder.startswith("0000-00-00 00"):
+                estimated_full_width = int(round(value_w * 1.58))
+                right = max(right, min(image_w, value_x1 + estimated_full_width))
+            if next_field_x < right:
+                right = max(value_x2, next_field_x - 2)
+                if field_key == "receive_time" and source_placeholder.startswith("0000-00-00 00"):
+                    right = max(right, min(image_w, value_x1 + estimated_full_width))
+            roi = clamp_box(
+                (
+                    max(0, value_x1 - max(3, int(round(median_h * 0.16)))),
+                    max(0, value_y1 - pad_y),
+                    min(image_w, right),
+                    min(image_h, value_y2 + pad_y),
+                ),
+                img.size,
+            )
+            if roi[2] - roi[0] < 24 or roi[3] - roi[1] < 12:
+                continue
+
+            score = 0.0
+            line_y = (roi[1] + roi[3]) / 2.0
+            if field_key == "receive_time":
+                score -= min(80.0, max(0.0, separator.x1 - image_w * 0.50) * 0.18)
+                score += abs(line_y - image_h * 0.12) * 0.55
+                if line_y > image_h * 0.25:
+                    score += 100.0
+                if line_y > image_h * 0.40:
+                    score += 120.0
+                score -= min(value_w, median_h * 11.5) * 0.22
+                if separator.x1 < image_w * 0.50:
+                    score += 80.0
+            elif field_key == "date":
+                score += abs(line_y - image_h * 0.16) * 0.05
+                score -= min(value_w, median_h * 8.0) * 0.12
+            elif field_key == "age":
+                score += abs(separator.x1 - image_w * 0.12) * 0.08
+                score += value_w * 0.18
+            score += (roi[2] - roi[0]) * 0.02
+            scored.append((score, roi, source_placeholder))
+
+    deduped: list[tuple[float, tuple[int, int, int, int], str]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for item in sorted(scored, key=lambda value: value[0]):
+        if item[1] in seen:
+            continue
+        seen.add(item[1])
+        deduped.append(item)
+    return tuple(deduped[:12])
+
+
 def auto_region_score(
     plan: RenderPlan,
     *,
@@ -1342,7 +1618,10 @@ def auto_region_score(
     slot_span = max(1, slots[-1].x2 - slots[0].x1)
     target_w = max(1, plan.target_roi[2] - plan.target_roi[0])
     search_w = max(1, plan.search_roi[2] - plan.search_roi[0])
-    max_target_w = min(search_w * 0.72, max(slot_span * 2.5, slot_span * target_count / max(1, source_count) + 40))
+    if not is_mostly_cjk(source_text or target_text) and len(slots) == 1:
+        max_target_w = search_w
+    else:
+        max_target_w = min(search_w * 0.72, max(slot_span * 2.5, slot_span * target_count / max(1, source_count) + 40))
     if target_w > max_target_w:
         return None
 
@@ -1402,66 +1681,89 @@ def auto_select_regions_for_instruction(
     source_text: str,
     target_text: str,
 ) -> list[dict[str, Any]]:
-    if not text_chars(source_text):
-        raise ValueError(
-            "自动选择 ROI 需要明确旧文字，例如：字段 旧文字调整为新文字。"
-        )
     field_key = infer_instruction_field(instruction)
     font_candidates = find_font_candidates(font_source="recommended")
-    font_candidates, _rejected = filter_fonts_by_required_text(font_candidates, source_text)
+    font_filter_text = source_text or target_text
+    font_candidates, _rejected = filter_fonts_by_required_text(font_candidates, font_filter_text)
     shape_limit = 70.0 if is_mostly_cjk(source_text) else 105.0
 
     def score_candidate_rois(
         candidate_rois: tuple[tuple[int, int, int, int], ...],
-    ) -> list[tuple[float, tuple[int, int, int, int], RenderPlan]]:
-        scored: list[tuple[float, tuple[int, int, int, int], RenderPlan]] = []
+        *,
+        source_override: str | None = None,
+    ) -> list[tuple[float, tuple[int, int, int, int], RenderPlan, str]]:
+        scored: list[tuple[float, tuple[int, int, int, int], RenderPlan, str]] = []
+        effective_source = source_override if source_override is not None else source_text
         for roi in candidate_rois:
             try:
                 plan = build_region_plan(
                     img,
                     roi,
-                    source_text=source_text,
+                    source_text=effective_source,
                     target_text=target_text,
                 )
             except ValueError:
                 continue
-            shape_score = source_text_shape_score(img, plan, font_candidates)
-            if shape_score is not None and shape_score > shape_limit:
+            shape_score = (
+                source_text_shape_score(img, plan, font_candidates)
+                if text_chars(effective_source) and is_mostly_cjk(effective_source)
+                else None
+            )
+            effective_shape_limit = 70.0 if is_mostly_cjk(effective_source) else 105.0
+            if shape_score is not None and shape_score > effective_shape_limit:
                 continue
             score = auto_region_score(
                 plan,
-                source_text=source_text,
+                source_text=effective_source,
                 target_text=target_text,
                 field_key=field_key,
                 source_shape_score=shape_score,
             )
             if score is None:
                 continue
-            scored.append((score, roi, plan))
+            scored.append((score, roi, plan, effective_source))
         return scored
 
-    field_candidate_rois = (
-        name_field_candidate_rois(img, source_text=source_text, target_text=target_text)
-        if field_key == "name"
-        else ()
-    )
-    candidates = score_candidate_rois(field_candidate_rois)
-    if not candidates:
-        candidates = score_candidate_rois(line_candidate_rois(img))
+    candidates: list[tuple[float, tuple[int, int, int, int], RenderPlan, str]] = []
+    if text_chars(source_text):
+        field_candidate_rois = (
+            name_field_candidate_rois(img, source_text=source_text, target_text=target_text)
+            if field_key == "name"
+            else ()
+        )
+        candidates = score_candidate_rois(field_candidate_rois)
+        if not candidates:
+            candidates = score_candidate_rois(line_candidate_rois(img))
+    elif field_key:
+        for field_score, roi, inferred_source in field_value_candidate_rois(
+            img,
+            field_key=field_key,
+            target_text=target_text,
+        ):
+            for auto_score, auto_roi, plan, effective_source in score_candidate_rois(
+                (roi,),
+                source_override=inferred_source,
+            ):
+                candidates.append((auto_score + field_score * 2.5, auto_roi, plan, effective_source))
+    else:
+        raise ValueError(
+            "自动选择 ROI 需要明确旧文字，或写明字段名称，例如：姓名旧值调整为新值、接收时间修改为新值。"
+        )
 
     if not candidates:
         field_label = f"{field_key or '指定字段'}" if field_key else "指定字段"
+        source_label = source_text or "字段当前值"
         raise ValueError(
-            f"无法自动定位{field_label}中的旧文字：{source_text}。"
+            f"无法自动定位{field_label}中的旧文字：{source_label}。"
             "请手动画一个只包含旧文字和少量右侧空白的矩形，或把指令写成“字段 旧文字调整为新文字”。"
         )
 
-    _, roi, selected_plan = min(candidates, key=lambda item: item[0])
+    _, roi, selected_plan, selected_source_text = min(candidates, key=lambda item: item[0])
     roi = expand_auto_search_roi(
         img,
         roi,
         selected_plan,
-        source_text=source_text,
+        source_text=selected_source_text,
         target_text=target_text,
     )
     x1, y1, x2, y2 = roi
@@ -1470,6 +1772,8 @@ def auto_select_regions_for_instruction(
             "id": f"auto_{field_key or 'field'}",
             "rect": {"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1},
             "auto": True,
+            "sourceText": selected_source_text,
+            "targetText": target_text,
         }
     ]
 
@@ -1535,6 +1839,20 @@ def build_region_plan(
     )
     target_roi = slots_roi(slots, img.size) or roi
     target_roi = clamp_box_to_container(target_roi, roi)
+    if slots and not is_mostly_cjk(source_text or target_text):
+        slot_widths = [max(1, slot.x2 - slot.x1) for slot in slots]
+        slot_heights = [max(1, slot.y2 - slot.y1) for slot in slots]
+        pad_x = max(3, int(round(float(np.median(slot_widths)) * 0.035)))
+        pad_y = max(2, int(round(float(np.median(slot_heights)) * 0.12)))
+        target_roi = clamp_box_to_container(
+            (
+                min(slot.x1 for slot in slots) - pad_x,
+                min(slot.y1 for slot in slots) - pad_y,
+                max(slot.x2 for slot in slots) + pad_x,
+                max(slot.y2 for slot in slots) + pad_y,
+            ),
+            roi,
+        )
     source_reference_box = target_roi
     protected_boxes = protected_boxes_for_region(img, roi, slots)
     source_count = len(text_chars(source_text))
@@ -1573,7 +1891,7 @@ def build_region_plan(
     if target_count and (source_count and target_count > source_count):
         draw_mode = "center"
     elif target_count and (source_count and target_count < source_count):
-        draw_mode = "line_chars"
+        draw_mode = "line_chars" if is_mostly_cjk(target_text) else "auto"
     elif target_count and len(slots) < target_count:
         draw_mode = "center"
     text_angle_degrees = estimate_text_angle_degrees(slots)
@@ -1663,9 +1981,176 @@ def rendered_glyph_complexity(params: dict[str, Any] | CandidateParams, text: st
     return int(np.count_nonzero(np.array(layer) > 24))
 
 
+def gray_band_profile_for_box(
+    gray: np.ndarray,
+    box: tuple[int, int, int, int],
+    image_size: tuple[int, int],
+) -> dict[str, Any] | None:
+    x1, y1, x2, y2 = clamp_box(box, image_size)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    crop = gray[y1:y2, x1:x2]
+    if crop.size <= 0:
+        return None
+    counts = gray_band_counts(crop)
+    area = int(crop.size)
+    lt165 = max(1, int(counts.get("lt165") or 0))
+    return {
+        "box": [x1, y1, x2, y2],
+        "area": area,
+        "mean_gray": round(float(np.mean(crop)), 3),
+        "std_gray": round(float(np.std(crop)), 3),
+        "counts": counts,
+        "density": {
+            "lt55": round(float(counts["lt55"]) / max(1, area), 5),
+            "lt70": round(float(counts["lt70"]) / max(1, area), 5),
+            "lt165": round(float(counts["lt165"]) / max(1, area), 5),
+        },
+        "share": {
+            "lt55_of_lt165": round(float(counts["lt55"]) / lt165, 5),
+            "lt70_of_lt165": round(float(counts["lt70"]) / lt165, 5),
+            "outer_120_165_of_lt165": round(float(counts["band_120_165"]) / lt165, 5),
+        },
+    }
+
+
+def same_row_reference_boxes(plan: RenderPlan) -> tuple[tuple[int, int, int, int], ...]:
+    tx1, ty1, tx2, ty2 = plan.target_roi
+    row_h = max(1, ty2 - ty1)
+    boxes: list[tuple[int, int, int, int]] = []
+    for box in plan.protected_boxes:
+        if not protected_box_overlaps_row(box, plan.target_roi):
+            continue
+        if box[2] <= tx1 or box[0] >= tx2:
+            if box[3] - box[1] >= max(4, int(round(row_h * 0.35))):
+                boxes.append(box)
+    return tuple(boxes[:8])
+
+
+def build_reference_profile(
+    original: Image.Image,
+    plan: RenderPlan,
+    params: CandidateParams,
+) -> dict[str, Any]:
+    gray = cv2.cvtColor(np.array(original.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    source_box = plan.source_reference_box or plan.target_roi
+    source_profile = gray_band_profile_for_box(gray, source_box, original.size)
+    target_profile = gray_band_profile_for_box(gray, plan.target_roi, original.size)
+    slot_profiles = [
+        profile
+        for profile in (
+            gray_band_profile_for_box(gray, text_run_box(slot), original.size)
+            for slot in tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+        )
+        if profile is not None
+    ]
+    neighbor_profiles = [
+        profile
+        for profile in (
+            gray_band_profile_for_box(gray, box, original.size)
+            for box in same_row_reference_boxes(plan)
+        )
+        if profile is not None and (profile.get("counts") or {}).get("lt165", 0) >= 8
+    ]
+
+    source_counts = (source_profile or {}).get("counts") or {}
+    source_density = (source_profile or {}).get("density") or {}
+    try:
+        source_lt55 = float(source_counts.get("lt55") or 0.0)
+        source_lt165 = float(source_counts.get("lt165") or 0.0)
+        source_core_density = float(source_density.get("lt55") or 0.0)
+        source_std_gray = float((source_profile or {}).get("std_gray") or 0.0)
+    except (TypeError, ValueError):
+        source_lt55 = 0.0
+        source_lt165 = 0.0
+        source_core_density = 0.0
+        source_std_gray = 0.0
+
+    neighbor_core_densities: list[float] = []
+    neighbor_outer_shares: list[float] = []
+    for profile in neighbor_profiles:
+        density = profile.get("density") or {}
+        share = profile.get("share") or {}
+        try:
+            neighbor_core_densities.append(float(density.get("lt55") or 0.0))
+            neighbor_outer_shares.append(float(share.get("outer_120_165_of_lt165") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    neighbor_core_density = float(np.median(neighbor_core_densities)) if neighbor_core_densities else None
+    neighbor_outer_share = float(np.median(neighbor_outer_shares)) if neighbor_outer_shares else None
+
+    source_count = len(text_chars(plan.source_text or ""))
+    target_count = len(text_chars(plan.target_text))
+    complexity_ratio = text_complexity_ratio(plan, params)
+    count_ratio = float(target_count / source_count) if source_count and target_count else 1.0
+    count_allowance = 1.0 + max(0.0, min(0.9, count_ratio - 1.0)) * 0.55
+    complexity_allowance = 1.0 + max(0.0, min(0.65, complexity_ratio - 1.0)) * 0.45
+    core_delta_limit = max(58.0, source_lt55 * 0.32 * count_allowance * complexity_allowance)
+    char_core_delta_limit = max(48.0, source_lt55 * 0.70 * complexity_allowance / max(1.0, source_count or 1.0))
+    core_mean_lighten_limit = max(2.0, min(8.0, source_std_gray * 0.14))
+
+    reference_core_density = max(
+        source_core_density,
+        neighbor_core_density if neighbor_core_density is not None else 0.0,
+    )
+    if reference_core_density >= 0.18:
+        opacity_floor = 0.72
+    elif reference_core_density >= 0.12:
+        opacity_floor = 0.68
+    elif reference_core_density >= 0.08:
+        opacity_floor = 0.64
+    else:
+        opacity_floor = 0.60
+
+    return {
+        "enabled": source_profile is not None,
+        "source_text": plan.source_text or "",
+        "target_text": plan.target_text,
+        "source_box": list(source_box),
+        "target_roi": list(plan.target_roi),
+        "source": source_profile,
+        "target": target_profile,
+        "slots": slot_profiles,
+        "same_row_neighbors": neighbor_profiles,
+        "dynamic_ink": {
+            "source_lt55": round(source_lt55, 3),
+            "source_lt165": round(source_lt165, 3),
+            "source_core_density": round(source_core_density, 5),
+            "neighbor_core_density": None if neighbor_core_density is None else round(neighbor_core_density, 5),
+            "neighbor_outer_share": None if neighbor_outer_share is None else round(neighbor_outer_share, 5),
+            "text_complexity_ratio": round(float(complexity_ratio), 4),
+            "text_count_ratio": round(float(count_ratio), 4),
+            "roi_lt55_delta_limit": round(float(core_delta_limit), 3),
+            "char_lt55_delta_limit": round(float(char_core_delta_limit), 3),
+            "core_mean_lighten_limit": round(float(core_mean_lighten_limit), 3),
+            "opacity_floor_for_excess_core": round(float(opacity_floor), 3),
+            "basis": "source_text_region_and_same_row_neighbors",
+        },
+    }
+
+
+def dynamic_ink_limits(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    profile = report.get("reference_profile")
+    if not isinstance(profile, dict):
+        return {}
+    dynamic = profile.get("dynamic_ink")
+    return dynamic if isinstance(dynamic, dict) else {}
+
+
+def opacity_floor_for_excess_black(report: dict[str, Any] | None) -> float:
+    dynamic = dynamic_ink_limits(report)
+    try:
+        return max(0.55, min(0.76, float(dynamic.get("opacity_floor_for_excess_core"))))
+    except (TypeError, ValueError):
+        return 0.64
+
+
 def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     strict_gate = report.get("strict_gate")
+    dynamic_limits = dynamic_ink_limits(report)
     complexity_ratio = 1.0
     if isinstance(strict_gate, dict):
         try:
@@ -1748,7 +2233,11 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
 
             middle_delta = band_70_90_delta + band_90_120_delta
             complexity_core_allowance = min(0.86, 0.70 + max(0.0, complexity_ratio - 1.0) * 0.55)
-            max_core_delta = max(52.0, old_lt55 * complexity_core_allowance)
+            try:
+                profile_char_limit = float(dynamic_limits.get("char_lt55_delta_limit") or 0.0)
+            except (TypeError, ValueError):
+                profile_char_limit = 0.0
+            max_core_delta = max(52.0, profile_char_limit, old_lt55 * complexity_core_allowance)
             if lt55_delta > max_core_delta and middle_delta < -20.0:
                 if complexity_ratio >= 1.08 and neighbor_core_bounds_changed_item(item):
                     continue
@@ -1790,12 +2279,18 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
             old_lt55 = 0.0
             lt55_delta = 0.0
             share_delta = None
-        if old_lt55 >= 32.0 and lt55_delta > max(70.0, old_lt55 * 0.32):
+        try:
+            roi_core_delta_limit = float(dynamic_limits.get("roi_lt55_delta_limit") or 0.0)
+        except (TypeError, ValueError):
+            roi_core_delta_limit = 0.0
+        roi_core_delta_limit = max(48.0, roi_core_delta_limit or old_lt55 * 0.32)
+        if old_lt55 >= 32.0 and lt55_delta > roi_core_delta_limit:
             issues.append(
                 {
                     "type": "roi_core_too_black",
                     "lt55_delta": lt55_delta,
-                    "limit": round(max(70.0, old_lt55 * 0.32), 3),
+                    "limit": round(roi_core_delta_limit, 3),
+                    "limit_source": "reference_profile",
                 }
             )
         if share_delta is not None and share_delta > 0.085:
@@ -2407,6 +2902,131 @@ def local_photo_texture_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
     return issues
 
 
+def background_texture_metrics(
+    original: Image.Image,
+    candidate: Image.Image,
+    plan: RenderPlan,
+    params: CandidateParams,
+) -> dict[str, Any]:
+    original_arr = np.array(original.convert("RGB"))
+    candidate_arr = np.array(candidate.convert("RGB"))
+    original_gray = cv2.cvtColor(original_arr, cv2.COLOR_RGB2GRAY)
+    candidate_gray = cv2.cvtColor(candidate_arr, cv2.COLOR_RGB2GRAY)
+    h, w = original_gray.shape
+    tx1, ty1, tx2, ty2 = plan.target_roi
+    if tx2 <= tx1 or ty2 <= ty1:
+        return {"enabled": False, "reason": "empty target roi"}
+
+    old_dark = (original_gray[ty1:ty2, tx1:tx2] < int(params.mask_threshold)).astype(np.uint8)
+    if int(np.count_nonzero(old_dark)) < 8:
+        return {"enabled": False, "reason": "not enough old text mask pixels"}
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    old_dark = cv2.dilate(old_dark, kernel, iterations=max(1, int(params.mask_dilate_iterations)))
+    alpha = np.array(
+        draw_replacement_layer(size=original.size, plan=plan, params=params, original=original).getchannel("A")
+    )
+    new_alpha = alpha[ty1:ty2, tx1:tx2] > 18
+    fill_mask = (old_dark > 0) & ~new_alpha
+    if int(np.count_nonzero(fill_mask)) < 10:
+        fill_mask = old_dark > 0
+    if int(np.count_nonzero(fill_mask)) < 10:
+        return {"enabled": False, "reason": "not enough fill background pixels"}
+
+    pad_x = max(10, int(round((tx2 - tx1) * 0.35)))
+    pad_y = max(6, int(round((ty2 - ty1) * 0.60)))
+    rx1, ry1, rx2, ry2 = clamp_box((tx1 - pad_x, ty1 - pad_y, tx2 + pad_x, ty2 + pad_y), original.size)
+    reference_mask = np.ones((ry2 - ry1, rx2 - rx1), dtype=bool)
+    reference_mask[ty1 - ry1 : ty2 - ry1, tx1 - rx1 : tx2 - rx1] = False
+    reference_crop = original_gray[ry1:ry2, rx1:rx2]
+    reference_mask &= reference_crop >= 165
+    if int(np.count_nonzero(reference_mask)) < 24:
+        reference_mask = original_gray[ry1:ry2, rx1:rx2] >= 150
+    if int(np.count_nonzero(reference_mask)) < 24:
+        return {"enabled": False, "reason": "not enough same-row background reference"}
+
+    old_fill = original_gray[ty1:ty2, tx1:tx2][fill_mask]
+    new_fill = candidate_gray[ty1:ty2, tx1:tx2][fill_mask]
+    reference_values = reference_crop[reference_mask]
+
+    def residual_values(gray: np.ndarray) -> np.ndarray:
+        residual = np.abs(gray.astype(np.float32) - cv2.GaussianBlur(gray, (0, 0), 1.2))
+        return residual
+
+    old_residual = residual_values(original_gray[ty1:ty2, tx1:tx2])[fill_mask]
+    new_residual = residual_values(candidate_gray[ty1:ty2, tx1:tx2])[fill_mask]
+    reference_residual = residual_values(reference_crop)[reference_mask]
+    old_mean = float(np.mean(old_fill))
+    new_mean = float(np.mean(new_fill))
+    reference_mean = float(np.mean(reference_values))
+    old_std = float(np.std(old_fill))
+    new_std = float(np.std(new_fill))
+    reference_std = float(np.std(reference_values))
+    old_residual_mean = float(np.mean(old_residual)) if old_residual.size else 0.0
+    new_residual_mean = float(np.mean(new_residual)) if new_residual.size else 0.0
+    reference_residual_mean = float(np.mean(reference_residual)) if reference_residual.size else 0.0
+    return {
+        "enabled": True,
+        "target_roi": [tx1, ty1, tx2, ty2],
+        "fill_pixels": int(np.count_nonzero(fill_mask)),
+        "reference_pixels": int(np.count_nonzero(reference_mask)),
+        "old_fill_mean_gray": round(old_mean, 3),
+        "new_fill_mean_gray": round(new_mean, 3),
+        "reference_mean_gray": round(reference_mean, 3),
+        "new_reference_mean_delta": round(new_mean - reference_mean, 3),
+        "old_reference_mean_delta": round(old_mean - reference_mean, 3),
+        "old_fill_std_gray": round(old_std, 3),
+        "new_fill_std_gray": round(new_std, 3),
+        "reference_std_gray": round(reference_std, 3),
+        "std_ratio": round(new_std / max(0.8, reference_std), 4),
+        "old_residual_mean": round(old_residual_mean, 3),
+        "new_residual_mean": round(new_residual_mean, 3),
+        "reference_residual_mean": round(reference_residual_mean, 3),
+        "residual_ratio": round(new_residual_mean / max(0.8, reference_residual_mean), 4),
+    }
+
+
+def local_background_texture_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics = report.get("background_texture_metrics") if isinstance(report, dict) else None
+    if not isinstance(metrics, dict) or not metrics.get("enabled"):
+        return []
+    issues: list[dict[str, Any]] = []
+    try:
+        mean_delta = float(metrics.get("new_reference_mean_delta") or 0.0)
+        old_mean_delta = float(metrics.get("old_reference_mean_delta") or 0.0)
+        std_ratio = float(metrics.get("std_ratio") or 1.0)
+        residual_ratio = float(metrics.get("residual_ratio") or 1.0)
+        reference_residual = float(metrics.get("reference_residual_mean") or 0.0)
+    except (TypeError, ValueError):
+        return issues
+    if abs(mean_delta) > max(12.0, abs(old_mean_delta) + 7.0):
+        issues.append(
+            {
+                "type": "background_fill_luminance_mismatch",
+                "new_reference_mean_delta": round(mean_delta, 3),
+                "old_reference_mean_delta": round(old_mean_delta, 3),
+                "limit": round(max(12.0, abs(old_mean_delta) + 7.0), 3),
+            }
+        )
+    if reference_residual >= 1.8 and residual_ratio < 0.42:
+        issues.append(
+            {
+                "type": "background_fill_too_smooth",
+                "residual_ratio": round(residual_ratio, 4),
+                "reference_residual_mean": round(reference_residual, 3),
+                "limit": 0.42,
+            }
+        )
+    if std_ratio < 0.36:
+        issues.append(
+            {
+                "type": "background_fill_low_texture_variance",
+                "std_ratio": round(std_ratio, 4),
+                "limit": 0.36,
+            }
+        )
+    return issues
+
+
 def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     stages = {
         "text_shape": [],
@@ -2451,7 +3071,9 @@ def stage_gate_for_report(report: dict[str, Any]) -> dict[str, Any]:
     )
     ink_issues = strict_stage_issues["ink_gray_balance"] + list(report.get("local_ink_balance_issues") or [])
     photo_issues = list(report.get("local_photo_texture_issues") or [])
-    background_issues = strict_stage_issues["background_cleanup"]
+    background_issues = strict_stage_issues["background_cleanup"] + list(
+        report.get("local_background_texture_issues") or []
+    )
 
     stages = [
         {
@@ -2551,6 +3173,10 @@ def ink_stage_issue_severity(report: dict[str, Any] | None) -> float:
                 severity += max(0.0, float(issue.get("lt55_delta") or 0.0) - float(issue.get("limit") or 0.0)) * 2.8
             elif issue_type == "roi_black_core_share_too_high":
                 severity += max(0.0, float(issue.get("share_delta") or 0.0) - float(issue.get("limit") or 0.0)) * 2400.0
+            elif issue_type == "core_mean_gray_too_light":
+                severity += max(0.0, float(issue.get("actual") or 0.0) - float(issue.get("limit") or 0.0)) * 32.0
+            elif issue_type == "core_lighten_too_high":
+                severity += max(0.0, float(issue.get("actual") or 0.0) - float(issue.get("limit") or 0.0)) * 26.0
             else:
                 severity += 80.0
         except (TypeError, ValueError):
@@ -2563,6 +3189,38 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
         return 0.0
     if stage_id == "ink_gray_balance":
         return ink_stage_issue_severity(report)
+    if stage_id == "background_cleanup":
+        severity = 0.0
+        for issue in stage_issues(report, "background_cleanup"):
+            issue_type = str(issue.get("type") or "")
+            try:
+                if issue_type == "background_fill_luminance_mismatch":
+                    severity += max(0.0, abs(float(issue.get("new_reference_mean_delta") or 0.0)) - float(issue.get("limit") or 0.0)) * 35.0
+                elif issue_type == "background_fill_too_smooth":
+                    severity += max(0.0, float(issue.get("limit") or 0.0) - float(issue.get("residual_ratio") or 0.0)) * 520.0
+                elif issue_type == "background_fill_low_texture_variance":
+                    severity += max(0.0, float(issue.get("limit") or 0.0) - float(issue.get("std_ratio") or 0.0)) * 420.0
+                else:
+                    severity += 90.0
+            except (TypeError, ValueError):
+                severity += 90.0
+        return severity
+    if stage_id == "photo_texture":
+        severity = 0.0
+        for issue in stage_issues(report, "photo_texture"):
+            issue_type = str(issue.get("type") or "")
+            try:
+                if issue_type == "photo_texture_too_sharp":
+                    severity += max(0.0, float(issue.get("edge_laplacian_ratio") or 0.0) - 1.0) * 160.0
+                elif issue_type == "photo_texture_too_clean":
+                    severity += max(0.0, 0.42 - float(issue.get("residual_ratio") or 0.0)) * 420.0
+                elif issue_type == "photo_texture_too_blurry":
+                    severity += max(0.0, 0.18 - float(issue.get("edge_laplacian_ratio") or 0.0)) * 520.0
+                else:
+                    severity += 90.0
+            except (TypeError, ValueError):
+                severity += 90.0
+        return severity
     return float(len(stage_issues(report, stage_id))) * 100.0
 
 
@@ -2739,6 +3397,7 @@ def candidate_report(
     font_style_reference: dict[str, Any],
 ) -> dict[str, Any]:
     report = hard_check(original, candidate, plan.target_roi, plan.protected_boxes)
+    reference_profile = build_reference_profile(original, plan, params)
     strict_metrics = strict_visual_metrics(original, candidate, plan.target_roi)
     source_count = len(text_chars(plan.source_text or ""))
     target_count = len(text_chars(plan.target_text))
@@ -2759,13 +3418,18 @@ def candidate_report(
     min_dark_pixel_ratio = 0.55 if mismatch and target_count < source_count else 0.78 if mismatch else 0.88
     shorter_replacement = bool(source_count and target_count and target_count < source_count)
     max_edge_lighten_delta = 6.0 if shorter_replacement else 4.0
+    dynamic_limits = (reference_profile.get("dynamic_ink") or {}) if isinstance(reference_profile, dict) else {}
+    try:
+        max_core_lighten_delta = float(dynamic_limits.get("core_mean_lighten_limit") or 2.0)
+    except (TypeError, ValueError):
+        max_core_lighten_delta = 2.0
     strict_issues = strict_gate_issues(
         strict_metrics,
         max_dark_pixel_ratio=max_dark_pixel_ratio,
         min_dark_pixel_ratio=min_dark_pixel_ratio,
         max_core_mean_gray_delta=18.0,
         max_edge_mean_gray_delta=16.0,
-        max_core_lighten_delta=2.0,
+        max_core_lighten_delta=max_core_lighten_delta,
         max_edge_lighten_delta=max_edge_lighten_delta,
     )
     cleanup_metrics = extra_source_slot_cleanup_metrics(original, candidate, plan, params)
@@ -2787,10 +3451,12 @@ def candidate_report(
         max_score_ratio=1.25,
     )
     report["params"] = asdict(params)
+    report["reference_profile"] = reference_profile
     report["strict_visual_metrics"] = strict_metrics
     report["char_gray_band_metrics"] = char_gray_band_metrics(original, candidate, plan)
     report["char_pose_metrics"] = char_pose_metrics(original, plan, params)
     report["photo_texture_metrics"] = photo_texture_metrics(original, candidate, plan, params)
+    report["background_texture_metrics"] = background_texture_metrics(original, candidate, plan, params)
     report["extra_source_slot_cleanup_metrics"] = cleanup_metrics
     report["char_alignment_metrics"] = alignment_metrics
     report["font_style_gate"] = font_style
@@ -2800,7 +3466,7 @@ def candidate_report(
         "text_complexity_ratio": round(float(complexity_ratio), 4),
         "max_core_mean_gray_delta": 18.0,
         "max_edge_mean_gray_delta": 16.0,
-        "max_core_lighten_delta": 2.0,
+        "max_core_lighten_delta": round(float(max_core_lighten_delta), 3),
         "max_edge_lighten_delta": max_edge_lighten_delta,
         "max_char_center_dx": 2.0,
         "max_char_center_dy": 2.5,
@@ -2821,6 +3487,7 @@ def candidate_report(
     report["local_neighbor_style_issues"] = local_neighbor_style_issues(report)
     report["local_pose_issues"] = local_pose_issues(report)
     report["local_photo_texture_issues"] = local_photo_texture_issues(report)
+    report["local_background_texture_issues"] = local_background_texture_issues(report)
     report["stage_gate"] = stage_gate_for_report(report)
     return report
 
@@ -3157,7 +3824,7 @@ def thin_dark_core_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
     darkness = str(findings.get("darkness", "")).strip().lower()
     font_size = str(findings.get("size", "")).strip().lower()
     wants_thinner = acceptance_wants_thinner_strokes(acceptance)
-    wants_darker_core = "核心" in text and ("黑" in text or "深" in text)
+    wants_darker_core = acceptance_wants_darker_core(acceptance)
     if not wants_thinner and font_size != "too_large":
         return []
     if acceptance_reports_too_dark_or_bold(acceptance) and not wants_darker_core:
@@ -3217,17 +3884,36 @@ def thin_dark_core_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
     return patches
 
 
+def acceptance_wants_darker_core(acceptance: dict[str, Any]) -> bool:
+    text = "\n".join(acceptance_text_fragments(acceptance)).lower()
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    darkness = str(findings.get("darkness", "")).strip().lower()
+    stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
+    if darkness == "too_light" or stroke_weight == "too_thin":
+        return True
+    if any(token in text for token in ("too_dark", "too_bold", "过黑", "偏黑", "过重", "偏重", "太黑", "太粗", "黑度偏重", "核心过量")):
+        return False
+    return any(
+        token in text
+        for token in ("不够黑", "偏浅", "太浅", "过淡", "偏淡", "核心不足", "核心不够", "too_light", "too_thin")
+    )
+
+
 def acceptance_wants_thinner_strokes(acceptance: dict[str, Any]) -> bool:
     findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
     if not isinstance(findings, dict):
         findings = {}
     text = "\n".join(acceptance_text_fragments(acceptance)).lower()
     stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
+    if any(token in text for token in ("不够粗", "偏细", "太细", "更粗", "更重", "加粗", "描黑", "too_thin")):
+        return False
     return (
         stroke_weight == "too_bold"
         or "too_bold" in text
         or "偏重" in text
-        or "更重" in text
+        or "过重" in text
         or ("笔画" in text and ("粗" in text or "重" in text))
     )
 
@@ -3478,9 +4164,10 @@ def constrained_revision_params(
         )
 
     if report_has_excess_black_core(report):
+        opacity_floor = opacity_floor_for_excess_black(report)
         return mutate_params(
             params,
-            opacity=max(0.76, min(1.0, params.opacity)),
+            opacity=max(opacity_floor, min(1.0, params.opacity)),
             blur=max(0.18, min(0.65, params.blur)),
             stroke_opacity=min(0.06, params.stroke_opacity),
             alpha_contrast=min(0.35, params.alpha_contrast),
@@ -4036,6 +4723,74 @@ def photo_texture_recovery_patches(report: dict[str, Any] | None = None) -> list
     ]
 
 
+def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in stage_issues(report, "background_cleanup")
+        if isinstance(issue, dict)
+    }
+    patches: list[dict[str, Any]] = []
+    if "background_fill_luminance_mismatch" in issue_types:
+        patches.extend(
+            [
+                {"mask_threshold_delta": -10, "inpaint_radius_delta": -1, "photo_noise_delta": 0.012},
+                {"mask_threshold_delta": 10, "inpaint_radius_delta": 1, "photo_noise_delta": 0.010},
+                {"inpaint_radius_delta": -1, "edge_breakup_delta": 0.006, "photo_noise_delta": 0.016},
+            ]
+        )
+    if (
+        "background_fill_too_smooth" in issue_types
+        or "background_fill_low_texture_variance" in issue_types
+    ):
+        patches.extend(
+            [
+                {"photo_noise_delta": 0.020, "edge_breakup_delta": 0.006, "jpeg_quality_delta": -6},
+                {"photo_warp_delta": 0.020, "photo_noise_delta": 0.014, "jpeg_quality_delta": -4},
+                {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.018, "edge_breakup_delta": 0.006},
+            ]
+        )
+    if not patches:
+        patches.extend(
+            [
+                {"photo_noise_delta": 0.014, "edge_breakup_delta": 0.004},
+                {"mask_threshold_delta": -8, "inpaint_radius_delta": -1},
+            ]
+        )
+    return dedupe_patches(patches, 8)
+
+
+def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in stage_issues(report, "ink_gray_balance")
+        if isinstance(issue, dict)
+    }
+    patches: list[dict[str, Any]] = []
+    if "core_mean_gray_too_light" in issue_types or "core_lighten_too_high" in issue_types:
+        patches.extend(
+            [
+                {"opacity_delta": 0.015},
+                {"alpha_contrast_delta": 0.05},
+                {"opacity_delta": 0.015, "blur_delta": -0.04},
+                {"core_darken_strength_delta": 0.02},
+                {"opacity_delta": 0.01, "alpha_contrast_delta": 0.04},
+                {"opacity_delta": 0.02, "core_darken_strength_delta": 0.02},
+            ]
+        )
+    if any("too_black" in issue_type or issue_type == "roi_core_too_black" for issue_type in issue_types):
+        patches.extend(black_core_reduction_patches()[:6])
+    if not patches:
+        patches.extend(
+            [
+                {"opacity_delta": -0.02},
+                {"opacity_delta": 0.02},
+                {"blur_delta": 0.04},
+                {"blur_delta": -0.04},
+            ]
+        )
+    return dedupe_patches(patches, 12)
+
+
 def keep_patch_for_gray_stroke_recovery(patch: dict[str, Any]) -> bool:
     try:
         opacity_delta = float(patch.get("opacity_delta") or 0.0)
@@ -4184,9 +4939,25 @@ def revision_patches_for_round(
             patches.append(rank_patch)
         return dedupe_patches(patches, 12)
 
+    if stage_gate.get("blocking_stage") == "background_cleanup":
+        patches.extend(background_cleanup_recovery_patches(report))
+        patches.extend(photo_texture_recovery_patches(report))
+        if isinstance(rank_patch, dict):
+            patches.append(rank_patch)
+        return dedupe_patches(patches, 12)
+
     if report_has_excess_black_core(report):
         patches.extend(alignment_centering_patches(report))
         patches.extend(black_core_reduction_patches())
+        patches.extend(numeric_revision_patches(params, acceptance))
+        if isinstance(rank_patch, dict):
+            patches.append(rank_patch)
+        patches.extend(final_revision_patches(acceptance))
+        return dedupe_patches(patches, 12)
+
+    if stage_gate.get("blocking_stage") == "ink_gray_balance":
+        patches.extend(alignment_centering_patches(report))
+        patches.extend(ink_balance_recovery_patches(report))
         patches.extend(numeric_revision_patches(params, acceptance))
         if isinstance(rank_patch, dict):
             patches.append(rank_patch)
@@ -4439,6 +5210,8 @@ def final_revision_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
     darkness = str(findings.get("darkness", "")).strip().lower()
     stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
     sharpness = str(findings.get("sharpness", "")).strip().lower()
+    background = str(findings.get("background", "")).strip().lower()
+    text = "\n".join(acceptance_text_fragments(acceptance)).lower()
     patches: list[dict[str, Any]] = []
 
     if darkness == "too_dark" or stroke_weight == "too_bold":
@@ -4491,6 +5264,23 @@ def final_revision_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
         )
     elif sharpness == "too_blurry":
         patches.append({"blur_delta": -0.08, "opacity_delta": 0.03})
+
+    if (
+        background in {"patch_visible", "ghost_visible", "too_smooth"}
+        or "补丁" in text
+        or "平滑" in text
+        or "涂抹" in text
+        or "ghost_visible" in text
+        or "patch_visible" in text
+    ):
+        patches.extend(
+            [
+                {"photo_noise_delta": 0.012, "edge_breakup_delta": 0.006},
+                {"photo_noise_delta": 0.018, "edge_breakup_delta": 0.008, "jpeg_quality_delta": -4},
+                {"inpaint_radius_delta": -1, "photo_noise_delta": 0.014, "edge_breakup_delta": 0.006},
+                {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.016, "edge_breakup_delta": 0.006},
+            ]
+        )
 
     unique: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -4854,11 +5644,18 @@ def run_region_vision_checks(
                 current_stage_gate = current_report.get("stage_gate") or {}
                 current_blocking_stage = current_stage_gate.get("blocking_stage")
                 current_stage_improvement = 0.0
+                current_stage_severity_before = 0.0
+                current_stage_severity_after = 0.0
                 if current_blocking_stage and current_blocking_stage != "text_shape":
-                    current_stage_improvement = stage_issue_severity(
+                    current_stage_severity_before = stage_issue_severity(
                         current_report,
                         str(current_blocking_stage),
-                    ) - stage_issue_severity(patched_report, str(current_blocking_stage))
+                    )
+                    current_stage_severity_after = stage_issue_severity(
+                        patched_report,
+                        str(current_blocking_stage),
+                    )
+                    current_stage_improvement = current_stage_severity_before - current_stage_severity_after
                 improves_current_stage = (
                     bool(current_blocking_stage)
                     and current_blocking_stage != "text_shape"
@@ -4878,6 +5675,9 @@ def run_region_vision_checks(
                     "blocking_stage": patched_blocking_stage,
                     "progresses_past_text_shape": progresses_past_text_shape,
                     "improves_current_stage": improves_current_stage,
+                    "current_blocking_stage": current_blocking_stage,
+                    "current_stage_severity_before": round(float(current_stage_severity_before), 3),
+                    "current_stage_severity_after": round(float(current_stage_severity_after), 3),
                     "current_stage_improvement": round(float(current_stage_improvement), 3),
                     "score": round(float(patched_score), 3),
                     "selection_score": round(float(patched_selection_score), 3),
@@ -4908,6 +5708,7 @@ def run_region_vision_checks(
 
             round_candidates.sort(key=lambda item: item[0])
             selected_tuple = round_candidates[0]
+            selected_reason = "lowest_selection_score"
             if report_blocks_text_shape(current_report):
                 progressed_candidates = [
                     item
@@ -4917,7 +5718,38 @@ def run_region_vision_checks(
                 if progressed_candidates:
                     progressed_candidates.sort(key=lambda item: item[0])
                     selected_tuple = progressed_candidates[0]
-            if not report_blocks_text_shape(current_report) and report_needs_wider_gray_strokes(current_report):
+                    selected_reason = "progresses_past_text_shape"
+            current_blocking_stage = (current_report.get("stage_gate") or {}).get("blocking_stage")
+            if current_blocking_stage and current_blocking_stage != "text_shape":
+                improving_stage_candidates = [
+                    item
+                    for item in round_candidates
+                    if float(item[5].get("current_stage_improvement") or 0.0) > 0.0
+                ]
+                if improving_stage_candidates:
+                    best_improvement = max(
+                        float(item[5].get("current_stage_improvement") or 0.0)
+                        for item in improving_stage_candidates
+                    )
+                    minimum_improvement = max(6.0, best_improvement * 0.70)
+                    near_best = [
+                        item
+                        for item in improving_stage_candidates
+                        if float(item[5].get("current_stage_improvement") or 0.0) >= minimum_improvement
+                    ]
+                    near_best.sort(key=lambda item: (item[0], item[1]))
+                    selected_tuple = near_best[0]
+                    selected_reason = f"current_stage_severity_improved:{current_blocking_stage}"
+                else:
+                    round_record["stop_reason"] = f"no_{current_blocking_stage}_severity_improvement"
+                    round_record["attempt_count"] = len(revision_attempts)
+                    revision_rounds.append(round_record)
+                    break
+            if (
+                selected_reason == "lowest_selection_score"
+                and not report_blocks_text_shape(current_report)
+                and report_needs_wider_gray_strokes(current_report)
+            ):
                 stroke_candidates = [
                     item
                     for item in round_candidates
@@ -4927,8 +5759,10 @@ def run_region_vision_checks(
                     stroke_candidates.sort(key=lambda item: item[0])
                     if stroke_candidates[0][0] <= selected_tuple[0] + 360.0:
                         selected_tuple = stroke_candidates[0]
+                        selected_reason = "stroke_body_recovery_priority"
             patched_selection_score, patched_score, patched_params, patched_image, patched_report, attempt_record = selected_tuple
             attempt_record["selected_for_visual"] = True
+            attempt_record["selected_reason"] = selected_reason
             patched_context_path = region_dir / f"vision_final_context_iter{round_idx:02d}.png"
             patched_compare_path = region_dir / f"vision_final_compare_iter{round_idx:02d}.png"
             patched_acceptance = evaluate_final(
@@ -4950,6 +5784,11 @@ def run_region_vision_checks(
                         "candidate_id": patched_params.candidate_id,
                         "score": round(float(patched_score), 3),
                         "selection_score": round(float(patched_selection_score), 3),
+                        "selected_reason": selected_reason,
+                        "current_blocking_stage": attempt_record.get("current_blocking_stage"),
+                        "current_stage_severity_before": attempt_record.get("current_stage_severity_before"),
+                        "current_stage_severity_after": attempt_record.get("current_stage_severity_after"),
+                        "current_stage_improvement": attempt_record.get("current_stage_improvement"),
                         "accepted": round_delivered,
                         "acceptance_level": patched_acceptance.get("acceptance_level"),
                         "final_decision": patched_acceptance.get("final_decision"),
@@ -4962,6 +5801,11 @@ def run_region_vision_checks(
                     "selected_attempt_index": attempt_record["index"],
                     "selected_score": round(float(patched_score), 3),
                     "selected_selection_score": round(float(patched_selection_score), 3),
+                    "selected_reason": selected_reason,
+                    "current_blocking_stage": attempt_record.get("current_blocking_stage"),
+                    "current_stage_severity_before": attempt_record.get("current_stage_severity_before"),
+                    "current_stage_severity_after": attempt_record.get("current_stage_severity_after"),
+                    "current_stage_improvement": attempt_record.get("current_stage_improvement"),
                     "accepted": round_delivered,
                     "acceptance_level": patched_acceptance.get("acceptance_level"),
                     "final_decision": patched_acceptance.get("final_decision"),
@@ -5053,6 +5897,35 @@ def run_region_vision_checks(
                 accepted = True
                 break
 
+    final_stage_gate = final_report.get("stage_gate") if isinstance(final_report, dict) else {}
+    if not isinstance(final_stage_gate, dict):
+        final_stage_gate = stage_gate_for_report(final_report)
+    next_round_plan = None
+    if not accepted:
+        blocking_stage = final_stage_gate.get("blocking_stage")
+        next_round_plan = {
+            "blocking_stage": blocking_stage,
+            "stage_severity": round(float(stage_issue_severity(final_report, blocking_stage)), 3),
+            "reference_profile_dynamic_ink": (
+                (final_report.get("reference_profile") or {}).get("dynamic_ink")
+                if isinstance(final_report.get("reference_profile"), dict)
+                else {}
+            ),
+            "actions": [],
+        }
+        actions = next_round_plan["actions"]
+        if blocking_stage == "text_shape":
+            actions.append("Search shape reset candidates first: font family, size, slot alignment, stroke body, local shear.")
+        elif blocking_stage == "ink_gray_balance":
+            actions.append("Generate lower-core candidates using reference_profile opacity floor, core_ink_gain, and core_darken_strength limits.")
+            actions.append(f"Do not clamp opacity above {opacity_floor_for_excess_black(final_report):.2f} unless text_shape regresses.")
+        elif blocking_stage == "photo_texture":
+            actions.append("After shape and ink pass, tune blur, edge breakup, photo noise, and JPEG texture only.")
+        elif blocking_stage == "background_cleanup":
+            actions.append("Regenerate inpaint/background texture candidates before judging text darkness.")
+        else:
+            actions.append("No local blocking stage remains; retry final visual acceptance with saved final candidate context.")
+
     return final_params, {
         "enabled": True,
         "accepted": accepted,
@@ -5063,6 +5936,7 @@ def run_region_vision_checks(
         ),
         "candidate_rank": candidate_rank_json,
         "final_acceptance": final_acceptance_json,
+        "next_round_plan": next_round_plan,
         "revision_attempts": revision_attempts,
         "revision_rounds": revision_rounds,
         "artifacts": {
@@ -5504,7 +6378,9 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         image_id = str(image_item.get("id") or "")
         filename = str(image_item.get("filename") or "image.png")
         try:
-            source_text, target_text = parse_instruction(str(image_item.get("instruction") or ""))
+            instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
+            source_text = instruction_details["source_text"]
+            target_text = instruction_details["target_text"]
             if not target_text:
                 raise ValueError("missing replacement instruction")
             emit(
@@ -5555,19 +6431,23 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     continue
                 roi = clamp_box((x, y, x + w, y + h), image.size)
                 region_id = str(region.get("id") or f"region_{len(region_results) + 1}")
+                region_source_text = str(region.get("sourceText") or source_text)
+                region_target_text = str(region.get("targetText") or target_text)
                 emit(
                     "region_started",
                     {
                         "image_id": image_id,
                         "region_id": region_id,
                         "roi": list(roi),
+                        "source_text": region_source_text,
+                        "target_text": region_target_text,
                     },
                 )
                 image, region_display_image, region_candidates, summary, accepted = process_region(
                     image,
                     roi,
-                    source_text=source_text,
-                    target_text=target_text,
+                    source_text=region_source_text,
+                    target_text=region_target_text,
                     run_dir=run_dir,
                     region_id=region_id,
                     vision_client=vision_client,
@@ -5594,8 +6474,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     {
                         "id": region_id,
                         "roi": list(roi),
-                        "sourceText": source_text,
-                        "targetText": target_text,
+                        "sourceText": region_source_text,
+                        "targetText": region_target_text,
                         "auto": bool(region.get("auto")),
                         "accepted": accepted,
                         "summary": summary,

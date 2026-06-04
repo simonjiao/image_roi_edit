@@ -182,7 +182,17 @@ def main() -> None:
                     f"round {record.get('round')} "
                     f"accepted={record.get('accepted')} "
                     f"decision={record.get('final_decision')} "
+                    f"blocking_stage={record.get('blocking_stage')} "
                     f"score={record.get('score')}",
+                    flush=True,
+                )
+            elif event == "revision_round_candidates":
+                print(
+                    "[progress] "
+                    f"round {record.get('round')} "
+                    f"basis_stage={record.get('basis_blocking_stage')} "
+                    f"patches={record.get('patch_count')} "
+                    f"shape_resets={record.get('shape_reset_count')}",
                     flush=True,
                 )
             elif event in {
@@ -234,6 +244,7 @@ def main() -> None:
                     "target_roi": (region.get("summary") or {}).get("plan", {}).get("target_roi"),
                     "params": (region.get("summary") or {}).get("params"),
                     "vision": (region.get("summary") or {}).get("vision", {}),
+                    "next_round_plan": ((region.get("summary") or {}).get("vision") or {}).get("next_round_plan"),
                 }
                 for region in image_result.get("regions", [])
             ],
@@ -258,6 +269,25 @@ def main() -> None:
                         f"{region['id']}: roi={region['roi']} auto={region['auto']} "
                         f"accepted={region['accepted']} target_roi={region['target_roi']}"
                     )
+                    vision = region.get("vision") or {}
+                    rounds = vision.get("revision_rounds") or []
+                    if rounds:
+                        last_round = rounds[-1]
+                        print(
+                            "  last_round: "
+                            f"stage={last_round.get('current_blocking_stage') or last_round.get('blocking_stage')} "
+                            f"reason={last_round.get('selected_reason') or last_round.get('stop_reason')} "
+                            f"severity={last_round.get('current_stage_severity_before')}->"
+                            f"{last_round.get('current_stage_severity_after')} "
+                            f"delta={last_round.get('current_stage_improvement')}"
+                        )
+                    if region.get("next_round_plan"):
+                        plan = region["next_round_plan"]
+                        print(
+                            "  next_round_plan: "
+                            f"stage={plan.get('blocking_stage')} severity={plan.get('stage_severity')} "
+                            f"actions={'; '.join(plan.get('actions') or [])}"
+                        )
         if not summary["ok"]:
             raise SystemExit(1)
         if not summary["accepted"]:

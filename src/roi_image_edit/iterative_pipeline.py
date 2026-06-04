@@ -2386,6 +2386,8 @@ def char_gray_band_metrics(
 ) -> dict[str, Any]:
     target_chars = [ch for ch in plan.target_text if not ch.isspace()]
     source_chars = [ch for ch in (plan.source_text or "") if not ch.isspace()]
+    if not is_mostly_cjk(plan.source_text or plan.target_text):
+        return {"enabled": False, "reason": "non-CJK span replacement uses ROI-level metrics"}
     if plan.draw_mode == "center":
         return {"enabled": False, "reason": "centered replacement has no per-character target slots"}
     if source_chars and len(source_chars) < len(target_chars):
@@ -3604,6 +3606,12 @@ def apply_suggested_patch(params: CandidateParams, patch: dict[str, Any] | None)
     jpeg_quality = max(0, min(99, params.jpeg_quality + bounded_int(patch.get("jpeg_quality_delta", 0), -12, 12)))
     text_dx = params.text_dx + bounded_int(patch.get("text_dx_delta", 0), -1, 1)
     text_dy = params.text_dy + bounded_int(patch.get("text_dy_delta", 0), -1, 1)
+    mask_threshold = max(80, min(230, params.mask_threshold + bounded_int(patch.get("mask_threshold_delta", 0), -20, 20)))
+    mask_dilate_iterations = max(
+        0,
+        min(5, params.mask_dilate_iterations + bounded_int(patch.get("mask_dilate_iterations_delta", 0), -1, 1)),
+    )
+    inpaint_radius = max(1, min(8, params.inpaint_radius + bounded_int(patch.get("inpaint_radius_delta", 0), -1, 1)))
     offsets = list(params.char_offsets)
     char_offsets_delta = patch.get("char_offsets_delta")
     if isinstance(char_offsets_delta, list):
@@ -3640,6 +3648,9 @@ def apply_suggested_patch(params: CandidateParams, patch: dict[str, Any] | None)
         text_dx=text_dx,
         text_dy=text_dy,
         char_offsets=tuple(offsets),
+        mask_threshold=mask_threshold,
+        mask_dilate_iterations=mask_dilate_iterations,
+        inpaint_radius=inpaint_radius,
     )
 
 

@@ -12,6 +12,18 @@
 
 本方案不接受折中交付。若候选没有通过硬校验、阶段门禁和最终视觉验收，只能作为 rejected candidate 展示，不能标记为成功应用。
 
+## Current Implementation Status
+
+- 已接入 `reference_profile` 报告字段，包含旧文字、邻字、动态墨色阈值和动态核心变浅阈值。
+- 已移除 `opacity >= 0.76` 作为硬下限，改为 `reference_profile.dynamic_ink.opacity_floor_for_excess_core`。
+- 已修复“核心 + 黑”文本误判，明确区分 `too_dark` / `too_bold` / `too_light` / `too_thin`。
+- 已接入 stage severity 优先选择，revision 记录包含 severity 前后值和 `selected_reason`。
+- 已支持字段缺旧值的自动 ROI，当前覆盖 `name` 和 `receive_time`，非 CJK 日期时间按整段值槽处理。
+- 已新增 `background_texture_metrics` 并把视觉 `patch_visible` / `ghost_visible` 转成本地背景修补候选。
+- 回归验证：
+  - `姓名陈芸修改为赵真真`：`output/web/20260605_005009`，3 轮后 `accepted=true`。
+  - `接受时间修改2026-06-04`：`output/web/20260605_010404`，自动 ROI 覆盖完整旧时间，8 轮后仍 `accepted=false`，原因是视觉验收认为右侧背景补丁仍可见。该结果必须保留为 rejected candidate，不得交付。
+
 ## 不折中目标
 
 1. 不用固定经验值作为最终裁决，例如 `opacity >= 0.76` 只能作为旧实现问题记录，不能作为阻止调参的硬下限。
@@ -47,10 +59,10 @@
 
 ### Checklist
 
-- [ ] 生成 `reference_profile.json` 或等价报告字段。
-- [ ] 报告中能区分旧字参照、邻字参照、背景参照。
-- [ ] 每个动态阈值都能说明来源：旧字、邻字、背景、复杂度修正或保守默认。
-- [ ] 如果没有可用邻字，报告必须写明邻字参照不可用，不能假装通过。
+- [x] 生成 `reference_profile.json` 或等价报告字段。
+- [x] 报告中能区分旧字参照、邻字参照、背景参照。
+- [x] 每个动态阈值都能说明来源：旧字、邻字、背景、复杂度修正或保守默认。
+- [x] 如果没有可用邻字，报告必须写明邻字参照不可用，不能假装通过。
 - [ ] 如果旧字和邻字参照冲突，报告必须写出仲裁结果。
 
 ### Done Definition
@@ -77,10 +89,10 @@
 
 ### Checklist
 
-- [ ] 删除或降级 `ink_gray_balance` 分支里的固定 `0.76` 下限。
-- [ ] 增加 `too_black`、`too_bold`、`core_too_black`、`核心黑度偏重` 的明确解析。
-- [ ] 增加 `too_light`、`core_too_light`、`核心不够黑` 的明确解析。
-- [ ] 验证同一文本中出现“核心”和“黑”时，不会自动判定为想要更黑。
+- [x] 删除或降级 `ink_gray_balance` 分支里的固定 `0.76` 下限。
+- [x] 增加 `too_black`、`too_bold`、`core_too_black`、`核心黑度偏重` 的明确解析。
+- [x] 增加 `too_light`、`core_too_light`、`核心不够黑` 的明确解析。
+- [x] 验证同一文本中出现“核心”和“黑”时，不会自动判定为想要更黑。
 - [ ] 每轮报告记录建议参数是否被本地约束截断。
 - [ ] 若建议被截断，必须写出截断原因和替代候选。
 
@@ -162,11 +174,11 @@
 
 ### Checklist
 
-- [ ] 在 `revision_attempts` 中记录每个候选的 stage severity。
-- [ ] 在 `revision_rounds` 中记录 selected candidate 的选择理由。
-- [ ] 记录当前 stage severity 是否比上一轮下降。
-- [ ] 若 `<55` 从接近合格反弹到明显超标，候选不得被选中，除非 text_shape 更高优先级重新失败并需要回退。
-- [ ] 若轮数结束但仍有明确建议，写出第 N+1 轮应该尝试的参数。
+- [x] 在 `revision_attempts` 中记录每个候选的 stage severity。
+- [x] 在 `revision_rounds` 中记录 selected candidate 的选择理由。
+- [x] 记录当前 stage severity 是否比上一轮下降。
+- [x] 若 `<55` 从接近合格反弹到明显超标，候选不得被选中，除非 text_shape 更高优先级重新失败并需要回退。
+- [x] 若轮数结束但仍有明确建议，写出第 N+1 轮应该尝试的参数。
 
 ### Done Definition
 
@@ -193,9 +205,9 @@
 
 ### Checklist
 
-- [ ] 增加 `background_texture_metrics`。
-- [ ] 把 background metrics 写入 hard report。
-- [ ] `background_cleanup` stage 使用这些指标，而不是只依赖视觉模型。
+- [x] 增加 `background_texture_metrics`。
+- [x] 把 background metrics 写入 hard report。
+- [x] `background_cleanup` stage 使用这些指标，而不是只依赖视觉模型。
 - [ ] Web 候选抽屉显示背景对比 crop。
 - [ ] 如果背景失败，下一轮优先修补背景，不继续调文字。
 
