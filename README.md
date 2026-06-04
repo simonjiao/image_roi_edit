@@ -18,6 +18,8 @@ License: [`GPL-3.0-or-later`](LICENSE).
 
 The implementation rules and accumulated review criteria are documented in
 [`docs/roi_text_replacement_rules.md`](docs/roi_text_replacement_rules.md).
+The no-compromise local-flow hardening plan and implementation checklist are in
+[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md).
 When changing the ROI pipeline, update that file alongside the code if the
 workflow, hard gates, iteration strategy, or visual acceptance criteria change.
 

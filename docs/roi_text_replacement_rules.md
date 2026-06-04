@@ -2,6 +2,10 @@
 
 本文档记录本项目在对话和回归中沉淀下来的处理规则。它不是聊天纪要，而是配合代码一起工作的工程规则：后续修改 `src/roi_image_edit/iterative_pipeline.py`、`src/roi_image_edit/web_app.py`、CLI 或 Web 流程时，应先对照这些规则。
 
+本地流程强化方案和不可折中的实施 checklist 见
+[`docs/local_flow_hardening_checklist.md`](local_flow_hardening_checklist.md)。
+当本文档中的现有经验值或旧规则与该 checklist 冲突时，以 checklist 中的原图参照、阶段求解和动态门禁要求为准。
+
 ## 目标边界
 
 1. 这是“在原图上修改 ROI”，不是重新生成整张图。
