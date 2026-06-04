@@ -273,14 +273,36 @@ class VisionClient:
             "response_format": {"type": "json_object"},
         }
         try:
-            return self._post(payload)
+            return self._post_with_retry(payload)
         except RuntimeError as exc:
             if "response_format" not in str(exc) and "temperature" not in str(exc):
                 raise
             fallback = copy.deepcopy(payload)
             fallback.pop("response_format", None)
             fallback.pop("temperature", None)
-            return self._post(fallback)
+            return self._post_with_retry(fallback)
+
+    def _post_with_retry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        retry_markers = (
+            "HTTP 502",
+            "HTTP 503",
+            "HTTP 504",
+            "temporarily unavailable",
+            "connection failed",
+            "timed out",
+        )
+        last_error: RuntimeError | None = None
+        for attempt in range(1, 4):
+            try:
+                return self._post(payload)
+            except RuntimeError as exc:
+                last_error = exc
+                if attempt >= 3 or not any(marker in str(exc) for marker in retry_markers):
+                    raise
+                time.sleep(1.5 * attempt)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("vision API retry loop ended without a response")
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         req = urllib.request.Request(

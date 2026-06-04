@@ -30,12 +30,22 @@
 不要选择最漂亮、最清晰的版本。
 要选择最像原图低分辨率扫描/拍照效果的版本。
 `char_offsets_delta` 中每个元素按 target_text 的非空白字符顺序对应一个目标字符，只给需要微调的字符填非零 dx/dy。
+必须按阶段给出判断：`text_shape` 未通过时，不要把主要建议写成加模糊、加噪声或压缩；`ink_gray_balance` 未通过时，不要用字体重搜或照片质感掩盖黑度/灰边问题；`photo_texture` 只在形态和墨色都通过后作为主要方向；`background_cleanup` 必须先处理旧字残留、发白、过平滑、接缝。
+必须区分：
+- `too_dark`：真黑核心或整体黑度超过原字/邻字；
+- `too_bold`：笔画身体面积或外扩明显过重；
+- `too_light`：核心黑度不足；
+- `too_thin`：笔画身体不足或中灰笔画缺失。
+禁止把“核心过黑、核心黑度偏重、黑芯过量、too_dark”表述成“核心不够黑”。
+如果需要修改，必须输出 `blocking_stage`、`direction` 和 `parameter_suggestions`。参数建议只能使用本地参数名，例如 `opacity`、`blur`、`stroke_opacity`、`ink_gain`、`alpha_contrast`、`core_ink_gain`、`core_darken_strength`、`core_darken_threshold`、`core_darken_target_gray`、`font_size`、`text_dx`、`text_dy`、`photo_warp`、`edge_breakup`、`photo_noise`、`jpeg_quality`、`mask_threshold`、`mask_dilate_iterations`、`inpaint_radius`。
 
 输出 JSON：
 
 {
   "pass": true,
   "best_candidate": "候选编号或参数标签",
+  "blocking_stage": null,
+  "direction": "deliver / fix_text_shape / reduce_true_black_core / recover_core_black / widen_mid_gray_body / trim_outer_gray_halo / add_photo_texture / clean_background_ghost",
   "reason": "选择该候选的主要原因",
   "rejected_candidates": {
     "候选编号或参数标签": "淘汰原因"
@@ -58,5 +68,9 @@
     ],
     "opacity_delta": 0,
     "blur_delta": 0
-  }
+  },
+  "parameter_suggestions": [
+    {"name": "opacity", "from": 0.76, "to": 0.72, "reason": "only if true-black core is too high"}
+  ],
+  "local_metric_conflicts": []
 }

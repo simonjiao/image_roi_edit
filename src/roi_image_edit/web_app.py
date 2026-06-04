@@ -68,6 +68,94 @@ ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
+PATCH_FAMILY_KEYS = {
+    "text_shape": {
+        "font_size_delta",
+        "text_dx_delta",
+        "text_dy_delta",
+        "char_offsets_delta",
+    },
+    "stroke_body_shape": {
+        "stroke_opacity_delta",
+        "ink_gain_delta",
+        "alpha_contrast_delta",
+        "core_ink_gain_delta",
+        "core_darken_strength_delta",
+        "core_darken_threshold_delta",
+        "core_darken_target_gray_delta",
+    },
+    "ink_gray_balance": {
+        "opacity_delta",
+        "stroke_opacity_delta",
+        "ink_gain_delta",
+        "alpha_contrast_delta",
+        "core_ink_gain_delta",
+        "core_darken_strength_delta",
+        "core_darken_threshold_delta",
+        "core_darken_target_gray_delta",
+    },
+    "photo_texture": {
+        "blur_delta",
+        "photo_warp_delta",
+        "edge_breakup_delta",
+        "photo_noise_delta",
+        "jpeg_quality_delta",
+    },
+    "background_cleanup": {
+        "mask_threshold_delta",
+        "mask_dilate_iterations_delta",
+        "inpaint_radius_delta",
+    },
+}
+
+STAGE_PATCH_POLICY = {
+    "hard_boundary": {
+        "allowed_families": [],
+        "forbidden_families": [
+            "text_shape",
+            "stroke_body_shape",
+            "ink_gray_balance",
+            "photo_texture",
+            "background_cleanup",
+        ],
+        "reason": "Hard boundary failures must stop before visual or revision tuning.",
+    },
+    "text_shape": {
+        "allowed_families": ["text_shape", "stroke_body_shape"],
+        "forbidden_families": ["background_cleanup"],
+        "secondary_only_families": ["photo_texture"],
+        "reason": "Shape must be solved by font, slot, baseline, pose, and stroke body before texture becomes dominant.",
+    },
+    "ink_gray_balance": {
+        "allowed_families": ["ink_gray_balance"],
+        "forbidden_families": ["text_shape", "background_cleanup"],
+        "secondary_only_families": ["photo_texture"],
+        "reason": "Ink balance must solve true-black core, mid-gray body, and gray edge before photo texture dominates.",
+    },
+    "photo_texture": {
+        "allowed_families": ["photo_texture"],
+        "forbidden_families": ["text_shape", "stroke_body_shape", "ink_gray_balance", "background_cleanup"],
+        "reason": "Photo texture is only allowed after shape and ink stages pass.",
+    },
+    "background_cleanup": {
+        "allowed_families": ["background_cleanup", "photo_texture"],
+        "forbidden_families": ["text_shape", "stroke_body_shape", "ink_gray_balance"],
+        "reason": "Background cleanup must repair mask, inpaint, texture, ghosting, and seams without using new text to hide residue.",
+    },
+    "none": {
+        "allowed_families": [
+            "text_shape",
+            "stroke_body_shape",
+            "ink_gray_balance",
+            "photo_texture",
+            "background_cleanup",
+        ],
+        "forbidden_families": [],
+        "reason": "No local blocking stage remains.",
+    },
+}
+
+
 def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "maxCandidates": payload.get("maxCandidates"),
@@ -2094,6 +2182,18 @@ def build_reference_profile(
         source_core_density,
         neighbor_core_density if neighbor_core_density is not None else 0.0,
     )
+    core_density_conflict = False
+    if neighbor_core_density is not None:
+        core_density_conflict = abs(source_core_density - neighbor_core_density) >= 0.045
+    if neighbor_core_density is None:
+        arbitration_rule = "source_only_no_same_row_neighbor"
+        selected_core_reference = "source"
+    elif source_core_density >= neighbor_core_density:
+        arbitration_rule = "use_darker_of_source_and_same_row_neighbor"
+        selected_core_reference = "source"
+    else:
+        arbitration_rule = "use_darker_of_source_and_same_row_neighbor"
+        selected_core_reference = "same_row_neighbor"
     if reference_core_density >= 0.18:
         opacity_floor = 0.72
     elif reference_core_density >= 0.12:
@@ -2126,6 +2226,15 @@ def build_reference_profile(
             "core_mean_lighten_limit": round(float(core_mean_lighten_limit), 3),
             "opacity_floor_for_excess_core": round(float(opacity_floor), 3),
             "basis": "source_text_region_and_same_row_neighbors",
+            "arbitration": {
+                "source_core_density": round(float(source_core_density), 5),
+                "neighbor_core_density": (
+                    None if neighbor_core_density is None else round(float(neighbor_core_density), 5)
+                ),
+                "conflict_detected": core_density_conflict,
+                "selected_core_reference": selected_core_reference,
+                "rule": arbitration_rule,
+            },
         },
     }
 
@@ -3419,6 +3528,134 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
     return float(len(stage_issues(report, stage_id))) * 100.0
 
 
+def patch_families(patch: dict[str, Any] | None) -> list[str]:
+    if not isinstance(patch, dict):
+        return []
+    keys = {str(key) for key, value in patch.items() if value is not None}
+    families: list[str] = []
+    for family, family_keys in PATCH_FAMILY_KEYS.items():
+        if keys & family_keys:
+            families.append(family)
+    return families
+
+
+def patch_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
+    policy = STAGE_PATCH_POLICY.get(stage_id or "none") or STAGE_PATCH_POLICY["none"]
+    return {
+        "stage": stage_id or None,
+        "allowed_families": list(policy.get("allowed_families") or []),
+        "forbidden_families": list(policy.get("forbidden_families") or []),
+        "secondary_only_families": list(policy.get("secondary_only_families") or []),
+        "reason": policy.get("reason"),
+    }
+
+
+def patch_policy_audit(stage_id: str | None, patch: dict[str, Any] | None) -> dict[str, Any]:
+    policy = patch_policy_for_stage(stage_id)
+    families = patch_families(patch)
+    allowed = set(policy["allowed_families"])
+    forbidden = set(policy["forbidden_families"])
+    secondary_only = set(policy.get("secondary_only_families") or [])
+    effective_families = list(families)
+    if stage_id == "text_shape" and "stroke_body_shape" in effective_families:
+        effective_families = [
+            family
+            for family in effective_families
+            if family != "ink_gray_balance"
+        ]
+    if stage_id == "ink_gray_balance" and "ink_gray_balance" in effective_families:
+        effective_families = [
+            family
+            for family in effective_families
+            if family != "stroke_body_shape"
+        ]
+    primary_families = [family for family in effective_families if family not in secondary_only]
+    forbidden_hits = [family for family in families if family in forbidden]
+    disallowed_primary = [
+        family
+        for family in primary_families
+        if family not in allowed and family not in secondary_only
+    ]
+    secondary_only_without_primary = bool(families and not primary_families and secondary_only.intersection(families))
+    is_allowed = not forbidden_hits and not disallowed_primary and not secondary_only_without_primary
+    if not families:
+        is_allowed = True
+    reason = "allowed"
+    if forbidden_hits:
+        reason = f"forbidden families for current stage: {', '.join(forbidden_hits)}"
+    elif disallowed_primary:
+        reason = f"primary families outside current stage: {', '.join(disallowed_primary)}"
+    elif secondary_only_without_primary:
+        reason = "secondary-only photo texture patch cannot be the main adjustment for this stage"
+    return {
+        **policy,
+        "families": families,
+        "effective_families": effective_families,
+        "primary_families": primary_families,
+        "allowed": is_allowed,
+        "rejection_reason": None if is_allowed else reason,
+    }
+
+
+def stage_policy_summary(stage_id: str | None) -> dict[str, Any]:
+    return patch_policy_for_stage(stage_id)
+
+
+def params_delta(before: CandidateParams, after: CandidateParams) -> dict[str, Any]:
+    changes: dict[str, Any] = {}
+    for name in before.__dataclass_fields__:
+        if name == "candidate_id":
+            continue
+        old = getattr(before, name)
+        new = getattr(after, name)
+        if old == new:
+            continue
+        if isinstance(old, float) or isinstance(new, float):
+            old_out = round(float(old), 4)
+            new_out = round(float(new), 4)
+        else:
+            old_out = old
+            new_out = new
+        changes[name] = {"from": old_out, "to": new_out}
+    return changes
+
+
+def constraint_reason(
+    report: dict[str, Any] | None,
+    acceptance: dict[str, Any],
+) -> str:
+    stage = (stage_gate_for_report(report).get("blocking_stage") if isinstance(report, dict) else None)
+    if stage == "text_shape":
+        return "text_shape_stage_caps_ink_and_photo_side_effects"
+    if report_has_excess_black_core(report):
+        return "dynamic_reference_profile_caps_true_black_core"
+    if report_has_background_white_ghost(report):
+        return "background_white_or_shadow_ghost_cleanup_caps"
+    if report_has_background_low_texture(report):
+        return "background_low_texture_recovery_caps"
+    if acceptance_reports_background_patch(acceptance):
+        return "vision_background_patch_feedback_caps"
+    if report_needs_wider_gray_strokes(report):
+        return "stroke_body_recovery_caps"
+    if report_needs_thinner_strokes(report):
+        return "thin_or_dark_core_recovery_caps"
+    return "no_local_constraint"
+
+
+def constraint_audit(
+    raw_params: CandidateParams,
+    constrained_params: CandidateParams,
+    report: dict[str, Any] | None,
+    acceptance: dict[str, Any],
+) -> dict[str, Any]:
+    changes = params_delta(raw_params, constrained_params)
+    return {
+        "applied": bool(changes),
+        "reason": constraint_reason(report, acceptance) if changes else "none",
+        "changes": changes,
+    }
+
+
 def alignment_vertical_penalty(report: dict[str, Any] | None) -> float:
     if not isinstance(report, dict):
         return 0.0
@@ -3869,6 +4106,49 @@ def final_acceptance_delivers(acceptance: dict[str, Any]) -> bool:
     return bool(acceptance.get("pass")) and final_level == "pass" and final_decision == "deliver"
 
 
+def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
+    if not isinstance(acceptance, dict):
+        return None
+    stage = str(acceptance.get("blocking_stage") or "").strip()
+    if stage in STAGE_PATCH_POLICY and stage != "none":
+        return stage
+    findings = acceptance.get("visual_findings")
+    if isinstance(findings, dict):
+        background = str(findings.get("background") or "").strip().lower()
+        if background in {"patch_visible", "ghost_visible", "seam_visible", "too_smooth"}:
+            return "background_cleanup"
+        sharpness = str(findings.get("sharpness") or "").strip().lower()
+        if sharpness in {"too_sharp", "too_blurry"}:
+            return "photo_texture"
+        darkness = str(findings.get("darkness") or "").strip().lower()
+        stroke_weight = str(findings.get("stroke_weight") or "").strip().lower()
+        if darkness in {"too_dark", "too_light"} or stroke_weight in {"too_bold", "too_thin", "slightly_bold"}:
+            return "ink_gray_balance"
+        text_shape_values = {
+            str(findings.get("char_positions") or "").strip().lower(),
+            str(findings.get("spacing") or "").strip().lower(),
+            str(findings.get("baseline") or "").strip().lower(),
+            str(findings.get("font_similarity") or "").strip().lower(),
+            str(findings.get("size") or "").strip().lower(),
+        }
+        if any(value and value not in {"ok", "pass"} for value in text_shape_values):
+            return "text_shape"
+    return None
+
+
+def effective_blocking_stage(
+    report: dict[str, Any] | None,
+    acceptance: dict[str, Any] | None,
+) -> tuple[str | None, bool]:
+    local_stage = None
+    if isinstance(report, dict):
+        local_stage = (stage_gate_for_report(report) or {}).get("blocking_stage")
+    if local_stage:
+        return str(local_stage), True
+    visual_stage = acceptance_blocking_stage(acceptance)
+    return visual_stage, False
+
+
 def acceptance_text_fragments(acceptance: dict[str, Any]) -> list[str]:
     fragments: list[str] = []
     if not isinstance(acceptance, dict):
@@ -3971,8 +4251,104 @@ def delta_patch_for_target(params: CandidateParams, name: str, target: float) ->
     return {mapping[name]: rounded_delta}
 
 
+def patch_from_parameter_suggestion(
+    params: CandidateParams,
+    suggestion: dict[str, Any],
+) -> dict[str, Any] | None:
+    name = str(suggestion.get("name") or suggestion.get("parameter") or "").strip()
+    if not name:
+        return None
+    if "to" in suggestion:
+        try:
+            return delta_patch_for_target(params, name, float(suggestion["to"]))
+        except (TypeError, ValueError):
+            return None
+
+    delta_key = f"{name}_delta"
+    delta = suggestion.get("delta", suggestion.get(delta_key))
+    if delta is None:
+        return None
+    mapping = {
+        "font_size": "font_size_delta",
+        "opacity": "opacity_delta",
+        "blur": "blur_delta",
+        "stroke_opacity": "stroke_opacity_delta",
+        "ink_gain": "ink_gain_delta",
+        "alpha_contrast": "alpha_contrast_delta",
+        "core_ink_gain": "core_ink_gain_delta",
+        "core_darken_strength": "core_darken_strength_delta",
+        "core_darken_threshold": "core_darken_threshold_delta",
+        "core_darken_target_gray": "core_darken_target_gray_delta",
+        "photo_warp": "photo_warp_delta",
+        "edge_breakup": "edge_breakup_delta",
+        "photo_noise": "photo_noise_delta",
+        "jpeg_quality": "jpeg_quality_delta",
+        "text_dx": "text_dx_delta",
+        "text_dy": "text_dy_delta",
+    }
+    patch_key = mapping.get(name)
+    if not patch_key:
+        return None
+    try:
+        if name in {"font_size", "core_darken_threshold", "core_darken_target_gray", "jpeg_quality", "text_dx", "text_dy"}:
+            value: float | int = int(round(float(delta)))
+        else:
+            value = round(float(delta), 4)
+    except (TypeError, ValueError):
+        return None
+    return {patch_key: value} if value else None
+
+
+def model_patch_records(
+    params: CandidateParams,
+    model_json: dict[str, Any],
+    *,
+    source: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(model_json, dict):
+        return []
+    records: list[dict[str, Any]] = []
+    suggested_patch = model_json.get("suggested_patch")
+    if isinstance(suggested_patch, dict):
+        records.append(
+            {
+                "source": source,
+                "kind": "suggested_patch",
+                "direction": model_json.get("direction"),
+                "blocking_stage": model_json.get("blocking_stage"),
+                "patch": suggested_patch,
+            }
+        )
+
+    suggestions = model_json.get("parameter_suggestions")
+    if isinstance(suggestions, list):
+        for idx, suggestion in enumerate(suggestions, start=1):
+            if not isinstance(suggestion, dict):
+                continue
+            patch = patch_from_parameter_suggestion(params, suggestion)
+            if not patch:
+                continue
+            records.append(
+                {
+                    "source": source,
+                    "kind": "parameter_suggestion",
+                    "index": idx,
+                    "direction": model_json.get("direction"),
+                    "blocking_stage": model_json.get("blocking_stage"),
+                    "suggestion": suggestion,
+                    "patch": patch,
+                }
+            )
+    return records
+
+
 def numeric_revision_patches(params: CandidateParams, acceptance: dict[str, Any]) -> list[dict[str, Any]]:
     patches: list[dict[str, Any]] = []
+    patches.extend(
+        record["patch"]
+        for record in model_patch_records(params, acceptance, source="model_json")
+        if isinstance(record.get("patch"), dict)
+    )
     param_names = (
         "core_darken_strength",
         "core_ink_gain",
@@ -4431,11 +4807,11 @@ def constrained_revision_params(
     if acceptance_reports_background_patch(acceptance):
         return mutate_params(
             params,
-            photo_noise=min(0.060, params.photo_noise),
-            edge_breakup=min(0.024, params.edge_breakup),
-            jpeg_quality=max(90, params.jpeg_quality),
+            photo_noise=min(0.120, params.photo_noise),
+            edge_breakup=min(0.050, params.edge_breakup),
+            jpeg_quality=max(82, params.jpeg_quality),
             mask_dilate_iterations=max(2, params.mask_dilate_iterations),
-            inpaint_radius=max(1, min(2, params.inpaint_radius)),
+            inpaint_radius=max(1, min(3, params.inpaint_radius)),
         )
 
     if not report_needs_thinner_strokes(report):
@@ -5068,6 +5444,18 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
     return dedupe_patches(patches, 8)
 
 
+def visual_background_cleanup_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
+    if not acceptance_reports_background_patch(acceptance):
+        return []
+    return [
+        {"photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
+        {"photo_noise_delta": 0.045, "edge_breakup_delta": 0.014, "jpeg_quality_delta": -10},
+        {"inpaint_radius_delta": -1, "photo_noise_delta": 0.035, "edge_breakup_delta": 0.012},
+        {"mask_threshold_delta": -8, "inpaint_radius_delta": -1, "photo_noise_delta": 0.030},
+        {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.035, "edge_breakup_delta": 0.010},
+    ]
+
+
 def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     issue_types = {
         str(issue.get("type") or "")
@@ -5209,7 +5597,8 @@ def revision_patches_for_round(
 ) -> list[dict[str, Any]]:
     patches: list[dict[str, Any]] = []
     stage_gate = stage_gate_for_report(report) if isinstance(report, dict) else {}
-    if stage_gate.get("blocking_stage") == "text_shape":
+    blocking_stage = stage_gate.get("blocking_stage") or acceptance_blocking_stage(acceptance)
+    if blocking_stage == "text_shape":
         if report_has_outer_gray_halo(report):
             patches.extend(neighbor_outer_gray_cleanup_patches())
             patches.extend(
@@ -5240,7 +5629,7 @@ def revision_patches_for_round(
             patches.append(rank_patch)
         return dedupe_patches(patches, 12)
 
-    if stage_gate.get("blocking_stage") == "photo_texture":
+    if blocking_stage == "photo_texture":
         patches.extend(alignment_centering_patches(report))
         patches.extend(photo_texture_recovery_patches(report))
         patches.extend(final_revision_patches(acceptance))
@@ -5248,8 +5637,10 @@ def revision_patches_for_round(
             patches.append(rank_patch)
         return dedupe_patches(patches, 12)
 
-    if stage_gate.get("blocking_stage") == "background_cleanup":
+    if blocking_stage == "background_cleanup":
         patches.extend(background_cleanup_recovery_patches(report))
+        patches.extend(visual_background_cleanup_patches(acceptance))
+        patches.extend(numeric_revision_patches(params, acceptance))
         patches.extend(photo_texture_recovery_patches(report))
         if isinstance(rank_patch, dict):
             patches.append(rank_patch)
@@ -5264,7 +5655,7 @@ def revision_patches_for_round(
         patches.extend(final_revision_patches(acceptance))
         return dedupe_patches(patches, 12)
 
-    if stage_gate.get("blocking_stage") == "ink_gray_balance":
+    if blocking_stage == "ink_gray_balance":
         patches.extend(alignment_centering_patches(report))
         patches.extend(ink_balance_recovery_patches(report))
         patches.extend(numeric_revision_patches(params, acceptance))
@@ -5876,6 +6267,17 @@ def run_region_vision_checks(
         rank_patch = candidate_rank_json.get("suggested_patch")
         max_revision_rounds = 8
         for round_idx in range(1, max_revision_rounds + 1):
+            basis_stage_gate = stage_gate_for_report(current_report) if isinstance(current_report, dict) else {}
+            basis_blocking_stage, basis_stage_is_local = effective_blocking_stage(current_report, current_acceptance)
+            basis_stage_source = (
+                "local_report"
+                if basis_stage_is_local
+                else "vision_acceptance"
+                if basis_blocking_stage
+                else "none"
+            )
+            basis_stage_severity = stage_issue_severity(current_report, basis_blocking_stage)
+            basis_stage_policy = stage_policy_summary(str(basis_blocking_stage) if basis_blocking_stage else None)
             if progress:
                 progress(
                     "revision_round_started",
@@ -5884,6 +6286,9 @@ def run_region_vision_checks(
                         "basis_candidate_id": current_params.candidate_id,
                         "basis_acceptance_level": current_acceptance.get("acceptance_level"),
                         "basis_final_decision": current_acceptance.get("final_decision"),
+                        "basis_blocking_stage": basis_blocking_stage,
+                        "basis_stage_source": basis_stage_source,
+                        "basis_stage_severity": round(float(basis_stage_severity), 3),
                     },
                 )
             round_patches = revision_patches_for_round(
@@ -5892,6 +6297,53 @@ def run_region_vision_checks(
                 current_report,
                 rank_patch=rank_patch if round_idx == 1 and isinstance(rank_patch, dict) else None,
             )
+            model_records: list[dict[str, Any]] = []
+            if round_idx == 1:
+                model_records.extend(
+                    model_patch_records(current_params, candidate_rank_json, source="candidate_rank")
+                )
+            model_records.extend(
+                model_patch_records(
+                    current_params,
+                    current_acceptance,
+                    source=f"final_acceptance_basis_round_{round_idx - 1}",
+                )
+            )
+            model_conflicts: list[dict[str, Any]] = []
+            allowed_model_patches: list[dict[str, Any]] = []
+            patch_source_lookup: dict[str, list[dict[str, Any]]] = {}
+            for record in model_records:
+                patch = record.get("patch")
+                if not isinstance(patch, dict):
+                    continue
+                policy_audit = patch_policy_audit(
+                    str(basis_blocking_stage) if basis_blocking_stage else None,
+                    patch,
+                )
+                record["patch_policy"] = policy_audit
+                patch_source_lookup.setdefault(patch_signature(patch), []).append(record)
+                if policy_audit["allowed"]:
+                    allowed_model_patches.append(patch)
+                else:
+                    model_conflicts.append(record)
+            round_patches.extend(allowed_model_patches)
+            filtered_patches: list[dict[str, Any]] = []
+            rejected_local_patches: list[dict[str, Any]] = []
+            for patch in dedupe_patches(round_patches, 24):
+                policy_audit = patch_policy_audit(
+                    str(basis_blocking_stage) if basis_blocking_stage else None,
+                    patch,
+                )
+                if policy_audit["allowed"]:
+                    filtered_patches.append(patch)
+                else:
+                    rejected_local_patches.append(
+                        {
+                            "patch": patch,
+                            "patch_policy": policy_audit,
+                        }
+                    )
+            round_patches = dedupe_patches(filtered_patches, 12)
             shape_reset_params = text_shape_reset_candidates(
                 current_params,
                 font_style_reference,
@@ -5906,6 +6358,13 @@ def run_region_vision_checks(
                 "basis_final_decision": current_acceptance.get("final_decision"),
                 "patch_count": len(round_patches),
                 "shape_reset_count": len(shape_reset_params),
+                "basis_blocking_stage": basis_blocking_stage,
+                "basis_stage_source": basis_stage_source,
+                "basis_stage_severity": round(float(basis_stage_severity), 3),
+                "stage_policy": basis_stage_policy,
+                "model_suggestions": model_records,
+                "model_conflicts": model_conflicts,
+                "rejected_local_patches": rejected_local_patches,
             }
             if progress:
                 progress(
@@ -5914,7 +6373,10 @@ def run_region_vision_checks(
                         "round": round_idx,
                         "patch_count": len(round_patches),
                         "shape_reset_count": len(shape_reset_params),
-                        "basis_blocking_stage": (current_report.get("stage_gate") or {}).get("blocking_stage"),
+                        "basis_blocking_stage": basis_blocking_stage,
+                        "basis_stage_source": basis_stage_source,
+                        "basis_stage_severity": round(float(basis_stage_severity), 3),
+                        "stage_policy": basis_stage_policy,
                     },
                 )
             if not round_patches and not shape_reset_params:
@@ -5926,21 +6388,27 @@ def run_region_vision_checks(
                 tuple[float, float, CandidateParams, Image.Image, dict[str, Any], dict[str, Any]]
             ] = []
 
-            candidate_jobs: list[tuple[str, int, dict[str, Any] | None, CandidateParams]] = []
+            candidate_jobs: list[tuple[str, int, dict[str, Any] | None, CandidateParams, dict[str, Any]]] = []
             for shape_idx, shape_params in enumerate(shape_reset_params, start=1):
-                candidate_jobs.append(("shape_reset", shape_idx, None, shape_params))
+                candidate_jobs.append(("shape_reset", shape_idx, None, shape_params, {"applied": False, "reason": "none", "changes": {}}))
             for patch_idx, patch in enumerate(round_patches, start=1):
-                patched_params = apply_suggested_patch(current_params, patch)
+                raw_patched_params = apply_suggested_patch(current_params, patch)
                 patched_params = constrained_revision_params(
-                    patched_params,
+                    raw_patched_params,
                     current_params,
                     current_acceptance,
                     current_report,
                     round_idx=round_idx,
                 )
-                candidate_jobs.append(("patch", patch_idx, patch, patched_params))
+                audit = constraint_audit(
+                    raw_patched_params,
+                    patched_params,
+                    current_report,
+                    current_acceptance,
+                )
+                candidate_jobs.append(("patch", patch_idx, patch, patched_params, audit))
 
-            for candidate_origin, candidate_idx, patch, patched_params in candidate_jobs:
+            for candidate_origin, candidate_idx, patch, patched_params, patch_constraint_audit in candidate_jobs:
                 patched_params = mutate_params(
                     patched_params,
                     candidate_id=(
@@ -5983,12 +6451,11 @@ def run_region_vision_checks(
                     and patched_report.get("pass")
                     and patched_blocking_stage != "text_shape"
                 )
-                current_stage_gate = current_report.get("stage_gate") or {}
-                current_blocking_stage = current_stage_gate.get("blocking_stage")
+                current_blocking_stage = basis_blocking_stage
                 current_stage_improvement = 0.0
                 current_stage_severity_before = 0.0
                 current_stage_severity_after = 0.0
-                if current_blocking_stage and current_blocking_stage != "text_shape":
+                if basis_stage_is_local and current_blocking_stage and current_blocking_stage != "text_shape":
                     current_stage_severity_before = stage_issue_severity(
                         current_report,
                         str(current_blocking_stage),
@@ -6026,6 +6493,24 @@ def run_region_vision_checks(
                 }
                 if patch is not None:
                     attempt_record["patch"] = patch
+                    attempt_record["patch_policy"] = patch_policy_audit(
+                        str(current_blocking_stage) if current_blocking_stage else None,
+                        patch,
+                    )
+                    suggestion_records = patch_source_lookup.get(patch_signature(patch), [])
+                    if suggestion_records:
+                        attempt_record["model_suggestions"] = suggestion_records
+                    if patch_constraint_audit.get("applied"):
+                        patch_constraint_audit["alternative_candidate_id"] = patched_params.candidate_id
+                    attempt_record["constraint"] = patch_constraint_audit
+                else:
+                    attempt_record["patch_policy"] = {
+                        **stage_policy_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "families": ["shape_reset"],
+                        "primary_families": ["shape_reset"],
+                        "allowed": current_blocking_stage == "text_shape",
+                        "rejection_reason": None if current_blocking_stage == "text_shape" else "shape reset is only generated for text_shape",
+                    }
                 if not patched_strict:
                     attempt_record["strict_gate"] = patched_report.get("strict_gate")
                 if not report_stage_pass(patched_report):
@@ -6061,8 +6546,8 @@ def run_region_vision_checks(
                     progressed_candidates.sort(key=lambda item: item[0])
                     selected_tuple = progressed_candidates[0]
                     selected_reason = "progresses_past_text_shape"
-            current_blocking_stage = (current_report.get("stage_gate") or {}).get("blocking_stage")
-            if current_blocking_stage and current_blocking_stage != "text_shape":
+            current_blocking_stage = basis_blocking_stage
+            if basis_stage_is_local and current_blocking_stage and current_blocking_stage != "text_shape":
                 improving_stage_candidates = [
                     item
                     for item in round_candidates
@@ -6169,10 +6654,13 @@ def run_region_vision_checks(
             revision_previews.append(
                 {
                     "round": round_idx,
+                    "kind": "revision_selected",
                     "candidate_id": patched_params.candidate_id,
                     "label": params_label(patched_params),
                     "score": round(float(patched_score), 3),
                     "path": str(patched_compare_path),
+                    "selected_reason": selected_reason,
+                    **candidate_trace_summary(patched_report),
                     "metrics": (patched_report.get("strict_visual_metrics") or {}).get("bands", {}),
                 }
             )
@@ -6255,10 +6743,17 @@ def run_region_vision_checks(
         final_stage_gate = stage_gate_for_report(final_report)
     next_round_plan = None
     if not accepted:
-        blocking_stage = final_stage_gate.get("blocking_stage")
+        blocking_stage = final_stage_gate.get("blocking_stage") or acceptance_blocking_stage(final_acceptance_json)
         next_round_plan = {
             "blocking_stage": blocking_stage,
             "stage_severity": round(float(stage_issue_severity(final_report, blocking_stage)), 3),
+            "stage_source": (
+                "local_report"
+                if final_stage_gate.get("blocking_stage")
+                else "vision_acceptance"
+                if blocking_stage
+                else "none"
+            ),
             "reference_profile_dynamic_ink": (
                 (final_report.get("reference_profile") or {}).get("dynamic_ink")
                 if isinstance(final_report.get("reference_profile"), dict)
@@ -6323,6 +6818,52 @@ def compare_region_preview(
     sheet.paste(old.resize((w * scale, h * scale), Image.Resampling.NEAREST), (0, label_h))
     sheet.paste(new.resize((w * scale, h * scale), Image.Resampling.NEAREST), (w * scale, label_h))
     return sheet
+
+
+def candidate_trace_summary(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    stage_gate = report.get("stage_gate") if isinstance(report.get("stage_gate"), dict) else stage_gate_for_report(report)
+    blocking_stage = stage_gate.get("blocking_stage") if isinstance(stage_gate, dict) else None
+    background_metrics = report.get("background_texture_metrics")
+    background_issues = stage_issues(report, "background_cleanup")
+    return {
+        "blocking_stage": blocking_stage,
+        "stage_pass": bool(stage_gate.get("pass")) if isinstance(stage_gate, dict) else None,
+        "stage_severity": round(float(stage_issue_severity(report, blocking_stage)), 3),
+        "background": {
+            "issues": [
+                str(issue.get("type") or "")
+                for issue in background_issues
+                if isinstance(issue, dict)
+            ],
+            "patch_mean_delta": (
+                background_metrics.get("patch_mean_delta")
+                if isinstance(background_metrics, dict)
+                else None
+            ),
+            "patch_variance_ratio": (
+                background_metrics.get("patch_variance_ratio")
+                if isinstance(background_metrics, dict)
+                else None
+            ),
+            "residual_energy_ratio": (
+                background_metrics.get("residual_energy_ratio")
+                if isinstance(background_metrics, dict)
+                else None
+            ),
+            "white_ghost_probe": (
+                background_metrics.get("white_ghost_probe")
+                if isinstance(background_metrics, dict)
+                else None
+            ),
+            "shadow_ghost_ratio": (
+                background_metrics.get("shadow_ghost_ratio")
+                if isinstance(background_metrics, dict)
+                else None
+            ),
+        },
+    }
 
 
 def process_region(
@@ -6627,9 +7168,14 @@ def process_region(
         preview_items.append(
             {
                 "index": len(preview_items) + 1,
+                "kind": str(preview.get("kind") or "revision_selected"),
                 "candidate_id": str(preview.get("candidate_id") or ""),
                 "label": f"iter {preview.get('round')} {preview.get('label') or ''}",
                 "score": preview.get("score"),
+                "blocking_stage": preview.get("blocking_stage"),
+                "stage_severity": preview.get("stage_severity"),
+                "selection_reason": preview.get("selected_reason"),
+                "background": preview.get("background") if isinstance(preview.get("background"), dict) else {},
                 "dataUrl": image_to_data_url(preview_image),
                 "metrics": {
                     "lt55_delta": metrics.get("lt55_delta"),
@@ -6650,6 +7196,7 @@ def process_region(
         preview_items.append(
             {
                 "index": len(preview_items) + 1,
+                "kind": "initial_local_rank",
                 "candidate_id": params.candidate_id,
                 "label": (
                     f"{params.font_name} {params.font_size}px "
@@ -6657,6 +7204,7 @@ def process_region(
                     f"dark {params.core_darken_strength:.2f}"
                 ),
                 "score": round(float(score), 3),
+                **candidate_trace_summary(report),
                 "dataUrl": image_to_data_url(preview),
                 "metrics": {
                     "lt55_delta": bands.get("lt55_delta"),
@@ -6675,6 +7223,19 @@ def process_region(
     selected_compare_path = region_dir / "selected_candidate_compare.png"
     best_image.save(selected_candidate_path)
     compare_region_preview(original, best_image, roi).save(selected_compare_path)
+    best_trace = candidate_trace_summary(best_report)
+    vision_next_plan = vision_summary.get("next_round_plan") if isinstance(vision_summary, dict) else None
+    visual_final_stage = (
+        vision_next_plan.get("blocking_stage")
+        if isinstance(vision_next_plan, dict)
+        else None
+    )
+    revision_round_records = (
+        vision_summary.get("revision_rounds")
+        if isinstance(vision_summary.get("revision_rounds"), list)
+        else []
+    )
+    last_round = revision_round_records[-1] if revision_round_records else {}
     return (
         applied_image,
         best_image,
@@ -6692,6 +7253,17 @@ def process_region(
             "score": round(float(best_score), 3),
             "hard_check": best_report,
             "vision": vision_summary,
+            "trace": {
+                "accepted": accepted,
+                "final_is_rejected_candidate": not accepted,
+                "final_candidate_id": best_params.candidate_id,
+                "final_blocking_stage": best_trace.get("blocking_stage") or visual_final_stage,
+                "final_stage_severity": best_trace.get("stage_severity"),
+                "revision_round_count": len(revision_round_records),
+                "last_round_stop_reason": last_round.get("stop_reason") if isinstance(last_round, dict) else None,
+                "last_round_selected_reason": last_round.get("selected_reason") if isinstance(last_round, dict) else None,
+                "next_round_plan": vision_next_plan,
+            },
             "accepted": accepted,
             "applied": accepted,
             "artifacts": {
@@ -6817,6 +7389,9 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "region_id": region_id,
                         "accepted": accepted,
                         "revision_rounds": len((summary.get("vision") or {}).get("revision_rounds", [])),
+                        "blocking_stage": (summary.get("trace") or {}).get("final_blocking_stage"),
+                        "stage_severity": (summary.get("trace") or {}).get("final_stage_severity"),
+                        "stop_reason": (summary.get("trace") or {}).get("last_round_stop_reason"),
                     },
                 )
                 image_accepted = image_accepted and accepted

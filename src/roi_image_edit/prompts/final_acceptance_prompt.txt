@@ -39,12 +39,25 @@
 - marginal：硬校验通过，但视觉上有轻微问题；可交付但建议小幅优化。
 - fail：硬校验失败，或视觉上明显不自然。
 
+必须按阶段给出失败原因：
+1. `text_shape`：字体结构、字号、字槽、字距、基线、局部倾斜、笔画身体；
+2. `ink_gray_balance`：真黑核心、中灰笔画、外灰边；
+3. `photo_texture`：照片/扫描模糊、锯齿断裂、噪声、压缩质感；
+4. `background_cleanup`：旧字残留、发白、过平滑、涂抹、接缝。
+
+如果 `text_shape` 未通过，不能用“加模糊、加噪声、压缩”作为主要修复方向。
+如果 `ink_gray_balance` 未通过，必须明确是 `too_dark`、`too_bold`、`too_light` 还是 `too_thin`，不要混用。
+禁止把“核心过黑、核心黑度偏重、黑芯过量、too_dark”写成“核心不够黑”。
+如果需要 revise，必须输出 `blocking_stage`、`direction` 和 `parameter_suggestions`，本地会把它们转成候选；如果建议与本地硬指标冲突，本地会记录 conflict。
+
 输出 JSON：
 
 {
   "pass": true,
   "acceptance_level": "pass",
   "reason": "硬校验通过，视觉上可接受为同一张图中的文字。",
+  "blocking_stage": null,
+  "direction": "deliver / fix_text_shape / reduce_true_black_core / recover_core_black / widen_mid_gray_body / trim_outer_gray_halo / add_photo_texture / clean_background_ghost",
   "hard_check": {
     "size_match": true,
     "outside_roi_unchanged": true,
@@ -69,5 +82,9 @@
       "suggestion": "char_offsets_delta 中对应字符 dx=+1"
     }
   ],
+  "parameter_suggestions": [
+    {"name": "opacity", "from": 0.76, "to": 0.72, "reason": "only if true-black core is too high"}
+  ],
+  "local_metric_conflicts": [],
   "final_decision": "deliver / revise"
 }

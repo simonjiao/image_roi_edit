@@ -106,6 +106,35 @@ function updateRegionCount(item) {
   updateProcessButton();
 }
 
+function formatNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return String(value);
+  }
+  return Math.abs(number) >= 10 ? number.toFixed(1) : number.toFixed(3);
+}
+
+function candidateMetaLines(candidate) {
+  const metrics = candidate.metrics || {};
+  const background = candidate.background || {};
+  const issues = Array.isArray(background.issues)
+    ? background.issues.filter(Boolean).slice(0, 2).join(", ")
+    : "";
+  const lines = [
+    `${candidate.index}. ${candidate.kind || "candidate"} | ${candidate.label}`,
+    `stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
+    `lt55 ${formatNumber(metrics.lt55_delta)} | 55-70 ${formatNumber(metrics.band_55_70_delta)} | 70-90 ${formatNumber(metrics.band_70_90_delta)}`,
+    `background ${issues || "ok"} | var ${formatNumber(background.patch_variance_ratio)} | residual ${formatNumber(background.residual_energy_ratio)}`,
+  ];
+  if (candidate.selection_reason) {
+    lines.push(`selected: ${candidate.selection_reason}`);
+  }
+  return lines;
+}
+
 function renderCandidates(item, candidates) {
   const list = item.elements.candidateList;
   list.innerHTML = "";
@@ -116,19 +145,56 @@ function renderCandidates(item, candidates) {
   candidates.slice(0, 5).forEach((candidate) => {
     const box = document.createElement("div");
     box.className = "candidate-item";
-    const metrics = candidate.metrics || {};
     const meta = document.createElement("div");
     meta.className = "candidate-meta";
-    meta.textContent =
-      `${candidate.index}. ${candidate.label} | ` +
-      `lt55 ${metrics.lt55_delta ?? "-"} | 55-70 ${metrics.band_55_70_delta ?? "-"} | ` +
-      `70-90 ${metrics.band_70_90_delta ?? "-"}`;
+    candidateMetaLines(candidate).forEach((line) => {
+      const row = document.createElement("div");
+      row.className = "candidate-meta-line";
+      row.textContent = line;
+      meta.appendChild(row);
+    });
     const img = document.createElement("img");
     img.alt = "";
     img.src = candidate.dataUrl;
     box.append(meta, img);
     list.appendChild(box);
   });
+}
+
+function renderTrace(item, entry) {
+  const panel = item.elements.tracePanel;
+  panel.innerHTML = "";
+  const regions = Array.isArray(entry.regions) ? entry.regions : [];
+  if (!regions.length) {
+    panel.style.display = "none";
+    return;
+  }
+  regions.forEach((region) => {
+    const trace = region.summary?.trace || {};
+    const vision = region.summary?.vision || {};
+    const nextPlan = trace.next_round_plan || vision.next_round_plan || {};
+    const lines = [
+      `${region.id || "region"} | ${region.accepted ? "accepted" : "rejected"} | stage ${trace.final_blocking_stage || "pass"} | rounds ${trace.revision_round_count ?? 0}`,
+    ];
+    if (trace.last_round_stop_reason) {
+      lines.push(`stop: ${trace.last_round_stop_reason}`);
+    }
+    if (trace.last_round_selected_reason) {
+      lines.push(`selected: ${trace.last_round_selected_reason}`);
+    }
+    if (nextPlan.blocking_stage || nextPlan.actions?.length) {
+      lines.push(
+        `next: ${nextPlan.blocking_stage || "vision"} | ${(nextPlan.actions || []).slice(0, 1).join(" ")}`,
+      );
+    }
+    lines.forEach((line) => {
+      const row = document.createElement("div");
+      row.className = "trace-line";
+      row.textContent = line;
+      panel.appendChild(row);
+    });
+  });
+  panel.style.display = "block";
 }
 
 function renderItem(item) {
@@ -145,6 +211,7 @@ function renderItem(item) {
     resultImage: node.querySelector(".result-image"),
     emptyResult: node.querySelector(".empty-result"),
     visionStatus: node.querySelector(".vision-status"),
+    tracePanel: node.querySelector(".trace-panel"),
     drawerToggle: node.querySelector(".drawer-toggle"),
     candidateList: node.querySelector(".candidate-list"),
   };
@@ -280,6 +347,7 @@ async function processAll() {
         item.elements.emptyResult.textContent = entry.error || "处理失败";
         item.elements.resultImage.style.display = "none";
         item.elements.visionStatus.style.display = "none";
+        item.elements.tracePanel.style.display = "none";
         continue;
       }
       if (entry.sourceDataUrl && entry.sourceDataUrl !== item.dataUrl) {
@@ -319,6 +387,7 @@ async function processAll() {
         : `视觉验收未通过${roundsText}${rejectedArtifactText}，未应用为交付图`;
       item.elements.visionStatus.className = `vision-status ${entry.accepted ? "pass" : "fail"}`;
       item.elements.visionStatus.style.display = "block";
+      renderTrace(item, entry);
       renderCandidates(item, entry.candidates);
     }
     setStatus("处理完成");
@@ -332,6 +401,7 @@ async function processAll() {
       item.elements.emptyResult.style.display = "block";
       item.elements.resultImage.style.display = "none";
       item.elements.visionStatus.style.display = "none";
+      item.elements.tracePanel.style.display = "none";
     });
   } finally {
     updateProcessButton();

@@ -236,6 +236,27 @@ input {
   border-color: #d89a9a;
 }
 
+.trace-panel {
+  position: absolute;
+  left: 10px;
+  right: 54px;
+  bottom: 10px;
+  display: none;
+  max-height: 34%;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(53, 65, 78, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #27313b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.trace-line + .trace-line {
+  margin-top: 3px;
+}
+
 .drawer-toggle {
   position: absolute;
   top: 10px;
@@ -295,6 +316,10 @@ input {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.candidate-meta-line + .candidate-meta-line {
+  margin-top: 3px;
 }
 
 .candidate-item img {

@@ -24,9 +24,15 @@
 - 已把背景 retexture 和 ROI 扫描残差强度接入本地参数，`background_cleanup` 不再只能靠视觉模型描述补丁感。
 - 对日期/数字这类旧值更长、新值更短的任务，不允许用整块矩形补丁清理尾部；旧尾部只能通过旧字符笔画 mask、灰边扩展和 ghost/shadow 指标处理。
 - 已修复 severity 正向但低于显著阈值时 `near_best` 为空导致的迭代崩溃；小幅正向改善会继续迭代并写入 `selected_reason`。
+- 已新增 stage patch policy：每轮记录当前 blocking stage、允许/禁止 patch family、被拒绝的本地 patch、模型建议和本地指标冲突。
+- 已把视觉模型的 `parameter_suggestions` 转为本地 patch，并在 attempt record 里记录是否被本地约束截断及替代候选。
+- 已在 Web 结果区显示 accepted/rejected、blocking stage、迭代轮次、停止原因和下一轮计划；候选抽屉显示最多 5 个代表性候选及背景摘要。
+- 已给视觉 API 临时 502/503/504/连接错误增加短重试，避免完整流程被单次上游波动中断。
 - 回归验证：
   - `接受时间修改2026-06-04`：`output/web/20260605_020104`，自动 ROI `[1296,94,1624,134]`，1 轮后 `accepted=true`，最终无本地 blocking stage。
   - `姓名陈芸修改为赵真真`：`output/web/20260605_020350`，3 轮后 `accepted=true`，最后一轮 `ink_gray_balance` severity `39.284 -> 0.0`。
+  - `接受时间修改2026-06-04`：`output/web/20260605_024521`，视觉初验将背景问题映射为 `background_cleanup`，1 轮后 `accepted=true`，progress 写入 `basis_stage_source=vision_acceptance`。
+  - `姓名陈芸修改为赵真真`：`output/web/20260605_024811`，6 轮后 `accepted=true`，`ink_gray_balance` severity `741.344 -> 170.464 -> 39.284 -> 0.0`，后续视觉墨色反馈继续回灌本地候选。
 
 ## 不折中目标
 
@@ -67,7 +73,7 @@
 - [x] 报告中能区分旧字参照、邻字参照、背景参照。
 - [x] 每个动态阈值都能说明来源：旧字、邻字、背景、复杂度修正或保守默认。
 - [x] 如果没有可用邻字，报告必须写明邻字参照不可用，不能假装通过。
-- [ ] 如果旧字和邻字参照冲突，报告必须写出仲裁结果。
+- [x] 如果旧字和邻字参照冲突，报告必须写出仲裁结果。
 
 ### Done Definition
 
@@ -97,8 +103,8 @@
 - [x] 增加 `too_black`、`too_bold`、`core_too_black`、`核心黑度偏重` 的明确解析。
 - [x] 增加 `too_light`、`core_too_light`、`核心不够黑` 的明确解析。
 - [x] 验证同一文本中出现“核心”和“黑”时，不会自动判定为想要更黑。
-- [ ] 每轮报告记录建议参数是否被本地约束截断。
-- [ ] 若建议被截断，必须写出截断原因和替代候选。
+- [x] 每轮报告记录建议参数是否被本地约束截断。
+- [x] 若建议被截断，必须写出截断原因和替代候选。
 
 ### Done Definition
 
@@ -147,12 +153,12 @@
 
 ### Checklist
 
-- [ ] 为每个 stage 定义允许参数和禁止参数。
-- [ ] `text_shape` 未通过时，禁止 `blur`、`photo_noise`、`jpeg_quality` 成为主调参方向。
-- [ ] `ink_gray_balance` 未通过时，禁止形态重搜或照片质感覆盖墨色问题，除非当前候选形态又失败。
-- [ ] `photo_texture` 未通过前，确认前两个阶段已通过。
-- [ ] `background_cleanup` 未通过时，优先修 mask、inpaint 和纹理恢复，不用新字遮盖旧残留。
-- [ ] 每轮只允许当前 blocking stage 的 patch family 主导候选。
+- [x] 为每个 stage 定义允许参数和禁止参数。
+- [x] `text_shape` 未通过时，禁止 `blur`、`photo_noise`、`jpeg_quality` 成为主调参方向。
+- [x] `ink_gray_balance` 未通过时，禁止形态重搜或照片质感覆盖墨色问题，除非当前候选形态又失败。
+- [x] `photo_texture` 未通过前，确认前两个阶段已通过。
+- [x] `background_cleanup` 未通过时，优先修 mask、inpaint 和纹理恢复，不用新字遮盖旧残留。
+- [x] 每轮只允许当前 blocking stage 的 patch family 主导候选。
 
 ### Done Definition
 
@@ -216,7 +222,7 @@
 - [x] `background_cleanup` stage 使用这些指标，而不是只依赖视觉模型。
 - [x] 区分白色 ghost、暗灰 ghost、低纹理补丁，避免把三者混成同一类调参。
 - [x] 如果背景失败，下一轮优先修补背景，不继续调文字。
-- [ ] Web 候选抽屉显示背景对比 crop。
+- [x] Web 候选抽屉显示背景对比 crop。
 
 ### Done Definition
 
@@ -247,11 +253,11 @@
 
 ### Checklist
 
-- [ ] Prompt 明确要求区分 `too_dark`、`too_bold`、`too_light`、`too_thin`。
-- [ ] Prompt 明确禁止把“核心过黑”表达成“核心不够黑”。
-- [ ] Prompt 明确要求输出 blocking stage 和 direction。
-- [ ] 模型建议必须转成本地候选并写入 attempt record。
-- [ ] 本地指标冲突时，不能静默忽略模型建议，必须写入 conflict record。
+- [x] Prompt 明确要求区分 `too_dark`、`too_bold`、`too_light`、`too_thin`。
+- [x] Prompt 明确禁止把“核心过黑”表达成“核心不够黑”。
+- [x] Prompt 明确要求输出 blocking stage 和 direction。
+- [x] 模型建议必须转成本地候选并写入 attempt record。
+- [x] 本地指标冲突时，不能静默忽略模型建议，必须写入 conflict record。
 
 ### Done Definition
 
@@ -263,13 +269,13 @@
 
 ### Checklist
 
-- [ ] `progress.jsonl` 记录每轮 stage、severity、candidate count、selected candidate、accepted。
-- [ ] `result.json` 记录 rejected candidate 的最终图和未应用状态。
-- [ ] 即使 `accepted=false`，也写出最后候选图。
-- [ ] Web UI 显示当前 blocking stage 和迭代轮次。
-- [ ] Web UI 显示“为什么没有继续”的原因。
-- [ ] 若达到最大轮数，报告写出下一轮计划。
-- [ ] 候选 drawer 显示至多 5 个代表性候选：初始、最好、最近、最接近通过、最终 rejected。
+- [x] `progress.jsonl` 记录每轮 stage、severity、candidate count、selected candidate、accepted。
+- [x] `result.json` 记录 rejected candidate 的最终图和未应用状态。
+- [x] 即使 `accepted=false`，也写出最后候选图。
+- [x] Web UI 显示当前 blocking stage 和迭代轮次。
+- [x] Web UI 显示“为什么没有继续”的原因。
+- [x] 若达到最大轮数，报告写出下一轮计划。
+- [x] 候选 drawer 显示至多 5 个代表性候选：初始、最好、最近、最接近通过、最终 rejected。
 
 ### Done Definition
 
@@ -284,73 +290,73 @@
 
 ### A. Reference Profile
 
-- [ ] 新增 reference profile 构建函数。
-- [ ] 输出旧字逐字灰度带、位置、姿态。
-- [ ] 输出邻字灰度带、位置、姿态。
-- [ ] 输出背景纹理统计。
-- [ ] 报告动态阈值来源。
+- [x] 新增 reference profile 构建函数。
+- [x] 输出旧字逐字灰度带、位置、姿态。
+- [x] 输出邻字灰度带、位置、姿态。
+- [x] 输出背景纹理统计。
+- [x] 报告动态阈值来源。
 
 ### B. Dynamic Ink Solver
 
-- [ ] 移除 `opacity >= 0.76` 作为硬下限。
-- [ ] 基于 reference profile 计算 opacity 搜索范围。
-- [ ] 修复“核心黑度偏重”误判为“想要更黑核心”。
-- [ ] 黑芯过量时强制生成降低黑芯候选。
-- [ ] 黑芯指标反弹时强惩罚。
+- [x] 移除 `opacity >= 0.76` 作为硬下限。
+- [x] 基于 reference profile 计算 opacity 搜索范围。
+- [x] 修复“核心黑度偏重”误判为“想要更黑核心”。
+- [x] 黑芯过量时强制生成降低黑芯候选。
+- [x] 黑芯指标反弹时强惩罚。
 
 ### C. Stage Solvers
 
-- [ ] 给每个 stage 定义 patch family。
-- [ ] 禁止跨 stage 参数抢先主导。
-- [ ] 每轮只让当前 blocking stage 的求解器主导。
-- [ ] 形态阶段失败时触发字体、字号、字槽、姿态重搜。
-- [ ] 墨色阶段通过前不进入照片质感主调参。
+- [x] 给每个 stage 定义 patch family。
+- [x] 禁止跨 stage 参数抢先主导。
+- [x] 每轮只让当前 blocking stage 的求解器主导。
+- [x] 形态阶段失败时触发字体、字号、字槽、姿态重搜。
+- [x] 墨色阶段通过前不进入照片质感主调参。
 
 ### D. Candidate Selection
 
-- [ ] 记录所有候选的 stage severity。
-- [ ] 当前 stage severity 下降优先。
-- [ ] 防止 `<55`、灰边、位置等关键指标来回反弹。
-- [ ] 记录候选为何被选中或被拒绝。
+- [x] 记录所有候选的 stage severity。
+- [x] 当前 stage severity 下降优先。
+- [x] 防止 `<55`、灰边、位置等关键指标来回反弹。
+- [x] 记录候选为何被选中或被拒绝。
 
 ### E. Background Scoring
 
-- [ ] 实现全 target ROI 背景自然度指标。
-- [ ] 检查发白、过平滑、纹理残差、梯度断裂、接缝。
-- [ ] 将背景失败纳入 `background_cleanup` stage。
+- [x] 实现全 target ROI 背景自然度指标。
+- [x] 检查发白、过平滑、纹理残差、梯度断裂、接缝。
+- [x] 将背景失败纳入 `background_cleanup` stage。
 
 ### F. Vision Prompt
 
-- [ ] 更新候选排序 prompt。
-- [ ] 更新最终验收 prompt。
-- [ ] 强制模型输出 `blocking_stage`、`direction`、`parameter_suggestions`。
-- [ ] 将模型建议转为本地候选并记录是否被截断。
+- [x] 更新候选排序 prompt。
+- [x] 更新最终验收 prompt。
+- [x] 强制模型输出 `blocking_stage`、`direction`、`parameter_suggestions`。
+- [x] 将模型建议转为本地候选并记录是否被截断。
 
 ### G. Web and CLI Traceability
 
-- [ ] Web 显示阶段进度。
-- [ ] Web 显示 accepted/rejected 状态。
-- [ ] Web 显示最终 rejected candidate 和失败原因。
-- [ ] CLI 输出每轮 progress。
-- [ ] 达到最大轮数时输出下一轮建议。
+- [x] Web 显示阶段进度。
+- [x] Web 显示 accepted/rejected 状态。
+- [x] Web 显示最终 rejected candidate 和失败原因。
+- [x] CLI 输出每轮 progress。
+- [x] 达到最大轮数时输出下一轮建议。
 
 ## Public Acceptance Checklist
 
 完成上述改造后，每个回归任务必须检查：
 
-- [ ] 输出尺寸与原图一致。
-- [ ] ROI 外像素不变。
-- [ ] 边缘像素不变。
-- [ ] protected text 不变。
-- [ ] 自动定位失败立即报错。
-- [ ] `reference_profile` 完整或明确失败。
-- [ ] `text_shape` 通过后才进入 `ink_gray_balance`。
-- [ ] `ink_gray_balance` 由原字和邻字动态判断。
-- [ ] 没有固定经验值阻断已验证的调参方向。
-- [ ] `photo_texture` 不掩盖形态或墨色问题。
-- [ ] `background_cleanup` 覆盖整个修补区自然度。
-- [ ] 视觉模型建议被转成本地候选。
-- [ ] 模型和本地指标冲突被记录。
-- [ ] 失败时保留 rejected candidate、对比图、报告和下一轮计划。
+- [x] 输出尺寸与原图一致。
+- [x] ROI 外像素不变。
+- [x] 边缘像素不变。
+- [x] protected text 不变。
+- [x] 自动定位失败立即报错。
+- [x] `reference_profile` 完整或明确失败。
+- [x] `text_shape` 通过后才进入 `ink_gray_balance`。
+- [x] `ink_gray_balance` 由原字和邻字动态判断。
+- [x] 没有固定经验值阻断已验证的调参方向。
+- [x] `photo_texture` 不掩盖形态或墨色问题。
+- [x] `background_cleanup` 覆盖整个修补区自然度。
+- [x] 视觉模型建议被转成本地候选。
+- [x] 模型和本地指标冲突被记录。
+- [x] 失败时保留 rejected candidate、对比图、报告和下一轮计划。
 
 任何一项未满足，都不能宣称本地流程完善完成。

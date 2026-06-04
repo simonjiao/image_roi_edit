@@ -191,6 +191,7 @@ def main() -> None:
                     "[progress] "
                     f"round {record.get('round')} "
                     f"basis_stage={record.get('basis_blocking_stage')} "
+                    f"basis_severity={record.get('basis_stage_severity')} "
                     f"patches={record.get('patch_count')} "
                     f"shape_resets={record.get('shape_reset_count')}",
                     flush=True,

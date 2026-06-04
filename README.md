@@ -83,6 +83,8 @@ The web page supports multiple uploaded images. Draw one or more rectangles on
 the left image, enter a replacement instruction such as `旧文字替换为新文字`, then
 click `处理全部`. The right pane shows the edited image. Use `>>>` to open the
 candidate drawer; it shows up to five local candidate previews for the image.
+The result pane also shows the current blocking stage, revision count, stop
+reason, and next-round plan when the final candidate is rejected.
 Each web run is saved under `output/web/<run_id>/` with `request.json`,
 `result.json`, the original image, and the final image. When a rectangle is
 larger than the text itself, the web pipeline first shrinks the edit target to
@@ -96,6 +98,10 @@ Progress is printed to stderr during the run and also written to
 ```bash
 tail -f output/<run_id>/progress.jsonl
 ```
+
+Each revision round records the blocking stage, stage source, stage policy,
+candidate count, selected candidate, local/model conflicts, and whether a model
+suggestion was clipped by local constraints.
 
 In strict mode, the pipeline checks both grayscale coverage and font style. The
 font style gate renders the original old text ROI, when source text is known,
