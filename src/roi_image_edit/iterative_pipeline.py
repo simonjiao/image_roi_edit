@@ -668,6 +668,28 @@ def build_extra_source_slot_cleanup_mask(
     return mask
 
 
+def build_trailing_value_cleanup_mask(
+    plan: RenderPlan,
+    alpha_layer: Image.Image,
+    size: tuple[int, int],
+) -> np.ndarray:
+    source_chars = text_chars(plan.source_text)
+    target_chars = text_chars(plan.target_text)
+    w, h = size
+    mask = np.zeros((h, w), dtype=np.uint8)
+    if (
+        not source_chars
+        or not target_chars
+        or len(target_chars) >= len(source_chars)
+        or is_mostly_cjk(plan.target_text)
+    ):
+        return mask
+
+    # For photographed numeric/date values, a full trailing rectangle leaves a
+    # visible block. The old glyph mask already removes the actual source text;
+    # keep this hook empty until a non-rectangular trailing mask is available.
+    return mask
+
 def restore_inpainted_texture(
     original_arr: np.ndarray,
     base_arr: np.ndarray,
@@ -738,6 +760,36 @@ def suppress_inpaint_glow(
     adjusted = base_arr.astype(np.float32)
     delta = (base_gray[too_bright] - cap_gray) * max(0.0, min(1.0, strength))
     adjusted[too_bright] -= delta[:, None]
+    return np.clip(adjusted, 0, 255).astype(np.uint8)
+
+
+def suppress_inpaint_shadow(
+    original_arr: np.ndarray,
+    base_arr: np.ndarray,
+    mask: np.ndarray,
+    *,
+    strength: float = 0.75,
+) -> np.ndarray:
+    if not np.any(mask):
+        return base_arr
+
+    original_gray = cv2.cvtColor(original_arr, cv2.COLOR_RGB2GRAY)
+    base_gray = cv2.cvtColor(base_arr, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    mask_bool = mask > 0
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 11))
+    ring = cv2.dilate(mask, kernel, iterations=1) > 0
+    bg_mask = ring & ~mask_bool & (original_gray >= 145) & (original_gray <= 235)
+    if int(np.count_nonzero(bg_mask)) < 24:
+        return base_arr
+
+    floor_gray = float(np.percentile(original_gray[bg_mask], 50))
+    too_dark = mask_bool & (base_gray < floor_gray)
+    if not np.any(too_dark):
+        return base_arr
+
+    adjusted = base_arr.astype(np.float32)
+    delta = (floor_gray - base_gray[too_dark]) * max(0.0, min(1.0, strength))
+    adjusted[too_dark] += delta[:, None]
     return np.clip(adjusted, 0, 255).astype(np.uint8)
 
 
@@ -916,6 +968,7 @@ def retexture_inpaint_patch(
     roi: tuple[int, int, int, int],
     *,
     strength: float = 0.16,
+    residual_scale: float = 0.08,
 ) -> np.ndarray:
     if not np.any(mask):
         return base_arr
@@ -976,11 +1029,23 @@ def retexture_inpaint_patch(
     low = np.percentile(residual_pool, 3, axis=0)
     high = np.percentile(residual_pool, 97, axis=0)
     residual = np.clip(residual, low, high)
-    texture_fill = predicted_fill + residual * 0.08
+    texture_fill = predicted_fill + residual * max(0.0, min(1.0, float(residual_scale)))
 
     current_fill = base_f[fill_y, fill_x]
     base_f[fill_y, fill_x] = current_fill * (1.0 - strength) + texture_fill * strength
     return np.clip(base_f, 0, 255).astype(np.uint8)
+
+
+def background_retexture_strength(params: CandidateParams, *, target_expanded: bool) -> float:
+    base = 0.12 if target_expanded else 0.16
+    texture_gain = max(0.0, float(params.photo_noise)) * 1.8 + max(0.0, float(params.edge_breakup)) * 3.0
+    return max(0.08, min(0.48, base + texture_gain))
+
+
+def roi_scan_texture_strength(params: CandidateParams, *, target_expanded: bool) -> float:
+    base = 0.12 if target_expanded else 0.30
+    texture_gain = max(0.0, float(params.photo_noise)) * 1.4 + max(0.0, float(params.edge_breakup)) * 2.0
+    return max(0.08, min(0.62, base + texture_gain))
 
 
 def old_text_mask_roi(plan: RenderPlan) -> tuple[int, int, int, int]:
@@ -1724,18 +1789,48 @@ def render_candidate(
             threshold=params.mask_threshold,
             dilate_iterations=params.mask_dilate_iterations,
         )
+    layer = draw_replacement_layer(size=(w, h), plan=plan, params=params, original=original)
+    trailing_cleanup_mask = build_trailing_value_cleanup_mask(plan, layer, (w, h))
+    if np.any(trailing_cleanup_mask):
+        mask = np.maximum(mask, trailing_cleanup_mask)
     base_arr = cv2.inpaint(arr, mask, params.inpaint_radius, cv2.INPAINT_TELEA)
     target_expanded = plan.source_reference_box is not None and plan.source_reference_box != plan.target_roi
     if target_expanded:
         base_arr = reconstruct_background_plane_texture(arr, base_arr, mask, mask_roi)
     else:
         base_arr = restore_inpainted_texture(arr, base_arr, mask)
-    base_arr = retexture_inpaint_patch(arr, base_arr, mask, mask_roi)
+    base_arr = retexture_inpaint_patch(
+        arr,
+        base_arr,
+        mask,
+        mask_roi,
+        strength=background_retexture_strength(params, target_expanded=target_expanded),
+    )
     base_arr = suppress_inpaint_glow(arr, base_arr, mask)
+    base_arr = suppress_inpaint_shadow(arr, base_arr, mask)
     base_arr = repair_mask_from_row_background(arr, base_arr, mask, mask_roi)
+    base_arr = suppress_inpaint_shadow(arr, base_arr, mask, strength=0.45)
+    trailing_bbox = mask_bbox(trailing_cleanup_mask > 0)
+    if trailing_bbox is not None:
+        base_arr = repair_mask_from_row_background(
+            arr,
+            base_arr,
+            trailing_cleanup_mask,
+            trailing_bbox,
+            strength=0.72,
+        )
+        base_arr = retexture_inpaint_patch(
+            arr,
+            base_arr,
+            trailing_cleanup_mask,
+            trailing_bbox,
+            strength=max(0.58, background_retexture_strength(params, target_expanded=target_expanded)),
+            residual_scale=0.72,
+        )
+        base_arr = suppress_inpaint_glow(arr, base_arr, trailing_cleanup_mask, strength=0.35)
+        base_arr = suppress_inpaint_shadow(arr, base_arr, trailing_cleanup_mask, strength=0.35)
     base_arr = repair_extra_source_slot_background(arr, base_arr, plan)
     base = Image.fromarray(base_arr).convert("RGBA")
-    layer = draw_replacement_layer(size=(w, h), plan=plan, params=params, original=original)
     if target_expanded or params.edge_breakup > 0:
         layer = rgba_from_alpha(
             apply_scan_edge_breakup(
@@ -1754,7 +1849,7 @@ def render_candidate(
         edited_arr,
         plan.target_roi,
         mask,
-        strength=0.12 if target_expanded else 0.30,
+        strength=roi_scan_texture_strength(params, target_expanded=target_expanded),
     )
     edited_arr = apply_photo_text_texture(edited_arr, arr, layer.getchannel("A"), plan.target_roi, params)
     preserve_mask = unchanged_text_slot_mask(plan, (w, h)) > 0

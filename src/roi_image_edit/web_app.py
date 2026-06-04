@@ -26,6 +26,7 @@ from roi_image_edit.iterative_pipeline import (
     VisionClient,
     apply_suggested_patch,
     build_font_style_reference,
+    build_trailing_value_cleanup_mask,
     char_alignment_gate,
     char_gray_band_metrics,
     char_pose_metrics,
@@ -2921,11 +2922,13 @@ def background_texture_metrics(
     if int(np.count_nonzero(old_dark)) < 8:
         return {"enabled": False, "reason": "not enough old text mask pixels"}
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    old_dark_base = old_dark > 0
     old_dark = cv2.dilate(old_dark, kernel, iterations=max(1, int(params.mask_dilate_iterations)))
-    alpha = np.array(
-        draw_replacement_layer(size=original.size, plan=plan, params=params, original=original).getchannel("A")
-    )
+    replacement_layer = draw_replacement_layer(size=original.size, plan=plan, params=params, original=original)
+    alpha = np.array(replacement_layer.getchannel("A"))
     new_alpha = alpha[ty1:ty2, tx1:tx2] > 18
+    trailing_cleanup_mask = build_trailing_value_cleanup_mask(plan, replacement_layer, original.size)
+    trailing_cleanup_crop = trailing_cleanup_mask[ty1:ty2, tx1:tx2] > 0
     fill_mask = (old_dark > 0) & ~new_alpha
     if int(np.count_nonzero(fill_mask)) < 10:
         fill_mask = old_dark > 0
@@ -2964,6 +2967,102 @@ def background_texture_metrics(
     old_residual_mean = float(np.mean(old_residual)) if old_residual.size else 0.0
     new_residual_mean = float(np.mean(new_residual)) if new_residual.size else 0.0
     reference_residual_mean = float(np.mean(reference_residual)) if reference_residual.size else 0.0
+
+    trailing_metrics: dict[str, Any] = {
+        "enabled": int(np.count_nonzero(trailing_cleanup_crop)) >= 24,
+        "pixels": int(np.count_nonzero(trailing_cleanup_crop)),
+    }
+    if trailing_metrics["enabled"]:
+        trailing_values = candidate_gray[ty1:ty2, tx1:tx2][trailing_cleanup_crop]
+        trailing_residual = residual_values(candidate_gray[ty1:ty2, tx1:tx2])[trailing_cleanup_crop]
+        trailing_std = float(np.std(trailing_values))
+        trailing_residual_mean = float(np.mean(trailing_residual)) if trailing_residual.size else 0.0
+        trailing_metrics.update(
+            {
+                "mean_gray": round(float(np.mean(trailing_values)), 3),
+                "reference_mean_gray": round(reference_mean, 3),
+                "reference_mean_delta": round(float(np.mean(trailing_values) - reference_mean), 3),
+                "std_gray": round(trailing_std, 3),
+                "reference_std_gray": round(reference_std, 3),
+                "std_ratio": round(trailing_std / max(0.8, reference_std), 4),
+                "residual_mean": round(trailing_residual_mean, 3),
+                "reference_residual_mean": round(reference_residual_mean, 3),
+                "residual_ratio": round(trailing_residual_mean / max(0.8, reference_residual_mean), 4),
+            }
+        )
+
+    ghost_probe = cv2.dilate(
+        old_dark_base.astype(np.uint8),
+        kernel,
+        iterations=max(3, int(params.mask_dilate_iterations) + 1),
+    ) > 0
+    ghost_probe &= ~new_alpha
+    local_background_mask = (~ghost_probe) & ~new_alpha & (original_gray[ty1:ty2, tx1:tx2] >= 165)
+    ghost_pixels = int(np.count_nonzero(ghost_probe))
+    local_background_pixels = int(np.count_nonzero(local_background_mask))
+    ghost_metrics: dict[str, Any] = {
+        "enabled": ghost_pixels >= 24 and local_background_pixels >= 24,
+        "probe_pixels": ghost_pixels,
+        "local_background_pixels": local_background_pixels,
+    }
+    if ghost_metrics["enabled"]:
+        ghost_values = candidate_gray[ty1:ty2, tx1:tx2][ghost_probe]
+        local_background_values = candidate_gray[ty1:ty2, tx1:tx2][local_background_mask]
+        bg_p95 = float(np.percentile(local_background_values, 95))
+        bg_p99 = float(np.percentile(local_background_values, 99))
+        bg_p05 = float(np.percentile(local_background_values, 5))
+        bg_p10 = float(np.percentile(local_background_values, 10))
+        bg_p25 = float(np.percentile(local_background_values, 25))
+        ghost_p05 = float(np.percentile(ghost_values, 5))
+        ghost_p10 = float(np.percentile(ghost_values, 10))
+        ghost_p25 = float(np.percentile(ghost_values, 25))
+        ghost_p95 = float(np.percentile(ghost_values, 95))
+        ghost_p99 = float(np.percentile(ghost_values, 99))
+        ghost_metrics.update(
+            {
+                "probe_mean_gray": round(float(np.mean(ghost_values)), 3),
+                "local_background_mean_gray": round(float(np.mean(local_background_values)), 3),
+                "probe_background_mean_delta": round(
+                    float(np.mean(ghost_values) - np.mean(local_background_values)),
+                    3,
+                ),
+                "probe_p05_gray": round(ghost_p05, 3),
+                "local_background_p05_gray": round(bg_p05, 3),
+                "probe_p05_delta": round(ghost_p05 - bg_p05, 3),
+                "probe_p10_gray": round(ghost_p10, 3),
+                "local_background_p10_gray": round(bg_p10, 3),
+                "probe_p10_delta": round(ghost_p10 - bg_p10, 3),
+                "probe_p25_gray": round(ghost_p25, 3),
+                "local_background_p25_gray": round(bg_p25, 3),
+                "probe_p25_delta": round(ghost_p25 - bg_p25, 3),
+                "probe_p95_gray": round(ghost_p95, 3),
+                "local_background_p95_gray": round(bg_p95, 3),
+                "probe_p95_delta": round(ghost_p95 - bg_p95, 3),
+                "probe_p99_gray": round(ghost_p99, 3),
+                "local_background_p99_gray": round(bg_p99, 3),
+                "probe_p99_delta": round(ghost_p99 - bg_p99, 3),
+                "bright_over_background_p95_ratio": round(
+                    float(np.mean(ghost_values > bg_p95)),
+                    5,
+                ),
+                "bright_over_background_p99_ratio": round(
+                    float(np.mean(ghost_values > bg_p99)),
+                    5,
+                ),
+                "dark_under_background_p05_ratio": round(
+                    float(np.mean(ghost_values < bg_p05)),
+                    5,
+                ),
+                "dark_under_background_p10_ratio": round(
+                    float(np.mean(ghost_values < bg_p10)),
+                    5,
+                ),
+                "dark_under_background_p25_ratio": round(
+                    float(np.mean(ghost_values < bg_p25)),
+                    5,
+                ),
+            }
+        )
     return {
         "enabled": True,
         "target_roi": [tx1, ty1, tx2, ty2],
@@ -2982,6 +3081,8 @@ def background_texture_metrics(
         "new_residual_mean": round(new_residual_mean, 3),
         "reference_residual_mean": round(reference_residual_mean, 3),
         "residual_ratio": round(new_residual_mean / max(0.8, reference_residual_mean), 4),
+        "white_ghost_probe": ghost_metrics,
+        "trailing_cleanup_patch": trailing_metrics,
     }
 
 
@@ -2998,6 +3099,84 @@ def local_background_texture_issues(report: dict[str, Any]) -> list[dict[str, An
         reference_residual = float(metrics.get("reference_residual_mean") or 0.0)
     except (TypeError, ValueError):
         return issues
+    ghost_probe = metrics.get("white_ghost_probe")
+    if isinstance(ghost_probe, dict) and ghost_probe.get("enabled"):
+        try:
+            bright_p95_ratio = float(ghost_probe.get("bright_over_background_p95_ratio") or 0.0)
+            bright_p99_ratio = float(ghost_probe.get("bright_over_background_p99_ratio") or 0.0)
+            dark_p10_ratio = float(ghost_probe.get("dark_under_background_p10_ratio") or 0.0)
+            dark_p25_ratio = float(ghost_probe.get("dark_under_background_p25_ratio") or 0.0)
+            p10_delta = float(ghost_probe.get("probe_p10_delta") or 0.0)
+            p25_delta = float(ghost_probe.get("probe_p25_delta") or 0.0)
+            p95_delta = float(ghost_probe.get("probe_p95_delta") or 0.0)
+            p99_delta = float(ghost_probe.get("probe_p99_delta") or 0.0)
+            mean_delta_local = float(ghost_probe.get("probe_background_mean_delta") or 0.0)
+            probe_pixels = int(ghost_probe.get("probe_pixels") or 0)
+        except (TypeError, ValueError):
+            bright_p95_ratio = 0.0
+            bright_p99_ratio = 0.0
+            dark_p10_ratio = 0.0
+            dark_p25_ratio = 0.0
+            p10_delta = 0.0
+            p25_delta = 0.0
+            p95_delta = 0.0
+            p99_delta = 0.0
+            mean_delta_local = 0.0
+            probe_pixels = 0
+        if probe_pixels >= 120 and (
+            (bright_p95_ratio > 0.14 and p95_delta > 6.0)
+            or (bright_p99_ratio > 0.055 and p99_delta > 12.0)
+            or (mean_delta_local > 2.6 and bright_p95_ratio > 0.10)
+        ):
+            issues.append(
+                {
+                    "type": "background_white_ghost_residual",
+                    "bright_over_background_p95_ratio": round(bright_p95_ratio, 5),
+                    "p95_delta": round(p95_delta, 3),
+                    "bright_over_background_p99_ratio": round(bright_p99_ratio, 5),
+                    "p99_delta": round(p99_delta, 3),
+                    "mean_delta": round(mean_delta_local, 3),
+                    "probe_pixels": probe_pixels,
+                }
+            )
+        if probe_pixels >= 120 and (
+            (mean_delta_local < -3.0 and dark_p10_ratio > 0.28)
+            or (p10_delta < -5.0 and dark_p25_ratio > 0.45)
+            or (p25_delta < -3.5 and dark_p25_ratio > 0.55)
+        ):
+            issues.append(
+                {
+                    "type": "background_shadow_ghost_residual",
+                    "dark_under_background_p10_ratio": round(dark_p10_ratio, 5),
+                    "p10_delta": round(p10_delta, 3),
+                    "dark_under_background_p25_ratio": round(dark_p25_ratio, 5),
+                    "p25_delta": round(p25_delta, 3),
+                    "mean_delta": round(mean_delta_local, 3),
+                    "probe_pixels": probe_pixels,
+                }
+            )
+    trailing_patch = metrics.get("trailing_cleanup_patch")
+    if isinstance(trailing_patch, dict) and trailing_patch.get("enabled"):
+        try:
+            trailing_std_ratio = float(trailing_patch.get("std_ratio") or 1.0)
+            trailing_residual_ratio = float(trailing_patch.get("residual_ratio") or 1.0)
+            trailing_mean_delta = float(trailing_patch.get("reference_mean_delta") or 0.0)
+            trailing_pixels = int(trailing_patch.get("pixels") or 0)
+        except (TypeError, ValueError):
+            trailing_std_ratio = 1.0
+            trailing_residual_ratio = 1.0
+            trailing_mean_delta = 0.0
+            trailing_pixels = 0
+        if trailing_pixels >= 120 and (trailing_std_ratio < 0.36 or trailing_residual_ratio < 0.42):
+            issues.append(
+                {
+                    "type": "background_trailing_patch_too_smooth",
+                    "std_ratio": round(trailing_std_ratio, 4),
+                    "residual_ratio": round(trailing_residual_ratio, 4),
+                    "mean_delta": round(trailing_mean_delta, 3),
+                    "pixels": trailing_pixels,
+                }
+            )
     if abs(mean_delta) > max(12.0, abs(old_mean_delta) + 7.0):
         issues.append(
             {
@@ -3016,12 +3195,17 @@ def local_background_texture_issues(report: dict[str, Any]) -> list[dict[str, An
                 "limit": 0.42,
             }
         )
-    if std_ratio < 0.36:
+    texture_variance_limit = 0.62 if reference_residual >= 2.4 else 0.48
+    structured_ghost = any(
+        issue.get("type") in {"background_white_ghost_residual", "background_shadow_ghost_residual"}
+        for issue in issues
+    )
+    if std_ratio < texture_variance_limit and residual_ratio < 1.05 and not structured_ghost:
         issues.append(
             {
                 "type": "background_fill_low_texture_variance",
                 "std_ratio": round(std_ratio, 4),
-                "limit": 0.36,
+                "limit": round(texture_variance_limit, 3),
             }
         )
     return issues
@@ -3194,7 +3378,18 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
         for issue in stage_issues(report, "background_cleanup"):
             issue_type = str(issue.get("type") or "")
             try:
-                if issue_type == "background_fill_luminance_mismatch":
+                if issue_type == "background_white_ghost_residual":
+                    severity += max(0.0, float(issue.get("bright_over_background_p95_ratio") or 0.0) - 0.08) * 900.0
+                    severity += max(0.0, float(issue.get("p95_delta") or 0.0) - 4.0) * 16.0
+                    severity += max(0.0, float(issue.get("p99_delta") or 0.0) - 8.0) * 8.0
+                elif issue_type == "background_shadow_ghost_residual":
+                    severity += max(0.0, float(issue.get("dark_under_background_p10_ratio") or 0.0) - 0.20) * 720.0
+                    severity += max(0.0, abs(float(issue.get("p10_delta") or 0.0)) - 3.0) * 14.0
+                    severity += max(0.0, abs(float(issue.get("mean_delta") or 0.0)) - 2.0) * 18.0
+                elif issue_type == "background_trailing_patch_too_smooth":
+                    severity += max(0.0, 0.36 - float(issue.get("std_ratio") or 0.0)) * 620.0
+                    severity += max(0.0, 0.42 - float(issue.get("residual_ratio") or 0.0)) * 760.0
+                elif issue_type == "background_fill_luminance_mismatch":
                     severity += max(0.0, abs(float(issue.get("new_reference_mean_delta") or 0.0)) - float(issue.get("limit") or 0.0)) * 35.0
                 elif issue_type == "background_fill_too_smooth":
                     severity += max(0.0, float(issue.get("limit") or 0.0) - float(issue.get("residual_ratio") or 0.0)) * 520.0
@@ -3937,6 +4132,43 @@ def acceptance_reports_too_dark_or_bold(acceptance: dict[str, Any]) -> bool:
     )
 
 
+def acceptance_reports_background_patch(acceptance: dict[str, Any]) -> bool:
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    background = str(findings.get("background", "")).strip().lower()
+    text = "\n".join(acceptance_text_fragments(acceptance)).lower()
+    return (
+        background in {"patch_visible", "ghost_visible", "too_smooth"}
+        or "补丁" in text
+        or "平滑" in text
+        or "涂抹" in text
+        or "残影" in text
+        or "ghost_visible" in text
+        or "patch_visible" in text
+    )
+
+
+def report_has_background_white_ghost(report: dict[str, Any] | None) -> bool:
+    return any(
+        str(issue.get("type") or "") in {"background_white_ghost_residual", "background_shadow_ghost_residual"}
+        for issue in stage_issues(report, "background_cleanup")
+        if isinstance(issue, dict)
+    )
+
+
+def report_has_background_low_texture(report: dict[str, Any] | None) -> bool:
+    return any(
+        str(issue.get("type") or "") in {
+            "background_fill_too_smooth",
+            "background_fill_low_texture_variance",
+            "background_trailing_patch_too_smooth",
+        }
+        for issue in stage_issues(report, "background_cleanup")
+        if isinstance(issue, dict)
+    )
+
+
 def revision_selection_score(
     score: float,
     params: CandidateParams,
@@ -4173,6 +4405,37 @@ def constrained_revision_params(
             alpha_contrast=min(0.35, params.alpha_contrast),
             core_ink_gain=min(0.22, params.core_ink_gain),
             core_darken_strength=min(0.18, params.core_darken_strength),
+        )
+
+    if report_has_background_white_ghost(report):
+        return mutate_params(
+            params,
+            photo_noise=max(0.0, min(0.038, params.photo_noise)),
+            edge_breakup=max(0.0, min(0.014, params.edge_breakup)),
+            jpeg_quality=max(94, params.jpeg_quality),
+            mask_threshold=max(params.mask_threshold, min(215, basis_params.mask_threshold + 12)),
+            mask_dilate_iterations=max(3, min(5, params.mask_dilate_iterations)),
+            inpaint_radius=max(2, min(3, params.inpaint_radius)),
+        )
+
+    if report_has_background_low_texture(report):
+        return mutate_params(
+            params,
+            photo_noise=min(0.14, params.photo_noise),
+            edge_breakup=min(0.060, params.edge_breakup),
+            jpeg_quality=max(82, params.jpeg_quality),
+            mask_dilate_iterations=max(2, params.mask_dilate_iterations),
+            inpaint_radius=max(1, min(3, params.inpaint_radius)),
+        )
+
+    if acceptance_reports_background_patch(acceptance):
+        return mutate_params(
+            params,
+            photo_noise=min(0.060, params.photo_noise),
+            edge_breakup=min(0.024, params.edge_breakup),
+            jpeg_quality=max(90, params.jpeg_quality),
+            mask_dilate_iterations=max(2, params.mask_dilate_iterations),
+            inpaint_radius=max(1, min(2, params.inpaint_radius)),
         )
 
     if not report_needs_thinner_strokes(report):
@@ -4730,7 +4993,44 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
         if isinstance(issue, dict)
     }
     patches: list[dict[str, Any]] = []
-    if "background_fill_luminance_mismatch" in issue_types:
+    has_white_ghost = "background_white_ghost_residual" in issue_types
+    if has_white_ghost:
+        patches.extend(
+            [
+                {
+                    "mask_threshold_delta": 12,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.018,
+                    "edge_breakup_delta": -0.010,
+                    "jpeg_quality_delta": 8,
+                },
+                {
+                    "mask_threshold_delta": 20,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.024,
+                    "edge_breakup_delta": -0.012,
+                    "jpeg_quality_delta": 10,
+                },
+                {
+                    "mask_threshold_delta": 8,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.012,
+                    "edge_breakup_delta": -0.008,
+                    "jpeg_quality_delta": 6,
+                },
+                {
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.020,
+                    "edge_breakup_delta": -0.010,
+                    "jpeg_quality_delta": 8,
+                },
+            ]
+        )
+    if "background_fill_luminance_mismatch" in issue_types and not has_white_ghost:
         patches.extend(
             [
                 {"mask_threshold_delta": -10, "inpaint_radius_delta": -1, "photo_noise_delta": 0.012},
@@ -4739,14 +5039,23 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
             ]
         )
     if (
-        "background_fill_too_smooth" in issue_types
-        or "background_fill_low_texture_variance" in issue_types
+        not has_white_ghost
+        and (
+            "background_fill_too_smooth" in issue_types
+            or "background_fill_low_texture_variance" in issue_types
+            or "background_trailing_patch_too_smooth" in issue_types
+        )
     ):
         patches.extend(
             [
                 {"photo_noise_delta": 0.020, "edge_breakup_delta": 0.006, "jpeg_quality_delta": -6},
                 {"photo_warp_delta": 0.020, "photo_noise_delta": 0.014, "jpeg_quality_delta": -4},
                 {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.018, "edge_breakup_delta": 0.006},
+                {"photo_noise_delta": 0.032, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -8},
+                {"inpaint_radius_delta": -1, "photo_noise_delta": 0.028, "edge_breakup_delta": 0.010},
+                {"photo_noise_delta": 0.052, "edge_breakup_delta": 0.018, "jpeg_quality_delta": -10},
+                {"photo_noise_delta": 0.070, "edge_breakup_delta": 0.024, "jpeg_quality_delta": -12},
+                {"inpaint_radius_delta": 1, "photo_noise_delta": 0.045, "edge_breakup_delta": 0.014},
             ]
         )
     if not patches:
@@ -5266,11 +5575,43 @@ def final_revision_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
         patches.append({"blur_delta": -0.08, "opacity_delta": 0.03})
 
     if (
-        background in {"patch_visible", "ghost_visible", "too_smooth"}
+        background == "ghost_visible"
+        or "残影" in text
+        or "旧字" in text
+        or "ghost_visible" in text
+    ):
+        patches.extend(
+            [
+                {
+                    "mask_threshold_delta": 12,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.018,
+                    "edge_breakup_delta": -0.010,
+                    "jpeg_quality_delta": 8,
+                },
+                {
+                    "mask_threshold_delta": 20,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.024,
+                    "edge_breakup_delta": -0.012,
+                    "jpeg_quality_delta": 10,
+                },
+                {
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.020,
+                    "edge_breakup_delta": -0.010,
+                    "jpeg_quality_delta": 8,
+                },
+            ]
+        )
+    elif (
+        background in {"patch_visible", "too_smooth"}
         or "补丁" in text
         or "平滑" in text
         or "涂抹" in text
-        or "ghost_visible" in text
         or "patch_visible" in text
     ):
         patches.extend(
@@ -5279,6 +5620,7 @@ def final_revision_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
                 {"photo_noise_delta": 0.018, "edge_breakup_delta": 0.008, "jpeg_quality_delta": -4},
                 {"inpaint_radius_delta": -1, "photo_noise_delta": 0.014, "edge_breakup_delta": 0.006},
                 {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.016, "edge_breakup_delta": 0.006},
+                {"photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -8},
             ]
         )
 
@@ -5737,9 +6079,20 @@ def run_region_vision_checks(
                         for item in improving_stage_candidates
                         if float(item[5].get("current_stage_improvement") or 0.0) >= minimum_improvement
                     ]
-                    near_best.sort(key=lambda item: (item[0], item[1]))
-                    selected_tuple = near_best[0]
-                    selected_reason = f"current_stage_severity_improved:{current_blocking_stage}"
+                    if near_best:
+                        near_best.sort(key=lambda item: (item[0], item[1]))
+                        selected_tuple = near_best[0]
+                        selected_reason = f"current_stage_severity_improved:{current_blocking_stage}"
+                    else:
+                        improving_stage_candidates.sort(
+                            key=lambda item: (
+                                -float(item[5].get("current_stage_improvement") or 0.0),
+                                item[0],
+                                item[1],
+                            )
+                        )
+                        selected_tuple = improving_stage_candidates[0]
+                        selected_reason = f"current_stage_severity_small_improvement:{current_blocking_stage}"
                 else:
                     round_record["stop_reason"] = f"no_{current_blocking_stage}_severity_improvement"
                     round_record["attempt_count"] = len(revision_attempts)

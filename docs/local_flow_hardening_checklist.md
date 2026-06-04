@@ -19,10 +19,14 @@
 - 已修复“核心 + 黑”文本误判，明确区分 `too_dark` / `too_bold` / `too_light` / `too_thin`。
 - 已接入 stage severity 优先选择，revision 记录包含 severity 前后值和 `selected_reason`。
 - 已支持字段缺旧值的自动 ROI，当前覆盖 `name` 和 `receive_time`，非 CJK 日期时间按整段值槽处理。
-- 已新增 `background_texture_metrics` 并把视觉 `patch_visible` / `ghost_visible` 转成本地背景修补候选。
+- 已新增 `background_texture_metrics`，并把视觉 `patch_visible` / `ghost_visible` 转成本地背景修补候选。
+- 已将旧字擦除区拆成 `background_white_ghost_residual` 和 `background_shadow_ghost_residual` 两类结构化残影；白影、暗影、低纹理分别走不同修复方向。
+- 已把背景 retexture 和 ROI 扫描残差强度接入本地参数，`background_cleanup` 不再只能靠视觉模型描述补丁感。
+- 对日期/数字这类旧值更长、新值更短的任务，不允许用整块矩形补丁清理尾部；旧尾部只能通过旧字符笔画 mask、灰边扩展和 ghost/shadow 指标处理。
+- 已修复 severity 正向但低于显著阈值时 `near_best` 为空导致的迭代崩溃；小幅正向改善会继续迭代并写入 `selected_reason`。
 - 回归验证：
-  - `姓名陈芸修改为赵真真`：`output/web/20260605_005009`，3 轮后 `accepted=true`。
-  - `接受时间修改2026-06-04`：`output/web/20260605_010404`，自动 ROI 覆盖完整旧时间，8 轮后仍 `accepted=false`，原因是视觉验收认为右侧背景补丁仍可见。该结果必须保留为 rejected candidate，不得交付。
+  - `接受时间修改2026-06-04`：`output/web/20260605_020104`，自动 ROI `[1296,94,1624,134]`，1 轮后 `accepted=true`，最终无本地 blocking stage。
+  - `姓名陈芸修改为赵真真`：`output/web/20260605_020350`，3 轮后 `accepted=true`，最后一轮 `ink_gray_balance` severity `39.284 -> 0.0`。
 
 ## 不折中目标
 
@@ -201,6 +205,8 @@
 - `gradient_continuity_error`：亮度梯度是否在 ROI 边界断裂。
 - `edge_seam_pixels`：target ROI 边缘是否出现接缝。
 - `white_glow_ratio`：修补区是否发白。
+- `white_ghost_probe`：旧字掩码扩展区相对同 ROI 背景的高亮/偏暗结构残影。
+- `shadow_ghost_ratio`：旧字掩码扩展区相对同 ROI 背景的暗灰残影。
 - `smear_direction_score`：是否出现明显涂抹方向。
 
 ### Checklist
@@ -208,8 +214,9 @@
 - [x] 增加 `background_texture_metrics`。
 - [x] 把 background metrics 写入 hard report。
 - [x] `background_cleanup` stage 使用这些指标，而不是只依赖视觉模型。
+- [x] 区分白色 ghost、暗灰 ghost、低纹理补丁，避免把三者混成同一类调参。
+- [x] 如果背景失败，下一轮优先修补背景，不继续调文字。
 - [ ] Web 候选抽屉显示背景对比 crop。
-- [ ] 如果背景失败，下一轮优先修补背景，不继续调文字。
 
 ### Done Definition
 
