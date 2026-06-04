@@ -213,6 +213,66 @@ input {
   color: var(--muted);
 }
 
+.progress-panel {
+  width: min(430px, 92%);
+  max-width: 92%;
+  padding: 13px 14px;
+  border: 1px solid rgba(53, 65, 78, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #27313b;
+  line-height: 1.45;
+}
+
+.progress-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.progress-current {
+  margin-top: 5px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.progress-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-line {
+  position: relative;
+  padding-left: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.progress-line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #aab3ba;
+}
+
+.progress-line.active {
+  color: #27313b;
+  font-weight: 650;
+}
+
+.progress-line.active::before {
+  background: var(--accent);
+}
+
 .vision-status {
   display: none;
   position: absolute;

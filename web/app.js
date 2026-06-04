@@ -197,6 +197,182 @@ function renderTrace(item, entry) {
   panel.style.display = "block";
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function progressEventText(record) {
+  const event = record?.event || "queued";
+  switch (event) {
+    case "queued":
+      return "等待开始处理";
+    case "run_started":
+      return "任务已创建";
+    case "image_started":
+      return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}`;
+    case "auto_roi_finished":
+      return `自动定位完成：${record.region_count ?? 0} 个区域`;
+    case "region_started":
+      return `开始处理区域：${record.source_text || "-"} -> ${record.target_text || "-"}`;
+    case "region_candidates_started":
+      return `生成候选图：${record.candidate_count ?? "-"} 个`;
+    case "region_candidates_finished":
+      return `候选图生成完成：${record.rendered ?? "-"} 个，最佳分 ${formatNumber(record.best_score)}`;
+    case "region_initial_acceptance":
+      return `初始验收：${record.accepted ? "通过" : "未通过"}，硬校验 ${
+        record.strict_pass ? "通过" : "未通过"
+      }`;
+    case "revision_round_started":
+      return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}`;
+    case "revision_round_candidates":
+      return `第 ${record.round ?? "-"} 轮候选：${record.patch_count ?? 0} 个修正，${
+        record.shape_reset_count ?? 0
+      } 个形态重算`;
+    case "revision_round_finished":
+      return `第 ${record.round ?? "-"} 轮完成：${record.accepted ? "通过" : "未通过"}，${
+        record.blocking_stage || record.current_blocking_stage || "pass"
+      }`;
+    case "region_finished":
+      return `区域完成：${record.accepted ? "通过" : "未通过"}，迭代 ${
+        record.revision_rounds ?? 0
+      } 轮`;
+    case "image_finished":
+      return `图片完成：${record.accepted ? "验收通过" : "未通过，显示最后候选"}`;
+    case "image_failed":
+    case "job_failed":
+      return `处理失败：${record.error || "未知错误"}`;
+    case "run_finished":
+      return "任务结束";
+    default:
+      return event;
+  }
+}
+
+function renderProgress(item, events) {
+  const visibleEvents = events.length ? events : [{ event: "queued" }];
+  const latest = visibleEvents[visibleEvents.length - 1] || { event: "queued" };
+  const panel = document.createElement("div");
+  panel.className = "progress-panel";
+
+  const title = document.createElement("div");
+  title.className = "progress-title";
+  title.textContent = "处理中";
+
+  const current = document.createElement("div");
+  current.className = "progress-current";
+  current.textContent = progressEventText(latest);
+
+  const list = document.createElement("div");
+  list.className = "progress-list";
+  visibleEvents.slice(-6).forEach((record, index, sliced) => {
+    const row = document.createElement("div");
+    row.className = index === sliced.length - 1 ? "progress-line active" : "progress-line";
+    row.textContent = progressEventText(record);
+    list.appendChild(row);
+  });
+
+  panel.append(title, current, list);
+  item.elements.emptyResult.replaceChildren(panel);
+  item.elements.emptyResult.style.display = "flex";
+  item.elements.resultImage.style.display = "none";
+  item.elements.visionStatus.style.display = "none";
+  item.elements.tracePanel.style.display = "none";
+}
+
+function renderProgressSnapshot(events, processable) {
+  const commonEvents = events.filter((record) => !record.image_id);
+  const byImage = new Map();
+  events.forEach((record) => {
+    if (!record.image_id) {
+      return;
+    }
+    const imageEvents = byImage.get(record.image_id) || [];
+    imageEvents.push(record);
+    byImage.set(record.image_id, imageEvents);
+  });
+  processable.forEach((item) => {
+    renderProgress(item, [{ event: "queued" }, ...commonEvents, ...(byImage.get(item.id) || [])]);
+  });
+}
+
+async function pollProcessJob(jobId, processable) {
+  for (;;) {
+    const response = await fetch(`/api/process/status?job_id=${encodeURIComponent(jobId)}`);
+    const status = await response.json();
+    if (!response.ok || !status.ok) {
+      throw new Error(status.error || `HTTP ${response.status}`);
+    }
+    renderProgressSnapshot(status.events || [], processable);
+    if (status.done) {
+      if (status.error) {
+        throw new Error(status.error);
+      }
+      return status.result;
+    }
+    await sleep(800);
+  }
+}
+
+async function renderProcessResult(result) {
+  for (const entry of result.images) {
+    const item = getItem(entry.id);
+    if (!item) {
+      continue;
+    }
+    item.node.classList.remove("processing");
+    item.elements.instruction.disabled = false;
+    if (!entry.ok) {
+      item.node.classList.add("error");
+      renderCandidates(item, []);
+      item.elements.emptyResult.style.display = "block";
+      item.elements.emptyResult.textContent = entry.error || "处理失败";
+      item.elements.resultImage.style.display = "none";
+      item.elements.visionStatus.style.display = "none";
+      item.elements.tracePanel.style.display = "none";
+      continue;
+    }
+    if (entry.sourceDataUrl && entry.sourceDataUrl !== item.dataUrl) {
+      item.dataUrl = entry.sourceDataUrl;
+      item.image = await loadImage(entry.sourceDataUrl);
+    }
+    if (Array.isArray(entry.regions) && entry.regions.length > 0) {
+      item.regions = entry.regions.map((region) => {
+        const roi = region.roi || [0, 0, 0, 0];
+        return {
+          id: region.id,
+          auto: Boolean(region.auto),
+          rect: {
+            x: roi[0],
+            y: roi[1],
+            w: Math.max(0, roi[2] - roi[0]),
+            h: Math.max(0, roi[3] - roi[1]),
+          },
+        };
+      });
+      drawCanvas(item);
+      updateRegionCount(item);
+    }
+    item.elements.resultImage.src = entry.resultDataUrl;
+    item.elements.resultImage.style.display = "block";
+    item.elements.emptyResult.style.display = "none";
+    const revisionRounds = (entry.regions || []).reduce((total, region) => {
+      const rounds = region?.summary?.vision?.revision_rounds;
+      return total + (Array.isArray(rounds) ? rounds.length : 0);
+    }, 0);
+    const roundsText = revisionRounds ? `，已迭代 ${revisionRounds} 轮` : "";
+    const rejectedArtifactText = entry.artifacts?.final_is_rejected_candidate
+      ? "，右侧显示最后候选图"
+      : "";
+    item.elements.visionStatus.textContent = entry.accepted
+      ? `视觉验收通过${roundsText}`
+      : `视觉验收未通过${roundsText}${rejectedArtifactText}，未应用为交付图`;
+    item.elements.visionStatus.className = `vision-status ${entry.accepted ? "pass" : "fail"}`;
+    item.elements.visionStatus.style.display = "block";
+    renderTrace(item, entry);
+    renderCandidates(item, entry.candidates);
+  }
+}
+
 function renderItem(item) {
   const node = template.content.firstElementChild.cloneNode(true);
   item.node = node;
@@ -310,6 +486,7 @@ async function processAll() {
     item.node.classList.add("processing");
     item.node.classList.remove("error");
     item.elements.instruction.disabled = true;
+    renderProgress(item, [{ event: "queued" }]);
   });
 
   const payload = {
@@ -324,72 +501,17 @@ async function processAll() {
   };
 
   try {
-    const response = await fetch("/api/process", {
+    const startResponse = await fetch("/api/process/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const result = await response.json();
-    if (!response.ok || !result.ok) {
-      throw new Error(result.error || `HTTP ${response.status}`);
+    const started = await startResponse.json();
+    if (!startResponse.ok || !started.ok) {
+      throw new Error(started.error || `HTTP ${startResponse.status}`);
     }
-    for (const entry of result.images) {
-      const item = getItem(entry.id);
-      if (!item) {
-        continue;
-      }
-      item.node.classList.remove("processing");
-      item.elements.instruction.disabled = false;
-      if (!entry.ok) {
-        item.node.classList.add("error");
-        renderCandidates(item, []);
-        item.elements.emptyResult.style.display = "block";
-        item.elements.emptyResult.textContent = entry.error || "处理失败";
-        item.elements.resultImage.style.display = "none";
-        item.elements.visionStatus.style.display = "none";
-        item.elements.tracePanel.style.display = "none";
-        continue;
-      }
-      if (entry.sourceDataUrl && entry.sourceDataUrl !== item.dataUrl) {
-        item.dataUrl = entry.sourceDataUrl;
-        item.image = await loadImage(entry.sourceDataUrl);
-      }
-      if (Array.isArray(entry.regions) && entry.regions.length > 0) {
-        item.regions = entry.regions.map((region) => {
-          const roi = region.roi || [0, 0, 0, 0];
-          return {
-            id: region.id,
-            auto: Boolean(region.auto),
-            rect: {
-              x: roi[0],
-              y: roi[1],
-              w: Math.max(0, roi[2] - roi[0]),
-              h: Math.max(0, roi[3] - roi[1]),
-            },
-          };
-        });
-        drawCanvas(item);
-        updateRegionCount(item);
-      }
-      item.elements.resultImage.src = entry.resultDataUrl;
-      item.elements.resultImage.style.display = "block";
-      item.elements.emptyResult.style.display = "none";
-      const revisionRounds = (entry.regions || []).reduce((total, region) => {
-        const rounds = region?.summary?.vision?.revision_rounds;
-        return total + (Array.isArray(rounds) ? rounds.length : 0);
-      }, 0);
-      const roundsText = revisionRounds ? `，已迭代 ${revisionRounds} 轮` : "";
-      const rejectedArtifactText = entry.artifacts?.final_is_rejected_candidate
-        ? "，右侧显示最后候选图"
-        : "";
-      item.elements.visionStatus.textContent = entry.accepted
-        ? `视觉验收通过${roundsText}`
-        : `视觉验收未通过${roundsText}${rejectedArtifactText}，未应用为交付图`;
-      item.elements.visionStatus.className = `vision-status ${entry.accepted ? "pass" : "fail"}`;
-      item.elements.visionStatus.style.display = "block";
-      renderTrace(item, entry);
-      renderCandidates(item, entry.candidates);
-    }
+    const result = await pollProcessJob(started.jobId, processable);
+    await renderProcessResult(result);
     setStatus("处理完成");
   } catch (error) {
     setStatus("处理失败");

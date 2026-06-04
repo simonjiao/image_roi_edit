@@ -6,13 +6,15 @@ import io
 import json
 import mimetypes
 import re
+import threading
 import time
+import uuid
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import cv2
 import numpy as np
@@ -66,6 +68,9 @@ WEB_DIR = ROOT / "web"
 OUTPUT_DIR = ROOT / "output" / "web"
 ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
+MAX_WEB_JOB_EVENTS = 800
+WEB_JOB_LOCK = threading.Lock()
+WEB_JOBS: dict[str, dict[str, Any]] = {}
 
 
 PATCH_FAMILY_KEYS = {
@@ -7277,6 +7282,81 @@ def process_region(
     )
 
 
+def append_web_job_event(job_id: str, event: str, record: dict[str, Any]) -> None:
+    with WEB_JOB_LOCK:
+        job = WEB_JOBS.get(job_id)
+        if not job:
+            return
+        events = job.setdefault("events", [])
+        events.append({"event": event, **record})
+        if len(events) > MAX_WEB_JOB_EVENTS:
+            del events[: len(events) - MAX_WEB_JOB_EVENTS]
+        job["updated_at"] = time.time()
+
+
+def run_web_job(job_id: str, payload: dict[str, Any]) -> None:
+    def emit_progress(event: str, record: dict[str, Any]) -> None:
+        append_web_job_event(job_id, event, record)
+
+    try:
+        result = process_payload(payload, progress=emit_progress)
+        with WEB_JOB_LOCK:
+            job = WEB_JOBS.get(job_id)
+            if job:
+                job["result"] = result
+                job["done"] = True
+                job["updated_at"] = time.time()
+    except Exception as exc:
+        error = str(exc)
+        append_web_job_event(
+            job_id,
+            "job_failed",
+            {
+                "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "error": error,
+            },
+        )
+        with WEB_JOB_LOCK:
+            job = WEB_JOBS.get(job_id)
+            if job:
+                job["error"] = error
+                job["done"] = True
+                job["updated_at"] = time.time()
+
+
+def create_web_job(payload: dict[str, Any]) -> str:
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    with WEB_JOB_LOCK:
+        WEB_JOBS[job_id] = {
+            "job_id": job_id,
+            "created_at": now,
+            "updated_at": now,
+            "done": False,
+            "error": None,
+            "events": [],
+            "result": None,
+        }
+    thread = threading.Thread(target=run_web_job, args=(job_id, payload), daemon=True)
+    thread.start()
+    return job_id
+
+
+def web_job_status(job_id: str) -> dict[str, Any] | None:
+    with WEB_JOB_LOCK:
+        job = WEB_JOBS.get(job_id)
+        if not job:
+            return None
+        return {
+            "ok": True,
+            "jobId": job_id,
+            "done": bool(job.get("done")),
+            "error": job.get("error"),
+            "events": list(job.get("events") or []),
+            "result": job.get("result"),
+        }
+
+
 def process_payload(payload: dict[str, Any], progress: ProgressCallback | None = None) -> dict[str, Any]:
     run_id = time.strftime("%Y%m%d_%H%M%S")
     run_dir = OUTPUT_DIR / run_id
@@ -7368,6 +7448,10 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "target_text": region_target_text,
                     },
                 )
+
+                def region_progress(event: str, fields: dict[str, Any]) -> None:
+                    emit(event, {"image_id": image_id, **(fields or {})})
+
                 image, region_display_image, region_candidates, summary, accepted = process_region(
                     image,
                     roi,
@@ -7379,7 +7463,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     prompts=prompts,
                     max_candidates=int(payload.get("maxCandidates") or 120),
                     vision_candidate_limit=int(payload.get("visionCandidateLimit") or 8),
-                    progress=emit,
+                    progress=region_progress,
                 )
                 display_image = image.copy() if accepted else region_display_image.copy()
                 emit(
@@ -7478,6 +7562,17 @@ class RoiWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path == "/api/process/status":
+            job_id = parse_qs(parsed.query).get("job_id", [""])[0]
+            if not job_id:
+                self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "missing job_id"})
+                return
+            status = web_job_status(job_id)
+            if status is None:
+                self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "job not found"})
+                return
+            self.write_json(HTTPStatus.OK, status)
+            return
         if path == "/":
             path = "/index.html"
         if path.startswith("/"):
@@ -7495,14 +7590,18 @@ class RoiWebHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self) -> None:  # noqa: N802
-        if urlparse(self.path).path != "/api/process":
+        path = urlparse(self.path).path
+        if path not in {"/api/process", "/api/process/start"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = process_payload(payload)
-            self.write_json(HTTPStatus.OK, result)
+            if path == "/api/process/start":
+                job_id = create_web_job(payload)
+                self.write_json(HTTPStatus.ACCEPTED, {"ok": True, "jobId": job_id})
+                return
+            self.write_json(HTTPStatus.OK, process_payload(payload))
         except Exception as exc:
             self.write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
