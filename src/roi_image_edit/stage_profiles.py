@@ -90,5 +90,29 @@ def default_stage_profile() -> StageProfile:
     return stage_profile(DEFAULT_STAGE_PROFILE_ID)
 
 
+def resolve_stage_profile(
+    requested_profile: str | None = None,
+    suggested_profile: str | None = None,
+) -> dict[str, Any]:
+    requested = str(requested_profile or "").strip()
+    suggested = str(suggested_profile or "").strip()
+    if requested:
+        profile = stage_profile(requested)
+        source = "explicit_request"
+    elif suggested:
+        profile = stage_profile(suggested)
+        source = "auto_suggestion"
+    else:
+        profile = default_stage_profile()
+        source = "default"
+    return {
+        "id": profile.id,
+        "source": source,
+        "requested_profile": requested or None,
+        "suggested_profile": suggested or None,
+        "profile": profile.as_report(),
+    }
+
+
 def stage_profile_summary(profile_id: str | None = None) -> dict[str, Any]:
     return stage_profile(profile_id).as_report()

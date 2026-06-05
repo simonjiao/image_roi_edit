@@ -24,6 +24,7 @@ class RunArtifactsTest(unittest.TestCase):
     def test_request_audit_payload_keeps_runtime_limits_and_strips_image_data(self) -> None:
         payload = {
             "profile": "photo_scan",
+            "profileSuggestion": "clean_digital",
             "maxCandidates": 130,
             "visionCandidateLimit": 8,
             "maxRevisionRounds": 12,
@@ -39,6 +40,7 @@ class RunArtifactsTest(unittest.TestCase):
         }
         audit = request_audit_payload(payload)
         self.assertEqual(audit["profile"], "photo_scan")
+        self.assertEqual(audit["profileSuggestion"], "clean_digital")
         self.assertEqual(audit["maxCandidates"], 130)
         self.assertEqual(audit["visionCandidateLimit"], 8)
         self.assertEqual(audit["maxRevisionRounds"], 12)
@@ -49,6 +51,12 @@ class RunArtifactsTest(unittest.TestCase):
         response = {
             "ok": True,
             "runDir": "output/web/run1",
+            "profile": "clean_digital",
+            "profileResolution": {
+                "id": "clean_digital",
+                "source": "explicit_request",
+                "suggested_profile": "photo_scan",
+            },
             "images": [
                 {
                     "id": "img1",
@@ -76,6 +84,9 @@ class RunArtifactsTest(unittest.TestCase):
             ],
         }
         audit = result_audit_payload(response)
+        self.assertEqual(audit["profile"], "clean_digital")
+        self.assertEqual(audit["profileResolution"]["source"], "explicit_request")
+        self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
         image = audit["images"][0]
         self.assertNotIn("sourceDataUrl", image)
         self.assertNotIn("resultDataUrl", image)

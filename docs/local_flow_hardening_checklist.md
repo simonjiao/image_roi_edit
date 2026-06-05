@@ -230,7 +230,7 @@
 
 - [x] request/result/progress/prompt stage context 的运行产物 helper 已从 `processing_service.py` 拆到 `src/roi_image_edit/run_artifacts.py`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_run_artifacts.py`。
 - [x] `src/roi_image_edit/stages.py` 必须成为 stage contract 的唯一入口，承载 `StageSpec`、`StageResult`、detector mapping 和 prompt context；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_contract_entrypoints_are_only_defined_in_stages_module` 和 schema contract 测试。
-- [ ] `src/roi_image_edit/stage_profiles.py` 必须成为 profile 定义和加载的唯一入口；验证方式是 profile matrix smoke 和用户指定 profile 覆盖自动建议测试。
+- [x] `src/roi_image_edit/stage_profiles.py` 必须成为 profile 定义和加载的唯一入口；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_profiles.py` 覆盖 profile 入口定义、profile matrix、显式 profile 覆盖自动建议 resolver 和 audit 字段。
 - [x] `src/roi_image_edit/stage_patchers.py` 必须成为 stage patcher filter/dispatch 的唯一入口；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py` 覆盖 registry、allowed/blocked keys、dispatcher 依赖、旧混合入口缩减和具体 patcher runtime 直调禁用。
 - [ ] `local_validation.py` 中的 `local_*_issues` 必须继续收敛为 detector 底层函数，不能直接承担 stage policy；验证方式是 stage policy 单测只通过 `stages.py` 调用 detector。
 - [ ] `revision_solver.py` 中的旧评分和候选选择逻辑必须继续收敛为 dispatcher/selector，不能重新生成跨阶段混合 patch；验证方式是代码搜索和 stage filter 单测。

@@ -9,6 +9,7 @@ from roi_image_edit.stages import prompt_stage_context, stage_gate_for_report
 def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "profile": payload.get("profile"),
+        "profileSuggestion": payload.get("profileSuggestion"),
         "maxCandidates": payload.get("maxCandidates"),
         "visionCandidateLimit": payload.get("visionCandidateLimit"),
         "maxRevisionRounds": payload.get("maxRevisionRounds"),
@@ -43,7 +44,13 @@ def result_audit_payload(response: dict[str, Any]) -> dict[str, Any]:
             for candidate in item.get("candidates", [])
         ]
         images.append(image_record)
-    return {"ok": response.get("ok"), "runDir": response.get("runDir"), "images": images}
+    return {
+        "ok": response.get("ok"),
+        "runDir": response.get("runDir"),
+        "profile": response.get("profile"),
+        "profileResolution": response.get("profileResolution"),
+        "images": images,
+    }
 
 
 def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:

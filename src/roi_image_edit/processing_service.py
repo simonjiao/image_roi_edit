@@ -76,7 +76,7 @@ from roi_image_edit.run_artifacts import (
     result_audit_payload,
     stage_progress_fields,
 )
-from roi_image_edit.stage_profiles import stage_profile
+from roi_image_edit.stage_profiles import resolve_stage_profile
 from roi_image_edit.stages import stage_gate_for_report
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
@@ -1642,7 +1642,11 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     progress_path = run_dir / "progress.jsonl"
-    pipeline_profile = stage_profile(str(payload.get("profile") or "photo_scan")).id
+    profile_resolution = resolve_stage_profile(
+        str(payload.get("profile") or ""),
+        str(payload.get("profileSuggestion") or ""),
+    )
+    pipeline_profile = str(profile_resolution["id"])
 
     def emit(event: str, fields: dict[str, Any] | None = None) -> None:
         record = {
@@ -1656,7 +1660,14 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             progress(event, record)
 
     write_json(run_dir / "request.json", request_audit_payload(payload))
-    emit("run_started", {"run_dir": str(run_dir), "pipeline_profile": pipeline_profile})
+    emit(
+        "run_started",
+        {
+            "run_dir": str(run_dir),
+            "pipeline_profile": pipeline_profile,
+            "profile_resolution": profile_resolution,
+        },
+    )
     prompts = load_processing_prompts()
     vision_client = VisionClient(ENV_PATH)
     results: list[dict[str, Any]] = []
@@ -1824,7 +1835,13 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "error": str(exc),
                 }
             )
-    response = {"ok": True, "runDir": str(run_dir), "images": results}
+    response = {
+        "ok": True,
+        "runDir": str(run_dir),
+        "profile": pipeline_profile,
+        "profileResolution": profile_resolution,
+        "images": results,
+    }
     write_json(run_dir / "result.json", result_audit_payload(response))
     emit("run_finished", {"ok": True})
     return response
