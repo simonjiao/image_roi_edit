@@ -12,6 +12,7 @@ PRE_CANDIDATE_GATE_ORDER = (
 
 PROTECTED_TEXT_ISSUE_TYPES = {
     "slot_overlaps_protected_text",
+    "target_roi_overlaps_protected_text",
     "right_boundary_too_close_to_protected_text",
 }
 

@@ -1066,6 +1066,54 @@ def protected_box_overlaps_row(
     return overlap / max(1, min(box[3] - box[1], row[3] - row[1])) >= 0.30
 
 
+def target_roi_protected_overlap_issues(
+    target_roi: tuple[int, int, int, int],
+    protected_boxes: tuple[tuple[int, int, int, int], ...],
+) -> list[dict[str, Any]]:
+    conflicts: list[dict[str, Any]] = []
+    total_overlap = 0
+    for box in protected_boxes:
+        overlap = box_overlap_area(target_roi, box)
+        if overlap <= 0:
+            continue
+        total_overlap += overlap
+        conflicts.append({"box": list(box), "overlap_pixels": int(overlap)})
+    if not conflicts:
+        return []
+    return [
+        {
+            "type": "target_roi_overlaps_protected_text",
+            "target_roi": list(target_roi),
+            "protected_boxes": conflicts,
+            "overlap_pixels": int(total_overlap),
+            "guard_scope": "all_directions",
+        }
+    ]
+
+
+def apply_target_roi_protected_guard(
+    slot_report: dict[str, Any],
+    target_roi: tuple[int, int, int, int],
+    protected_boxes: tuple[tuple[int, int, int, int], ...],
+) -> dict[str, Any]:
+    issues = target_roi_protected_overlap_issues(target_roi, protected_boxes)
+    if not issues:
+        return slot_report
+    merged = dict(slot_report)
+    merged["pass"] = False
+    merged["issues"] = [*(slot_report.get("issues") or []), *issues]
+    overlap_report = dict(slot_report.get("overlap_report") or {})
+    overlap_report["target_roi_protected_overlap_pixels"] = int(sum(issue["overlap_pixels"] for issue in issues))
+    overlap_report["target_roi_protected_conflicts"] = [
+        conflict
+        for issue in issues
+        for conflict in issue.get("protected_boxes", [])
+    ]
+    overlap_report["protected_text_guard_scope"] = "all_directions"
+    merged["overlap_report"] = overlap_report
+    return merged
+
+
 def expand_roi_for_longer_replacement(
     target_roi: tuple[int, int, int, int],
     search_roi: tuple[int, int, int, int],
@@ -1570,14 +1618,6 @@ def component_slots_for_region(
     )
     if non_cjk_slot:
         return non_cjk_slot
-    cjk_unlabeled_slots = cjk_value_slots_without_label(
-        img,
-        roi,
-        source_text=source_text,
-        target_text=target_text,
-    )
-    if cjk_unlabeled_slots:
-        return cjk_unlabeled_slots
     cjk_after_colon_slots = cjk_value_slots_after_colon(
         img,
         roi,
@@ -1610,6 +1650,14 @@ def component_slots_for_region(
     )
     if label_run_slots:
         return label_run_slots
+    cjk_unlabeled_slots = cjk_value_slots_without_label(
+        img,
+        roi,
+        source_text=source_text,
+        target_text=target_text,
+    )
+    if cjk_unlabeled_slots:
+        return cjk_unlabeled_slots
     projection_slots = source_slots_from_projection(
         img,
         roi,
@@ -2530,6 +2578,7 @@ def build_region_plan(
         )
         target_roi = clamp_box_to_container(target_roi, roi)
         source_reference_box = target_roi
+    slot_report = apply_target_roi_protected_guard(slot_report, target_roi, protected_boxes)
     slot_report = {
         **slot_report,
         "target_roi_after_length_policy": list(target_roi),

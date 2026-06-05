@@ -57,7 +57,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 
 | Stage | 目的和作用 | 主要 Optimization Steps | 视觉 prompt |
 | --- | --- | --- | --- |
-| `hard_boundary` | 保证尺寸、ROI 外、边缘和 protected text 不变；方向、字段 ROI、旧槽位不可靠时阻塞。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check` | 视觉模型只能读取 hard report；不能覆盖失败。 |
+| `hard_boundary` | 保证尺寸、ROI 外、边缘和 protected text 不变；方向、字段 ROI、旧槽位不可靠时阻塞。protected text guard 是全方向约束，目标 ROI、旧字清理范围和实际改动像素都不能覆盖任何未修改文字。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check` | 视觉模型只能读取 hard report；不能覆盖失败。 |
 | `text_shape` | 先修字体、字号、槽位、基线、字距、笔画身体和局部姿态。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`stroke_body_search`、`pose_shear_search`、`shape_reset` | `candidate_rank_prompt.txt` 排序 top candidates；`tuning_prompt.txt` 给 JSON 建议；`final_acceptance_prompt.txt` 终检。 |
 | `ink_gray_balance` | 分开控制真黑核心、中灰笔画身体和外灰边。 | `core_black_search`、`mid_gray_body_search`、`outer_gray_control`、`opacity_search`、`core_gain_search`、`alpha_contrast_search` | 同上，但建议必须限制在黑灰相关参数。 |
 | `photo_texture` | 匹配照片/扫描的模糊、断裂、噪声和压缩质感。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture` | 同上，但只能在形态和黑灰通过后主导。 |
