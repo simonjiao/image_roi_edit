@@ -136,7 +136,7 @@
 
 - [x] `photo_texture` 只能在 `text_shape` 和 `ink_gray_balance` 通过后执行；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_photo_texture_blocks_only_after_shape_and_ink_pass` 验证同时存在形态/黑灰/照片质感问题时先阻塞 `text_shape`，形态通过后先阻塞 `ink_gray_balance`，只有前两者通过后才阻塞 `photo_texture`。
 - [ ] 可调参数必须限定为小幅 blur、edge breakup、局部噪声、压缩质感、轻微 alpha 退化、局部残差回填；验证方式是 stage patcher allowed keys。
-- [ ] 目标必须是匹配原图拍照/扫描质感，不是把字弄糊；验证方式是报告同时记录 sharpness、breakup、noise、compression 指标。
+- [x] 目标必须是匹配原图拍照/扫描质感，不是把字弄糊；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_photo_texture_validation.py::PhotoTextureValidationTest.test_photo_texture_axes_report_records_texture_not_just_blur` 验证 `photo_texture_metrics.texture_axes` 同时记录 `sharpness`、`breakup`、`noise`、`compression`，并声明目标为匹配原图照片/扫描质感。
 - [ ] 照片质感不能破坏已通过的黑灰和形态指标；验证方式是 photo candidate 记录前后 stage severity。
 - [x] 文字过清晰、过干净、过糊、边缘无断裂必须进入 `photo_texture` 问题报告；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_photo_texture_validation.py` 验证 `photo_texture_too_sharp`、`photo_texture_too_clean`、`photo_texture_too_blurry`、`photo_texture_edge_breakup_missing` 和 `photo_texture_not_applied` issue type，并验证无断裂问题会贡献 `photo_texture` stage severity。
 

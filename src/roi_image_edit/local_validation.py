@@ -892,6 +892,31 @@ def changed_texture_boxes(plan: RenderPlan) -> tuple[tuple[int, int, int, int], 
     return (plan.target_roi,)
 
 
+def photo_texture_axes_report(metrics: dict[str, Any]) -> dict[str, Any]:
+    params = metrics.get("params") if isinstance(metrics.get("params"), dict) else {}
+    return {
+        "objective": "match_source_photo_or_scan_texture",
+        "sharpness": {
+            "edge_laplacian_ratio": metrics.get("edge_laplacian_ratio"),
+            "old_edge_laplacian_mean": metrics.get("old_edge_laplacian_mean"),
+            "new_edge_laplacian_mean": metrics.get("new_edge_laplacian_mean"),
+        },
+        "breakup": {
+            "edge_breakup": params.get("edge_breakup"),
+            "residual_ratio": metrics.get("residual_ratio"),
+        },
+        "noise": {
+            "photo_noise": params.get("photo_noise"),
+            "old_residual_mean": metrics.get("old_residual_mean"),
+            "new_residual_mean": metrics.get("new_residual_mean"),
+        },
+        "compression": {
+            "jpeg_quality": params.get("jpeg_quality"),
+            "jpeg_weight": params.get("jpeg_weight"),
+        },
+    }
+
+
 def photo_texture_metrics(
     original: Image.Image,
     candidate: Image.Image,
@@ -962,7 +987,7 @@ def photo_texture_metrics(
     jpeg_weight = 0.0
     if 1 <= jpeg_quality <= 99:
         jpeg_weight = max(0.0, min(0.42, (100.0 - float(jpeg_quality)) / 85.0))
-    return {
+    metrics = {
         "enabled": True,
         "old_edge_laplacian_mean": round(old_edge_mean, 3),
         "new_edge_laplacian_mean": round(new_edge_mean, 3),
@@ -980,6 +1005,8 @@ def photo_texture_metrics(
         },
         "per_box": per_box,
     }
+    metrics["texture_axes"] = photo_texture_axes_report(metrics)
+    return metrics
 
 
 def local_photo_texture_issues(report: dict[str, Any]) -> list[dict[str, Any]]:

@@ -5,6 +5,7 @@ import unittest
 from roi_image_edit.local_validation import (
     PHOTO_TEXTURE_ISSUE_TYPES,
     local_photo_texture_issues,
+    photo_texture_axes_report,
     stage_issue_severity,
 )
 
@@ -80,6 +81,22 @@ class PhotoTextureValidationTest(unittest.TestCase):
         report = photo_report(edge_breakup=0.0, photo_noise=0.01)
         report["local_photo_texture_issues"] = local_photo_texture_issues(report)
         self.assertGreater(stage_issue_severity(report, "photo_texture"), 0.0)
+
+    def test_photo_texture_axes_report_records_texture_not_just_blur(self) -> None:
+        metrics = photo_report(
+            blur=0.2,
+            edge_breakup=0.012,
+            photo_noise=0.02,
+            jpeg_weight=0.08,
+            edge_ratio=1.4,
+            residual_ratio=0.76,
+        )["photo_texture_metrics"]
+        axes = photo_texture_axes_report(metrics)
+        self.assertEqual(axes["objective"], "match_source_photo_or_scan_texture")
+        self.assertEqual(axes["sharpness"]["edge_laplacian_ratio"], 1.4)
+        self.assertEqual(axes["breakup"]["edge_breakup"], 0.012)
+        self.assertEqual(axes["noise"]["photo_noise"], 0.02)
+        self.assertEqual(axes["compression"]["jpeg_weight"], 0.08)
 
 
 if __name__ == "__main__":
