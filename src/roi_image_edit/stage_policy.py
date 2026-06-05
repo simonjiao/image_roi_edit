@@ -61,6 +61,14 @@ OPTIMIZATION_STEP_KEYS = {
     },
 }
 
+
+def patch_keys_for_steps(steps: tuple[str, ...] | list[str] | set[str] | frozenset[str]) -> frozenset[str]:
+    keys: set[str] = set()
+    for step in steps:
+        keys.update(OPTIMIZATION_STEP_KEYS.get(str(step), set()))
+    return frozenset(keys)
+
+
 # Stage gates define ordering and blocking. Optimization policy defines which
 # candidate mutation steps may run while a given stage is blocking.
 STAGE_OPTIMIZATION_POLICY = {

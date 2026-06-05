@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from roi_image_edit.iterative_pipeline import CandidateParams
 from roi_image_edit.local_validation import (
@@ -24,8 +24,73 @@ from roi_image_edit.local_validation import (
 from roi_image_edit.stage_policy import (
     STAGE_ORDER,
     optimization_policy_audit,
+    optimization_policy_for_stage,
     optimization_steps_for_patch,
+    patch_keys_for_steps,
 )
+
+
+StagePatcherFn = Callable[
+    [CandidateParams, dict[str, Any], dict[str, Any] | None],
+    list[dict[str, Any]],
+]
+
+
+@dataclass(frozen=True)
+class StagePatcherSpec:
+    stage_id: str
+    primary_stage: str
+    patcher: StagePatcherFn
+    allowed_patch_keys: frozenset[str]
+    secondary_patch_keys: frozenset[str]
+    blocked_patch_keys: frozenset[str]
+
+    @property
+    def declared_patch_keys(self) -> frozenset[str]:
+        return self.allowed_patch_keys | self.secondary_patch_keys
+
+    def as_report(self) -> dict[str, Any]:
+        return {
+            "stage_id": self.stage_id,
+            "primary_stage": self.primary_stage,
+            "patcher": self.patcher.__name__,
+            "allowed_patch_keys": sorted(self.allowed_patch_keys),
+            "secondary_patch_keys": sorted(self.secondary_patch_keys),
+            "blocked_patch_keys": sorted(self.blocked_patch_keys),
+            "declared_patch_keys": sorted(self.declared_patch_keys),
+        }
+
+
+def _build_stage_patcher_spec(stage_id: str, patcher: StagePatcherFn) -> StagePatcherSpec:
+    policy = optimization_policy_for_stage(stage_id)
+    allowed_steps = tuple(str(step) for step in policy.get("allowed_steps") or [])
+    secondary_steps = list(str(step) for step in policy.get("secondary_only_steps") or [])
+    if stage_id == "text_shape":
+        # Stroke-body repairs may carry small ink-balance deltas as coupled
+        # side effects; stage_policy still rejects ink-only patches.
+        secondary_steps.append("ink_gray_balance")
+    forbidden_steps = tuple(str(step) for step in policy.get("forbidden_steps") or [])
+    return StagePatcherSpec(
+        stage_id=stage_id,
+        primary_stage=stage_id,
+        patcher=patcher,
+        allowed_patch_keys=patch_keys_for_steps(allowed_steps),
+        secondary_patch_keys=patch_keys_for_steps(tuple(secondary_steps)),
+        blocked_patch_keys=patch_keys_for_steps(forbidden_steps),
+    )
+
+
+def patch_keys_declared_for_stage(stage_id: str, patch: dict[str, Any] | None) -> bool:
+    policy = optimization_policy_for_stage(stage_id)
+    allowed_steps = list(str(step) for step in policy.get("allowed_steps") or [])
+    secondary_steps = list(str(step) for step in policy.get("secondary_only_steps") or [])
+    if stage_id == "text_shape":
+        secondary_steps.append("ink_gray_balance")
+    forbidden_steps = list(str(step) for step in policy.get("forbidden_steps") or [])
+    declared = patch_keys_for_steps(tuple(allowed_steps + secondary_steps))
+    blocked = patch_keys_for_steps(tuple(forbidden_steps))
+    patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
+    return bool(patch_keys) and not (patch_keys - declared) and not (patch_keys & blocked)
 
 
 def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
@@ -1112,8 +1177,12 @@ def photo_texture_patches(
     patches: list[dict[str, Any]] = []
     patches.extend(alignment_centering_patches(report))
     patches.extend(photo_texture_recovery_patches(report))
-    patches.extend(final_revision_patches(acceptance))
-    if isinstance(rank_patch, dict):
+    patches.extend(
+        patch
+        for patch in final_revision_patches(acceptance)
+        if patch_keys_declared_for_stage("photo_texture", patch)
+    )
+    if isinstance(rank_patch, dict) and patch_keys_declared_for_stage("photo_texture", rank_patch):
         patches.append(rank_patch)
     return patches
 
@@ -1153,12 +1222,59 @@ def final_acceptance_patches(
     return patches
 
 
-STAGE_PATCHERS = {
-    "text_shape": text_shape_patches,
-    "ink_gray_balance": ink_gray_balance_patches,
-    "photo_texture": photo_texture_patches,
-    "background_cleanup": background_cleanup_patches,
+STAGE_PATCHER_SPECS = {
+    "text_shape": _build_stage_patcher_spec("text_shape", text_shape_patches),
+    "ink_gray_balance": _build_stage_patcher_spec("ink_gray_balance", ink_gray_balance_patches),
+    "photo_texture": _build_stage_patcher_spec("photo_texture", photo_texture_patches),
+    "background_cleanup": _build_stage_patcher_spec("background_cleanup", background_cleanup_patches),
 }
+
+
+def stage_patcher_spec(stage_id: str | None) -> StagePatcherSpec | None:
+    return STAGE_PATCHER_SPECS.get(str(stage_id or ""))
+
+
+def stage_patcher_specs() -> tuple[StagePatcherSpec, ...]:
+    return tuple(STAGE_PATCHER_SPECS[stage_id] for stage_id in STAGE_PATCHER_SPECS)
+
+
+def stage_patcher_registry_report() -> dict[str, Any]:
+    return {
+        stage_id: spec.as_report()
+        for stage_id, spec in STAGE_PATCHER_SPECS.items()
+    }
+
+
+def patch_key_audit_for_stage_patcher(
+    stage_id: str,
+    patch: dict[str, Any] | None,
+) -> dict[str, Any]:
+    spec = stage_patcher_spec(stage_id)
+    patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
+    if spec is None:
+        return {
+            "stage_id": stage_id,
+            "patch": patch or {},
+            "patch_keys": sorted(patch_keys),
+            "declared_patch_keys": [],
+            "undeclared_patch_keys": sorted(patch_keys),
+            "blocked_patch_keys": [],
+            "declared": False,
+        }
+    declared = spec.declared_patch_keys
+    blocked = spec.blocked_patch_keys
+    undeclared = patch_keys - declared
+    blocked_hits = patch_keys & blocked
+    return {
+        "stage_id": spec.stage_id,
+        "primary_stage": spec.primary_stage,
+        "patch": patch or {},
+        "patch_keys": sorted(patch_keys),
+        "declared_patch_keys": sorted(declared),
+        "undeclared_patch_keys": sorted(undeclared),
+        "blocked_patch_keys": sorted(blocked_hits),
+        "declared": not undeclared and not blocked_hits,
+    }
 
 
 def revision_patches_for_round(
@@ -1170,12 +1286,13 @@ def revision_patches_for_round(
 ) -> list[dict[str, Any]]:
     stage_gate = stage_gate_for_report(report) if isinstance(report, dict) else {}
     blocking_stage = stage_gate.get("blocking_stage") or acceptance_blocking_stage(acceptance)
-    patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHERS else None
+    patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHER_SPECS else None
     if patcher_stage is None and report_has_excess_black_core(report):
         patcher_stage = "ink_gray_balance"
     if patcher_stage is None and report_needs_wider_gray_strokes(report):
         patcher_stage = "text_shape"
-    patcher = STAGE_PATCHERS.get(patcher_stage) or final_acceptance_patches
+    patcher_spec = stage_patcher_spec(patcher_stage)
+    patcher = patcher_spec.patcher if patcher_spec is not None else final_acceptance_patches
     patches = patcher(params, acceptance, report, rank_patch=rank_patch)
     accepted, _rejected = filter_patches_for_stage(patches, patcher_stage, limit=12)
     return accepted

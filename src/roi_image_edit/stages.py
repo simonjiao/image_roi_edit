@@ -4,9 +4,9 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 from roi_image_edit.stage_policy import (
-    OPTIMIZATION_STEP_KEYS,
     STAGE_LABELS,
     optimization_policy_for_stage,
+    patch_keys_for_steps,
 )
 from roi_image_edit.stage_profiles import StageProfile, stage_profile
 
@@ -56,13 +56,6 @@ class StageSpec:
         data["allowed_patch_keys"] = sorted(self.allowed_patch_keys)
         data["blocked_patch_keys"] = sorted(self.blocked_patch_keys)
         return data
-
-
-def patch_keys_for_steps(steps: tuple[str, ...] | list[str]) -> frozenset[str]:
-    keys: set[str] = set()
-    for step in steps:
-        keys.update(OPTIMIZATION_STEP_KEYS.get(str(step), set()))
-    return frozenset(keys)
 
 
 def _strict_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
