@@ -37,6 +37,7 @@ from roi_image_edit.roi_locator import (
     text_run_box,
 )
 from roi_image_edit.shape_metrics import box_metrics, default_shape_thresholds
+from roi_image_edit.shape_scoring import shape_score_breakdown
 from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
 
@@ -2263,6 +2264,7 @@ def candidate_report(
         + list(shape_issues)
         + list(font_style.get("issues", [])),
     }
+    report["shape_score_breakdown"] = shape_score_breakdown(report, plan)
     report["local_ink_balance_issues"] = local_ink_balance_issues(report)
     report["local_stroke_body_issues"] = local_stroke_body_issues(report)
     report["local_neighbor_style_issues"] = local_neighbor_style_issues(report)
@@ -2342,6 +2344,9 @@ def processing_candidate_score(report: dict[str, Any]) -> float:
         ratio = font_style.get("score_ratio_to_best")
         if ratio is not None:
             score += max(0.0, float(ratio) - 1.0) * 180.0
+    shape_score = report.get("shape_score_breakdown")
+    if isinstance(shape_score, dict) and shape_score.get("enabled"):
+        score += float(shape_score.get("score") or 0.0)
 
     body_issues = report.get("local_stroke_body_issues")
     if isinstance(body_issues, list) and body_issues:

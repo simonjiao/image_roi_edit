@@ -114,13 +114,13 @@
 ### H. 字体形态联合搜索
 
 - [ ] `text_shape` 阻塞时生成 shape candidate grid，且 grid 只包含字体、字号、放置、`text_dx/text_dy`、`char_offsets`、stroke body、shear；验证方式是 candidate 参数集合。
-- [ ] 形态排序必须包含字高、字宽、字距、基线；验证方式是 shape score 明细字段。
-- [ ] 形态排序必须包含单字中心与旧槽位中心误差；验证方式是 score 明细字段。
-- [ ] 形态排序必须包含左边界和右边界误差；验证方式是 score 明细字段。
-- [ ] 形态排序必须包含笔画面积和复杂度修正后的体量；验证方式是 score 明细字段。
-- [ ] 形态排序必须包含姿态继承误差；验证方式是 shear/pose score 明细字段。
-- [ ] 形态排序必须包含 protected text 距离；验证方式是 score 明细字段。
-- [ ] 形态排序必须包含字体风格分数和可渲染字符检查；验证方式是 font report 字段。
+- [x] 形态排序必须包含字高、字宽、字距、基线；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `shape_score_breakdown.components.height_width_spacing_baseline` 输出 width、height、gap 和 baseline 明细。
+- [x] 形态排序必须包含单字中心与旧槽位中心误差；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `center_error.max_abs_centroid_dx/dy`。
+- [x] 形态排序必须包含左边界和右边界误差；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `boundary_error.max_abs_left_delta_px` 和 `max_abs_right_delta_px`。
+- [x] 形态排序必须包含笔画面积和复杂度修正后的体量；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `ink_area_complexity.text_complexity_ratio` 和 complexity-adjusted ink delta。
+- [x] 形态排序必须包含姿态继承误差；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `pose_inheritance.max_abs_shear_error`。
+- [x] 形态排序必须包含 protected text 距离；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `protected_distance.min_horizontal_gap_px`。
+- [x] 形态排序必须包含字体风格分数和可渲染字符检查；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `font_style.font_style_score_ratio`、`font_family_score_ratio` 和 `renderable_text_check.missing_chars`。
 - [x] 形态没通过时，`blur`、`noise`、`jpeg_quality`、背景融合不能成为主修复方向；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 
 ### I. 黑灰比例搜索
