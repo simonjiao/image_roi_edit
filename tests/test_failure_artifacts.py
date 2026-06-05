@@ -271,6 +271,11 @@ class FailureArtifactsTest(unittest.TestCase):
             self.assertTrue(response["ok"])
             image_result = response["images"][0]
             self.assertFalse(image_result["accepted"])
+            self.assertEqual(len(image_result["candidates"]), 1)
+            self.assertEqual(image_result["candidates"][0]["kind"], "rejected_region_preview")
+            self.assertEqual(image_result["candidates"][0]["regionId"], "auto_name")
+            self.assertTrue(image_result["candidates"][0]["dataUrl"].startswith("data:image/png;base64,"))
+            self.assertEqual(image_result["candidates"][0]["blocking_stage"], "text_shape")
             artifact_manifest = read_json(Path(response["artifactManifest"]))
             self.assertTrue(artifact_manifest["all_explainable"])
             manifest_image = artifact_manifest["images"][0]

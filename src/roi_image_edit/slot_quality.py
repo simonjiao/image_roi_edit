@@ -274,16 +274,49 @@ def slot_quality_report(
                 }
             )
 
-        issues.extend({"index": idx, **issue} for issue in slot_issues)
+        core_covered = bool(check_core_pixels == 0 or core_pixels == check_core_pixels)
+        edge_overflow_types = {"slot_bottom_overflow", "slot_tilt_overflow"}
+        edge_overflow_issues = [
+            issue for issue in slot_issues if issue.get("type") in edge_overflow_types
+        ]
+        non_edge_issues = [
+            issue for issue in slot_issues if issue.get("type") not in edge_overflow_types
+        ]
+        soft_edge_overflow = bool(
+            length_change == "longer"
+            and edge_overflow_issues
+            and not non_edge_issues
+            and core_covered
+            and protected_overlap_pixels == 0
+            and label_overlap_pixels == 0
+            and right_protected_overlap_pixels == 0
+            and source_span_box is not None
+        )
+        if soft_edge_overflow:
+            slot_issues = [
+                {
+                    **issue,
+                    "blocking": False,
+                    "deferred_to": "target_roi_after_length_policy",
+                    "reason": "photo_edge_or_tilt_overflow_with_complete_core",
+                }
+                for issue in slot_issues
+            ]
+            blocking_slot_issues: list[dict[str, Any]] = []
+        else:
+            blocking_slot_issues = slot_issues
+
+        issues.extend({"index": idx, **issue} for issue in blocking_slot_issues)
         core_coverage = _coverage(core_pixels, check_core_pixels)
         gray_edge_coverage = _coverage(gray_edge_pixels, check_gray_edge_pixels)
         bottom_coverage = _coverage(dark_pixels, dark_pixels + below_dark_pixels)
         tilt_coverage = _coverage(dark_pixels, dark_pixels + tilt_overflow_pixels)
         overflow_covered_by_cleanup_mask = bool(cleanup_slot and (below_dark_pixels or tilt_overflow_pixels))
-        core_covered = bool(check_core_pixels == 0 or core_pixels == check_core_pixels)
-        gray_edge_covered = bool(check_gray_edge_pixels == 0 or gray_edge_pixels == check_gray_edge_pixels)
-        bottom_covered = bool(below_dark_pixels == 0 or cleanup_slot)
-        tilt_covered = bool(tilt_overflow_pixels == 0 or cleanup_slot)
+        gray_edge_covered = bool(
+            check_gray_edge_pixels == 0 or gray_edge_pixels == check_gray_edge_pixels or soft_edge_overflow
+        )
+        bottom_covered = bool(below_dark_pixels == 0 or cleanup_slot or soft_edge_overflow)
+        tilt_covered = bool(tilt_overflow_pixels == 0 or cleanup_slot or soft_edge_overflow)
         coverage_records.append(
             {
                 "index": idx,
@@ -300,6 +333,7 @@ def slot_quality_report(
                 "diagonal_dark_pixels": diagonal_dark_pixels,
                 "cleanup_mask_boxes": [list(box) for box in cleanup_boxes_for_slot],
                 "overflow_covered_by_cleanup_mask": overflow_covered_by_cleanup_mask,
+                "soft_edge_overflow_deferred": soft_edge_overflow,
                 "pass": bool(core_covered and gray_edge_covered and bottom_covered and tilt_covered),
             }
         )
@@ -326,6 +360,7 @@ def slot_quality_report(
                     "right_dark_pixels": right_dark_pixels,
                     "top_dark_pixels": top_dark_pixels,
                     "diagonal_dark_pixels": diagonal_dark_pixels,
+                    "soft_edge_overflow_deferred": soft_edge_overflow,
                 },
                 "overlap": {
                     "protected_overlap_pixels": protected_overlap_pixels,

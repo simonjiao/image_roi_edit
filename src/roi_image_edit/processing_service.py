@@ -12,6 +12,7 @@ from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_au
 from roi_image_edit.failure_artifacts import failed_image_result
 from roi_image_edit.iterative_pipeline import VisionClient, clamp_box, write_json
 from roi_image_edit.pre_candidate_gates import pre_candidate_gate_report
+from roi_image_edit.result_previews import rejected_region_preview_candidate
 from roi_image_edit.roi_locator import auto_orient_for_instruction, parse_instruction_details
 from roi_image_edit.run_artifacts import (
     delivery_artifact_manifest,
@@ -205,9 +206,18 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     },
                 )
                 image_accepted = image_accepted and accepted
-                for candidate in region_candidates:
+                visible_region_candidates = list(region_candidates)
+                if not visible_region_candidates and not accepted:
+                    rejected_preview = rejected_region_preview_candidate(
+                        region_id=region_id,
+                        summary=summary,
+                        pipeline_profile=pipeline_profile,
+                    )
+                    if rejected_preview:
+                        visible_region_candidates.append(rejected_preview)
+                for candidate in visible_region_candidates:
                     candidate["regionId"] = region_id
-                candidates.extend(region_candidates)
+                candidates.extend(visible_region_candidates)
                 region_results.append(
                     {
                         "id": region_id,
