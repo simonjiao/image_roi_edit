@@ -224,7 +224,7 @@
 - [ ] `text_shape_joint_optimization_design.md` 的“现有流程差距”表必须同步当前状态：已实现项标记为已覆盖，未实现项链接到本 checklist 对应条目。
 - [x] `staged_roi_pipeline_design.md` 的旧 7 类诊断关注点必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_design_alignment.py::DesignAlignmentTest.test_staged_design_declares_five_stage_gate_and_old_concern_mapping`。
 - [x] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_completion_claims.py::CompletionClaimsTest.test_readme_declares_hardening_status_while_checklist_is_open` 验证 checklist 仍有 `[ ]` 时 README 必须明确写出 local flow still being hardened，并指向本 checklist。
-- [ ] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”。
+- [x] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_checklist_commit_policy.py::ChecklistCommitPolicyTest.test_generic_process_message_fails` 验证泛泛提交说明失败，`test_message_with_closed_checklist_items_passes` 验证 `Closes checklist items ...` 格式能解析，`test_latest_commit_message_mentions_closed_checklist_items` 验证当前 HEAD 提交说明引用 checklist 项，`scripts/validate_checklist_closure_message.py` 可用于 commit/PR message 文件校验。
 
 ### T. 代码落点和模块边界
 
