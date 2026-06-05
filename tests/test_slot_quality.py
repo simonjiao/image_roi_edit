@@ -39,14 +39,30 @@ class SlotQualityTest(unittest.TestCase):
         self.assertEqual(report["target_count"], 2)
         self.assertEqual(report["length_change"], "same")
         self.assertEqual(report["overlap_report"]["protected_overlap_pixels"], 0)
-        self.assertEqual(report["slot_coverage_schema"]["coverage_fields"], ["core_coverage", "gray_edge_coverage", "bottom_coverage"])
+        self.assertEqual(
+            report["slot_coverage_schema"]["coverage_fields"],
+            ["core_coverage", "gray_edge_coverage", "bottom_coverage", "tilt_coverage"],
+        )
+        self.assertTrue(report["old_text_coverage_report"]["pass"])
+        self.assertEqual(
+            report["old_text_coverage_report"]["components"],
+            ["core", "gray_edge", "bottom_overflow", "tilt_overflow", "cleanup_mask"],
+        )
+        self.assertTrue(report["old_text_coverage_report"]["source_slot_or_cleanup_mask_required"])
         self.assertEqual(len(report["per_slot"]), 2)
         for item in report["per_slot"]:
             self.assertIn("core_pixels", item)
             self.assertIn("gray_edge_pixels", item)
             self.assertGreater(item["coverage"]["core_coverage"], 0.9)
             self.assertGreater(item["coverage"]["gray_edge_coverage"], 0.8)
+            self.assertEqual(item["coverage"]["tilt_overflow_pixels"], 0)
+            self.assertEqual(item["coverage"]["diagonal_dark_pixels"], 0)
             self.assertEqual(item["overlap"]["protected_overlap_pixels"], 0)
+        for item in report["old_text_coverage_report"]["per_slot"]:
+            self.assertTrue(item["pass"])
+            self.assertGreater(item["core_coverage"], 0.9)
+            self.assertGreater(item["gray_edge_coverage"], 0.8)
+            self.assertEqual(item["tilt_overflow_pixels"], 0)
         cleanup = report["length_change_report"]["cleanup_mask_report"]
         self.assertFalse(cleanup["enabled"])
         self.assertEqual(cleanup["pixel_count"], 0)
@@ -63,9 +79,28 @@ class SlotQualityTest(unittest.TestCase):
         )
         issue_types = {issue["type"] for issue in report["issues"]}
         self.assertFalse(report["pass"])
+        self.assertFalse(report["old_text_coverage_report"]["pass"])
         self.assertIn("slot_bottom_overflow", issue_types)
         self.assertLess(report["per_slot"][0]["coverage"]["bottom_coverage"], 1.0)
         self.assertGreater(report["per_slot"][0]["coverage"]["bottom_dark_pixels"], 0)
+
+    def test_tilt_overflow_fails_slot_quality_before_candidate_generation(self) -> None:
+        slots = (slot(10),)
+        report = slot_quality_report(
+            image_with_slots(slots, extra_marks=((20, 13, 21, 18),)),
+            (0, 0, 60, 34),
+            slots,
+            source_text="男",
+            target_text="女",
+            protected_boxes=(),
+        )
+        issue_types = {issue["type"] for issue in report["issues"]}
+        self.assertFalse(report["pass"])
+        self.assertFalse(report["old_text_coverage_report"]["pass"])
+        self.assertIn("slot_tilt_overflow", issue_types)
+        self.assertLess(report["per_slot"][0]["coverage"]["tilt_coverage"], 1.0)
+        self.assertGreater(report["per_slot"][0]["coverage"]["right_dark_pixels"], 0)
+        self.assertGreater(report["old_text_coverage_report"]["per_slot"][0]["tilt_overflow_pixels"], 0)
 
     def test_shorter_replacement_reports_extra_source_cleanup_mask(self) -> None:
         slots = (slot(10), slot(26), slot(42))
@@ -88,6 +123,35 @@ class SlotQualityTest(unittest.TestCase):
         self.assertEqual(cleanup["boxes"], [[42, 10, 52, 24]])
         self.assertEqual(cleanup["span"], [42, 10, 52, 24])
         self.assertGreater(cleanup["pixel_count"], 0)
+
+    def test_shorter_replacement_cleanup_slot_covers_right_bottom_overflow(self) -> None:
+        slots = (slot(10), slot(26), slot(42))
+        report = slot_quality_report(
+            image_with_slots(slots, extra_marks=((52, 24, 53, 26),)),
+            (0, 0, 80, 36),
+            slots,
+            source_text="赵真真",
+            target_text="陈芸",
+            protected_boxes=((50, 20, 55, 27),),
+        )
+        issue_types = {issue["type"] for issue in report["issues"]}
+        cleanup = report["length_change_report"]["cleanup_mask_report"]
+        old_text_coverage = report["old_text_coverage_report"]
+        cleanup_slot_report = old_text_coverage["per_slot"][2]
+
+        self.assertTrue(report["pass"])
+        self.assertNotIn("slot_overlaps_protected_text", issue_types)
+        self.assertNotIn("slot_tilt_overflow", issue_types)
+        self.assertEqual(report["overlap_report"]["protected_overlap_pixels"], 0)
+        self.assertGreater(report["overlap_report"]["old_source_cleanup_overlap_pixels"], 0)
+        self.assertTrue(cleanup["enabled"])
+        self.assertIn([42, 10, 52, 24], cleanup["boxes"])
+        self.assertTrue(any(box[0] >= 52 and box[1] >= 24 for box in cleanup["boxes"]))
+        self.assertTrue(old_text_coverage["pass"])
+        self.assertTrue(cleanup_slot_report["cleanup_slot"])
+        self.assertTrue(cleanup_slot_report["overflow_covered_by_cleanup_mask"])
+        self.assertGreater(cleanup_slot_report["diagonal_dark_pixels"], 0)
+        self.assertTrue(any(box[0] >= 52 and box[1] >= 24 for box in cleanup_slot_report["cleanup_mask_boxes"]))
 
     def test_slot_count_mismatch_fails_with_source_and_target_counts(self) -> None:
         slots = (slot(10),)
