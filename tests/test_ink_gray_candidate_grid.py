@@ -56,6 +56,20 @@ def ink_gray_report() -> dict:
     }
 
 
+def core_light_with_outer_halo_report() -> dict:
+    return {
+        "pass": True,
+        "pipeline_profile": "photo_scan",
+        "local_ink_balance_issues": [
+            {"type": "core_mean_gray_too_light", "actual": 92, "limit": 84},
+            {
+                "type": "changed_char_neighbor_outer_gray_halo_too_high",
+                "outer_share_gap": 0.12,
+            },
+        ],
+    }
+
+
 class InkGrayCandidateGridTest(unittest.TestCase):
     def test_ink_gray_grid_reports_budget_parent_and_allowed_delta_keys(self) -> None:
         base = params()
@@ -125,6 +139,38 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertFalse(grid.report["enabled"])
         self.assertEqual(grid.report["reason"], "ink_gray_balance_not_blocking")
         self.assertEqual(grid.candidates, [])
+
+    def test_core_light_with_outer_halo_recovers_core_without_expanding_gray(self) -> None:
+        base = params()
+        grid = ink_gray_candidate_grid(
+            base,
+            core_light_with_outer_halo_report(),
+            limit=16,
+        )
+
+        self.assertTrue(grid.report["issue_flags"]["core_too_light"])
+        self.assertTrue(grid.report["issue_flags"]["outer_gray_halo"])
+        self.assertEqual(
+            grid.report["axes"]["combined_core_light_outer_gray_halo_strategy"],
+            "recover_core_density_and_trim_outer_gray",
+        )
+        self.assertEqual(
+            grid.report["axes"]["forbidden_combined_strategy_directions"],
+            ["increase_blur", "increase_photo_noise", "expand_outer_gray_halo"],
+        )
+        self.assertTrue(
+            any(
+                candidate.core_ink_gain > base.core_ink_gain
+                and candidate.core_darken_strength > base.core_darken_strength
+                for candidate in grid.candidates
+            )
+        )
+        for candidate in grid.candidates:
+            self.assertLessEqual(candidate.stroke_opacity, base.stroke_opacity)
+            self.assertLessEqual(candidate.ink_gain, base.ink_gain)
+            self.assertEqual(candidate.blur, base.blur)
+            self.assertEqual(candidate.photo_noise, base.photo_noise)
+            self.assertEqual(candidate.edge_breakup, base.edge_breakup)
 
     def test_parent_shape_candidate_survives_multiple_ink_gray_rounds(self) -> None:
         ink_round_parent = replace(params(), candidate_id="ink-round-01")

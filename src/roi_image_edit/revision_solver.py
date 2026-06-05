@@ -947,7 +947,8 @@ def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     }
     return {
         "excess_black_core": report_has_excess_black_core(report),
-        "outer_gray_halo": report_has_outer_gray_halo(report),
+        "outer_gray_halo": report_has_outer_gray_halo(report)
+        or "changed_char_neighbor_outer_gray_halo_too_high" in issue_types,
         "needs_wider_gray_strokes": report_needs_wider_gray_strokes(report),
         "needs_thinner_strokes": report_needs_thinner_strokes(report),
         "fine_strokes_too_soft": report_has_fine_strokes_too_soft(report),
@@ -965,12 +966,19 @@ def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
 
 def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
     flags = ink_gray_issue_flags(report)
+    combined_core_light_outer_halo = flags["core_too_light"] and flags["outer_gray_halo"]
     if flags["excess_black_core"] or flags["needs_thinner_strokes"]:
         opacity_deltas = (0.0, -0.02, -0.04, -0.06)
         stroke_deltas = (0.0, -0.02, -0.04, 0.01)
         ink_deltas = (0.0, -0.02)
         alpha_deltas = (0.0, -0.04)
         core_deltas = ((0.0, 0.0, 0, 0), (-0.04, -0.04, -6, 4), (-0.08, -0.06, -10, 8), (-0.02, -0.08, -4, 10))
+    elif combined_core_light_outer_halo:
+        opacity_deltas = (0.0, 0.01, 0.02, 0.03)
+        stroke_deltas = (0.0, -0.01, -0.02, -0.03)
+        ink_deltas = (0.0, -0.01)
+        alpha_deltas = (0.04, 0.08)
+        core_deltas = ((0.02, 0.03, 4, -2), (0.04, 0.04, 6, -4), (0.06, 0.06, 10, -6), (0.03, 0.08, 5, -8))
     elif flags["outer_gray_halo"]:
         opacity_deltas = (0.0, 0.01, -0.02, 0.02)
         stroke_deltas = (0.0, -0.01, -0.03, 0.01)
@@ -1108,6 +1116,8 @@ def ink_gray_candidate_grid(
             }
         ),
     }
+    issue_flags = ink_gray_issue_flags(report)
+    combined_core_light_outer_halo = issue_flags["core_too_light"] and issue_flags["outer_gray_halo"]
     budget_min, budget_max = INK_GRAY_GRID_BUDGET_RANGE
     return InkGrayCandidateGrid(
         candidates=candidates,
@@ -1134,8 +1144,16 @@ def ink_gray_candidate_grid(
                 "alpha_contrast_count": len(alpha_values),
                 "core_tone_count": len(core_values),
                 "ranking_method": "local_issue_ordered_axis_priority",
+                "combined_core_light_outer_gray_halo_strategy": (
+                    "recover_core_density_and_trim_outer_gray"
+                    if combined_core_light_outer_halo else None
+                ),
+                "forbidden_combined_strategy_directions": (
+                    ["increase_blur", "increase_photo_noise", "expand_outer_gray_halo"]
+                    if combined_core_light_outer_halo else []
+                ),
             },
-            "issue_flags": ink_gray_issue_flags(report),
+            "issue_flags": issue_flags,
             "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
             "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
             "preserved_shape_keys": [

@@ -1068,7 +1068,39 @@ def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[d
         if isinstance(issue, dict)
     }
     patches: list[dict[str, Any]] = []
-    if "core_mean_gray_too_light" in issue_types or "core_lighten_too_high" in issue_types:
+    core_too_light = "core_mean_gray_too_light" in issue_types or "core_lighten_too_high" in issue_types
+    outer_gray_halo = "changed_char_neighbor_outer_gray_halo_too_high" in issue_types
+    if core_too_light and outer_gray_halo:
+        patches.extend(
+            [
+                {
+                    "opacity_delta": 0.015,
+                    "stroke_opacity_delta": -0.01,
+                    "alpha_contrast_delta": 0.06,
+                    "core_ink_gain_delta": 0.03,
+                    "core_darken_strength_delta": 0.03,
+                },
+                {
+                    "opacity_delta": 0.01,
+                    "stroke_opacity_delta": -0.02,
+                    "ink_gain_delta": -0.01,
+                    "alpha_contrast_delta": 0.08,
+                    "core_ink_gain_delta": 0.04,
+                    "core_darken_strength_delta": 0.04,
+                    "core_darken_threshold_delta": 6,
+                    "core_darken_target_gray_delta": -4,
+                },
+                {
+                    "stroke_opacity_delta": -0.03,
+                    "alpha_contrast_delta": 0.10,
+                    "core_ink_gain_delta": 0.05,
+                    "core_darken_strength_delta": 0.05,
+                    "core_darken_threshold_delta": 8,
+                    "core_darken_target_gray_delta": -6,
+                },
+            ]
+        )
+    elif core_too_light:
         patches.extend(
             [
                 {"opacity_delta": 0.015},

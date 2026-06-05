@@ -221,6 +221,57 @@ class StagePatcherRegistryTest(unittest.TestCase):
             )
         )
 
+    def test_ink_gray_core_light_with_outer_halo_rejects_blur_and_recovers_core(self) -> None:
+        dispatch = dispatch_revision_patches(
+            self.params,
+            {
+                "visual_findings": {"darkness": "too_light"},
+                "parameter_suggestions": [{"name": "blur", "delta": 0.08}],
+            },
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [
+                    {"type": "core_mean_gray_too_light", "actual": 92, "limit": 84},
+                    {
+                        "type": "changed_char_neighbor_outer_gray_halo_too_high",
+                        "outer_share_gap": 0.12,
+                    },
+                ],
+            },
+            rank_patch={"blur_delta": 0.08, "photo_noise_delta": 0.02},
+        )
+
+        self.assertEqual(dispatch["patcher_stage"], "ink_gray_balance")
+        patches = dispatch["patches"]
+        self.assertTrue(patches)
+        self.assertTrue(
+            any(
+                float(patch.get("core_ink_gain_delta") or 0.0) > 0
+                and float(patch.get("core_darken_strength_delta") or 0.0) > 0
+                for patch in patches
+            )
+        )
+        self.assertTrue(
+            any(
+                float(patch.get("alpha_contrast_delta") or 0.0) > 0
+                or float(patch.get("stroke_opacity_delta") or 0.0) < 0
+                for patch in patches
+            )
+        )
+        for patch in patches:
+            self.assertLessEqual(float(patch.get("blur_delta") or 0.0), 0.0)
+            self.assertLessEqual(float(patch.get("photo_noise_delta") or 0.0), 0.0)
+            self.assertLessEqual(float(patch.get("edge_breakup_delta") or 0.0), 0.0)
+            self.assertGreaterEqual(float(patch.get("core_ink_gain_delta") or 0.0), 0.0)
+            self.assertGreaterEqual(float(patch.get("core_darken_strength_delta") or 0.0), 0.0)
+        rejected_steps = {
+            tuple(item.get("optimization_steps") or [])
+            for item in dispatch["stage_filter_report"]["rejected_patches"]
+            if isinstance(item, dict)
+        }
+        self.assertIn(("photo_texture",), rejected_steps)
+
     def test_legacy_revision_entry_delegates_to_dispatcher(self) -> None:
         source = inspect.getsource(revision_patches_for_round)
         self.assertIn("dispatch_revision_patches", source)
