@@ -40,17 +40,25 @@ environment checks load prompts from that package resource directory only.
   exposes `/api/process*`, tracks in-memory job state, and starts the local HTTP
   server.
 - `src/roi_image_edit/processing_service.py`: shared image-processing service
-  used by both Web and CLI. It parses processing payloads, runs auto ROI,
-  candidate generation, hard checks, vision checks, revision rounds, and writes
-  run artifacts.
+  used by both Web and CLI. It parses processing payloads, orchestrates image
+  and region processing, runs vision checks, and writes run artifacts.
+- `src/roi_image_edit/roi_locator.py`: instruction parsing, document
+  orientation scoring, field ROI selection, source-text slot detection, and
+  `RenderPlan` construction.
+- `src/roi_image_edit/local_validation.py`: reference profiles, hard/local
+  validation reports, ordered stage gates, background/photo metrics, and local
+  candidate scoring.
+- `src/roi_image_edit/revision_solver.py`: visual feedback parsing,
+  stage-constrained parameter patches, shape-reset candidates, and final font
+  revision candidates.
 - `src/roi_image_edit/stage_policy.py`: stage order and Optimization Step
   policy. Web code imports it indirectly through the processing service and
   must not redefine stage policy.
 - `src/roi_image_edit/iterative_pipeline.py`: lower-level rendering, metric,
   font, hard-check, and OpenAI-compatible vision-client primitives.
 
-When changing pipeline logic, keep HTTP/UI concerns in `web_app.py` and move
-processing or stage behavior into service/core modules.
+When changing pipeline logic, keep HTTP/UI concerns in `web_app.py`, orchestration
+in `processing_service.py`, and domain behavior in the focused core modules.
 
 ## CLI
 

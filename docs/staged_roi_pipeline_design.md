@@ -682,8 +682,8 @@ src/roi_image_edit/stage_patchers.py
 
 现有文件迁移：
 
-1. `processing_service.py` 中的 `local_*_issues` 继续拆成 detector 的底层函数。
-2. `revision_patches_for_round` 缩减为 dispatcher。
+1. `local_validation.py` 中的 `local_*_issues` 继续拆成 detector 的底层函数。
+2. `revision_solver.py` 中的 `revision_patches_for_round` 继续缩减为 dispatcher。
 3. `iterative_pipeline.py` 的视觉 prompt 上下文加入 stage 信息。
 4. `result.json` 和 `progress.jsonl` 记录 stage 状态。
 5. `web_app.py` 只保留 HTTP/API/job 状态和本地 Web 服务启动，不承载阶段策略或图像处理逻辑。

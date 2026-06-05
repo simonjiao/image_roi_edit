@@ -53,7 +53,7 @@
 
 阶段是本地 gate，优化步骤是阶段内部的候选生成、搜索或参数补丁。二者不能混用。
 阶段顺序、阶段名称和 Optimization Step 策略定义在 `src/roi_image_edit/stage_policy.py`；Web 入口只能导入这些策略，不应在 `web_app.py` 中重新定义。
-Web 入口只负责 HTTP/API/job 状态；处理流程集中在 `src/roi_image_edit/processing_service.py`，后续 ROI 定位、候选生成、验收评分和修订求解器应继续从该服务中拆成更小 core 模块。
+Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_edit/processing_service.py`。ROI 定位属于 `src/roi_image_edit/roi_locator.py`，本地验收和候选评分属于 `src/roi_image_edit/local_validation.py`，修订求解器属于 `src/roi_image_edit/revision_solver.py`。
 
 | Stage | 目的和作用 | 主要 Optimization Steps | 视觉 prompt |
 | --- | --- | --- | --- |

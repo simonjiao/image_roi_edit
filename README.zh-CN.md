@@ -37,14 +37,20 @@ Prompt 文本文件打包在
 - `src/roi_image_edit/web_app.py`：只保留 Web 入口。负责静态文件、
   `/api/process*`、内存 job 状态和本地 HTTP 服务启动。
 - `src/roi_image_edit/processing_service.py`：Web 和 CLI 共用的图片处理服务。
-  负责解析处理 payload、自动 ROI、候选生成、硬校验、视觉验收、修订迭代和运行产物。
+  负责解析处理 payload、编排图片/区域处理、执行视觉检查和写入运行产物。
+- `src/roi_image_edit/roi_locator.py`：负责指令解析、文档方向评分、字段 ROI 选择、
+  旧文字槽位检测和 `RenderPlan` 构建。
+- `src/roi_image_edit/local_validation.py`：负责原图参照画像、本地/硬校验报告、
+  有序阶段门禁、背景/照片指标和本地候选评分。
+- `src/roi_image_edit/revision_solver.py`：负责视觉反馈解析、阶段约束参数补丁、
+  形态 reset 候选和最终字体修订候选。
 - `src/roi_image_edit/stage_policy.py`：阶段顺序和 Optimization Step 策略。
   Web 代码只能通过处理服务使用这些策略，不能在 `web_app.py` 里重新定义。
 - `src/roi_image_edit/iterative_pipeline.py`：更底层的渲染、指标、字体、硬校验和
   OpenAI 兼容视觉客户端基础能力。
 
-修改流水线逻辑时，HTTP/UI 相关内容留在 `web_app.py`；处理逻辑或阶段规则应放在
-service/core 模块中。
+修改流水线逻辑时，HTTP/UI 相关内容留在 `web_app.py`，编排留在
+`processing_service.py`，领域逻辑放入对应 core 模块。
 
 ## CLI
 
