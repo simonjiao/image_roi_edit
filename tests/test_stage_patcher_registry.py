@@ -201,6 +201,7 @@ class StagePatcherRegistryTest(unittest.TestCase):
         self.assertEqual(accepted["decision"], "accepted")
         self.assertEqual(accepted["primary_stage"], "text_shape")
         self.assertEqual(accepted["primary_optimization_steps"], ["text_shape"])
+        self.assertEqual(accepted["optimization_step"], "text_shape")
         self.assertEqual(accepted["secondary_optimization_steps"], ["photo_texture"])
         self.assertEqual(
             accepted["decision_basis"],

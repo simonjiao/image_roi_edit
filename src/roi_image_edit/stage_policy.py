@@ -184,10 +184,33 @@ def optimization_policy_audit(stage_id: str | None, patch: dict[str, Any] | None
         "optimization_steps": steps,
         "effective_optimization_steps": effective_steps,
         "primary_optimization_steps": primary_steps,
+        "optimization_step": selected_optimization_step(
+            {
+                "primary_optimization_steps": primary_steps,
+                "effective_optimization_steps": effective_steps,
+                "optimization_steps": steps,
+            }
+        ),
         "allowed": is_allowed,
         "rejection_reason": None if is_allowed else reason,
     }
 
 
+def selected_optimization_step(optimization_report: dict[str, Any] | None) -> str | None:
+    if not isinstance(optimization_report, dict):
+        return None
+    for key in ("primary_optimization_steps", "effective_optimization_steps", "optimization_steps", "allowed_steps"):
+        steps = optimization_report.get(key)
+        if not isinstance(steps, (list, tuple)):
+            continue
+        for step in steps:
+            step_text = str(step or "").strip()
+            if step_text:
+                return step_text
+    return None
+
+
 def stage_optimization_summary(stage_id: str | None) -> dict[str, Any]:
-    return optimization_policy_for_stage(stage_id)
+    summary = optimization_policy_for_stage(stage_id)
+    summary["optimization_step"] = selected_optimization_step(summary)
+    return summary

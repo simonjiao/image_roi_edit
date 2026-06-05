@@ -42,7 +42,7 @@
 - [x] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
 - [ ] 增加前置安全流程验收：`orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard` 必须在候选生成前完成；验证方式是失败样例 `candidate_count=0` 或 rejected，且 `progress.jsonl` 记录失败步骤。
 - [x] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_order_is_the_five_stage_contract`。
-- [ ] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；验证方式是 `result.json` 中同时存在两类字段。
+- [x] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_optimization_step_is_not_a_stage_id`、`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary` 和 `tests/test_run_artifacts.py::RunArtifactsTest.test_result_audit_payload_strips_data_urls_but_keeps_stage_artifact_fields`。
 - [ ] 增加视觉终检边界验收：视觉模型只能看本地 top candidates；验证方式是视觉请求记录中 `candidate_count <= vision_candidate_limit` 且包含本地 `stage_context`。
 
 ### B. 旧 7 类诊断关注点映射到当前 5 个 stage

@@ -76,7 +76,21 @@ class RunArtifactsTest(unittest.TestCase):
                             "id": "r1",
                             "summary": {
                                 "trace": {"final_blocking_stage": "text_shape"},
-                                "vision": {"revision_rounds": []},
+                                "vision": {
+                                    "revision_rounds": [
+                                        {
+                                            "round": 1,
+                                            "stage_id": "text_shape",
+                                            "selected_optimization_step": "stroke_body_shape",
+                                        }
+                                    ],
+                                    "revision_attempts": [
+                                        {
+                                            "stage_id": "text_shape",
+                                            "optimization_step": "stroke_body_shape",
+                                        }
+                                    ],
+                                },
                             },
                         }
                     ],
@@ -93,6 +107,18 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertNotIn("dataUrl", image["candidates"][0])
         self.assertEqual(image["candidates"][0]["stage_context"]["blocking_stage"], "text_shape")
         self.assertEqual(image["regions"][0]["summary"]["trace"]["final_blocking_stage"], "text_shape")
+        self.assertEqual(
+            image["regions"][0]["summary"]["vision"]["revision_rounds"][0]["stage_id"],
+            "text_shape",
+        )
+        self.assertEqual(
+            image["regions"][0]["summary"]["vision"]["revision_rounds"][0]["selected_optimization_step"],
+            "stroke_body_shape",
+        )
+        self.assertEqual(
+            image["regions"][0]["summary"]["vision"]["revision_attempts"][0]["optimization_step"],
+            "stroke_body_shape",
+        )
 
     def test_stage_progress_fields_expose_stable_stage_keys(self) -> None:
         report = {"pass": False, "pipeline_profile": "photo_scan", "issues": [{"type": "roi_outside"}]}

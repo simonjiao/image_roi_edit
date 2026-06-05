@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 from roi_image_edit.stage_patchers import filter_patches_for_stage, patch_allowed_for_stage
-from roi_image_edit.stage_policy import STAGE_LABELS, STAGE_ORDER
+from roi_image_edit.stage_policy import STAGE_LABELS, STAGE_ORDER, optimization_policy_audit, selected_optimization_step
 from roi_image_edit.stage_profiles import stage_profile, stage_profile_choices
 from roi_image_edit.stages import (
     STAGE_SPECS,
@@ -196,6 +196,18 @@ class StageContractsTest(unittest.TestCase):
         background_audit = patch_allowed_for_stage({"mask_threshold_delta": 3}, "text_shape")
         self.assertFalse(background_audit["allowed"])
         self.assertEqual(background_audit["optimization_steps"], ["background_cleanup"])
+
+    def test_optimization_step_is_not_a_stage_id(self) -> None:
+        audit = optimization_policy_audit(
+            "text_shape",
+            {"stroke_opacity_delta": 0.02, "blur_delta": 0.04},
+        )
+        self.assertEqual(audit["stage_id"], "text_shape")
+        self.assertEqual(audit["optimization_steps"], ["stroke_body_shape", "ink_gray_balance", "photo_texture"])
+        self.assertEqual(audit["primary_optimization_steps"], ["stroke_body_shape"])
+        self.assertEqual(audit["optimization_step"], "stroke_body_shape")
+        self.assertEqual(selected_optimization_step(audit), "stroke_body_shape")
+        self.assertNotEqual(audit["stage_id"], audit["optimization_step"])
 
 
 if __name__ == "__main__":

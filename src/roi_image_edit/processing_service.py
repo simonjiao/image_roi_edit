@@ -90,6 +90,7 @@ from roi_image_edit.roi_locator import (
 from roi_image_edit.stage_policy import (
     STAGE_ORDER,
     optimization_policy_audit,
+    selected_optimization_step,
     stage_optimization_summary,
 )
 
@@ -562,6 +563,7 @@ def run_region_vision_checks(
                     "origin": candidate_origin,
                     "round_candidate": candidate_idx,
                     "basis_candidate_id": current_params.candidate_id,
+                    "stage_id": current_blocking_stage,
                     "params": asdict(patched_params),
                     "strict_pass": patched_strict,
                     "stage_pass": report_stage_pass(patched_report),
@@ -576,11 +578,14 @@ def run_region_vision_checks(
                     "selection_score": round(float(patched_selection_score), 3),
                 }
                 if patch is not None:
-                    attempt_record["patch"] = patch
-                    attempt_record["optimization_policy"] = optimization_policy_audit(
+                    optimization_policy = optimization_policy_audit(
                         str(current_blocking_stage) if current_blocking_stage else None,
                         patch,
                     )
+                    attempt_record["patch"] = patch
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = selected_optimization_step(optimization_policy)
                     suggestion_records = patch_source_lookup.get(patch_signature(patch), [])
                     if suggestion_records:
                         attempt_record["model_suggestions"] = suggestion_records
@@ -588,13 +593,17 @@ def run_region_vision_checks(
                         patch_constraint_audit["alternative_candidate_id"] = patched_params.candidate_id
                     attempt_record["constraint"] = patch_constraint_audit
                 else:
-                    attempt_record["optimization_policy"] = {
+                    optimization_policy = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
                         "optimization_steps": ["shape_reset"],
                         "primary_optimization_steps": ["shape_reset"],
+                        "optimization_step": "shape_reset",
                         "allowed": current_blocking_stage == "text_shape",
                         "rejection_reason": None if current_blocking_stage == "text_shape" else "shape reset is only generated for text_shape",
                     }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "shape_reset"
                 if not patched_strict:
                     attempt_record["strict_gate"] = patched_report.get("strict_gate")
                 if not report_stage_pass(patched_report):
@@ -707,6 +716,9 @@ def run_region_vision_checks(
                         "score": round(float(patched_score), 3),
                         "selection_score": round(float(patched_selection_score), 3),
                         "selected_reason": selected_reason,
+                        "stage_id": attempt_record.get("stage_id"),
+                        "selected_optimization_step": attempt_record.get("optimization_step"),
+                        "optimization_steps": attempt_record.get("optimization_steps"),
                         "current_blocking_stage": attempt_record.get("current_blocking_stage"),
                         "current_stage_severity_before": attempt_record.get("current_stage_severity_before"),
                         "current_stage_severity_after": attempt_record.get("current_stage_severity_after"),
@@ -725,6 +737,9 @@ def run_region_vision_checks(
                     "selected_score": round(float(patched_score), 3),
                     "selected_selection_score": round(float(patched_selection_score), 3),
                     "selected_reason": selected_reason,
+                    "stage_id": attempt_record.get("stage_id"),
+                    "selected_optimization_step": attempt_record.get("optimization_step"),
+                    "optimization_steps": attempt_record.get("optimization_steps"),
                     "current_blocking_stage": attempt_record.get("current_blocking_stage"),
                     "current_stage_severity_before": attempt_record.get("current_stage_severity_before"),
                     "current_stage_severity_after": attempt_record.get("current_stage_severity_after"),
@@ -745,6 +760,9 @@ def run_region_vision_checks(
                     "score": round(float(patched_score), 3),
                     "path": str(patched_compare_path),
                     "selected_reason": selected_reason,
+                    "stage_id": attempt_record.get("stage_id"),
+                    "optimization_step": attempt_record.get("optimization_step"),
+                    "optimization_steps": attempt_record.get("optimization_steps"),
                     "patcher_source": attempt_record.get("origin"),
                     "round_candidate": attempt_record.get("round_candidate"),
                     "optimization_policy": attempt_record.get("optimization_policy"),
