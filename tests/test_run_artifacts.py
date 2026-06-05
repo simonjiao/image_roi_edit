@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
+import roi_image_edit.processing_service as processing_service
 from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
     model_stage_context,
     request_audit_payload,
     result_audit_payload,
+    revision_round_continuation_contract,
     stage_progress_fields,
     vision_candidate_request_payload,
 )
@@ -245,6 +248,98 @@ class RunArtifactsTest(unittest.TestCase):
         )
         self.assertEqual(high_request["requested_vision_candidate_limit"], 12)
         self.assertEqual(high_request["vision_candidate_limit"], 8)
+
+    def test_revision_round_continuation_contract_requires_stage_direction(self) -> None:
+        contract = revision_round_continuation_contract(
+            {
+                "round": 1,
+                "basis_blocking_stage": "text_shape",
+                "basis_stage_source": "local_report",
+                "shape_candidate_grid": {
+                    "enabled": True,
+                    "stage_id": "text_shape",
+                    "optimization_step": "shape_reset",
+                    "candidate_count": 48,
+                    "budget": {
+                        "raw_candidate_budget": 640,
+                        "retained_count": 48,
+                    },
+                },
+            },
+            max_revision_rounds=12,
+        )
+
+        self.assertFalse(contract["max_rounds_is_strategy"])
+        self.assertTrue(contract["requires_stage_specific_candidate_direction"])
+        self.assertTrue(contract["has_stage_specific_candidate_direction"])
+        self.assertTrue(contract["continuation_allowed"])
+        self.assertEqual(contract["max_revision_rounds"], 12)
+        self.assertEqual(contract["candidate_direction_sources"][0]["source"], "shape_candidate_grid")
+        self.assertEqual(contract["candidate_direction_sources"][0]["stage_id"], "text_shape")
+        self.assertEqual(contract["candidate_direction_sources"][0]["candidate_count"], 48)
+        self.assertIsNone(contract["missing_direction_reason"])
+
+        patch_contract = revision_round_continuation_contract(
+            {
+                "round": 2,
+                "basis_blocking_stage": "ink_gray_balance",
+                "stage_filter_report": {
+                    "stage_id": "ink_gray_balance",
+                    "accepted_count": 2,
+                    "patcher": {
+                        "optimization_steps": ["core_black_search", "opacity_search"],
+                    },
+                },
+                "selected_optimization_step": "core_black_search",
+            },
+            max_revision_rounds=8,
+        )
+        self.assertTrue(patch_contract["continuation_allowed"])
+        self.assertEqual(
+            patch_contract["candidate_direction_sources"][0]["source"],
+            "stage_patcher_dispatch",
+        )
+        self.assertEqual(
+            patch_contract["candidate_direction_sources"][0]["optimization_step"],
+            "core_black_search",
+        )
+
+    def test_revision_round_continuation_contract_rejects_max_rounds_only(self) -> None:
+        contract = revision_round_continuation_contract(
+            {
+                "round": 1,
+                "basis_blocking_stage": "ink_gray_balance",
+                "basis_stage_source": "local_report",
+                "shape_candidate_grid": {
+                    "enabled": True,
+                    "stage_id": "text_shape",
+                    "optimization_step": "shape_reset",
+                    "candidate_count": 48,
+                },
+                "stage_filter_report": {
+                    "stage_id": "text_shape",
+                    "accepted_count": 3,
+                },
+            },
+            max_revision_rounds=12,
+        )
+
+        self.assertFalse(contract["max_rounds_is_strategy"])
+        self.assertTrue(contract["requires_stage_specific_candidate_direction"])
+        self.assertFalse(contract["has_stage_specific_candidate_direction"])
+        self.assertFalse(contract["continuation_allowed"])
+        self.assertEqual(contract["candidate_direction_sources"], [])
+        self.assertEqual(
+            contract["missing_direction_reason"],
+            "no stage-specific candidate grid or accepted stage patch for current blocking stage",
+        )
+
+    def test_processing_service_records_revision_continuation_contract(self) -> None:
+        source = inspect.getsource(processing_service.run_region_vision_checks)
+        self.assertIn("revision_round_continuation_contract", source)
+        self.assertIn('"revision_continuation_contract": continuation_contract', source)
+        self.assertIn('"no_stage_specific_candidate_direction"', source)
+        self.assertIn('"revision_continuation_contract": selected_continuation_contract', source)
 
 
 if __name__ == "__main__":

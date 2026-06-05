@@ -85,6 +85,7 @@ from roi_image_edit.run_artifacts import (
     normalize_vision_candidate_limit,
     request_audit_payload,
     result_audit_payload,
+    revision_round_continuation_contract,
     stage_progress_fields,
     vision_candidate_request_payload,
 )
@@ -591,6 +592,11 @@ def run_region_vision_checks(
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
             }
+            continuation_contract = revision_round_continuation_contract(
+                round_record,
+                max_revision_rounds=max_revision_rounds,
+            )
+            round_record["revision_continuation_contract"] = continuation_contract
             if progress:
                 progress(
                     "revision_round_candidates",
@@ -606,9 +612,14 @@ def run_region_vision_checks(
                         "stage_optimization_policy": basis_stage_optimization_policy,
                         "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
                         "layered_candidate_search": layered_search_report,
+                        "revision_continuation_contract": continuation_contract,
                         **stage_progress_fields(current_report),
                     },
                 )
+            if not continuation_contract["continuation_allowed"]:
+                round_record["stop_reason"] = "no_stage_specific_candidate_direction"
+                revision_rounds.append(round_record)
+                break
             if not round_patches and not shape_reset_params and not ink_gray_params and not photo_texture_params:
                 round_record["stop_reason"] = "no_revision_candidates"
                 revision_rounds.append(round_record)
@@ -927,6 +938,14 @@ def run_region_vision_checks(
             patched_selection_score, patched_score, patched_params, patched_image, patched_report, attempt_record = selected_tuple
             attempt_record["selected_for_visual"] = True
             attempt_record["selected_reason"] = selected_reason
+            selected_continuation_contract = revision_round_continuation_contract(
+                {
+                    **round_record,
+                    "selected_reason": selected_reason,
+                    "selected_optimization_step": attempt_record.get("optimization_step"),
+                },
+                max_revision_rounds=max_revision_rounds,
+            )
             patched_context_path = region_dir / f"vision_final_context_iter{round_idx:02d}.png"
             patched_compare_path = region_dir / f"vision_final_compare_iter{round_idx:02d}.png"
             patched_acceptance = evaluate_final(
@@ -959,6 +978,7 @@ def run_region_vision_checks(
                         "accepted": round_delivered,
                         "acceptance_level": patched_acceptance.get("acceptance_level"),
                         "final_decision": patched_acceptance.get("final_decision"),
+                        "revision_continuation_contract": selected_continuation_contract,
                         "blocking_stage": (patched_report.get("stage_gate") or {}).get("blocking_stage"),
                         **stage_progress_fields(patched_report),
                     },
@@ -980,6 +1000,7 @@ def run_region_vision_checks(
                     "accepted": round_delivered,
                     "acceptance_level": patched_acceptance.get("acceptance_level"),
                     "final_decision": patched_acceptance.get("final_decision"),
+                    "revision_continuation_contract": selected_continuation_contract,
                     "blocking_stage": (patched_report.get("stage_gate") or {}).get("blocking_stage"),
                 }
             )

@@ -99,6 +99,135 @@ def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _positive_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _grid_direction_source(
+    round_record: dict[str, Any],
+    field_name: str,
+    *,
+    basis_blocking_stage: str | None,
+) -> dict[str, Any] | None:
+    grid_report = round_record.get(field_name)
+    if not isinstance(grid_report, dict):
+        return None
+    budget = grid_report.get("budget") if isinstance(grid_report.get("budget"), dict) else {}
+    candidate_count = max(
+        _positive_int(grid_report.get("candidate_count")),
+        _positive_int(budget.get("retained_count") if isinstance(budget, dict) else 0),
+    )
+    stage_id = grid_report.get("stage_id")
+    stage_matches_basis = bool(basis_blocking_stage and stage_id == basis_blocking_stage)
+    if not grid_report.get("enabled") or candidate_count <= 0 or not stage_matches_basis:
+        return None
+    return {
+        "source": field_name,
+        "stage_id": stage_id,
+        "optimization_step": grid_report.get("optimization_step"),
+        "candidate_count": candidate_count,
+        "raw_candidate_budget": _positive_int(
+            budget.get("raw_candidate_budget") if isinstance(budget, dict) else 0
+        ),
+        "retained_count": _positive_int(
+            budget.get("retained_count") if isinstance(budget, dict) else 0
+        ),
+        "stage_matches_basis": stage_matches_basis,
+    }
+
+
+def _patch_direction_source(
+    round_record: dict[str, Any],
+    *,
+    basis_blocking_stage: str | None,
+) -> dict[str, Any] | None:
+    stage_filter_report = round_record.get("stage_filter_report")
+    if not isinstance(stage_filter_report, dict):
+        return None
+    accepted_count = max(
+        _positive_int(stage_filter_report.get("accepted_count")),
+        _positive_int(round_record.get("patch_count")),
+    )
+    stage_id = stage_filter_report.get("stage_id") or round_record.get("basis_blocking_stage")
+    stage_matches_basis = bool(basis_blocking_stage and stage_id == basis_blocking_stage)
+    if accepted_count <= 0 or not stage_matches_basis:
+        return None
+    patcher = stage_filter_report.get("patcher")
+    optimization_steps: list[str] = []
+    if isinstance(patcher, dict):
+        optimization_steps = [
+            str(step)
+            for step in patcher.get("optimization_steps", [])
+            if step
+        ]
+    return {
+        "source": "stage_patcher_dispatch",
+        "stage_id": stage_id,
+        "optimization_step": (
+            round_record.get("selected_optimization_step")
+            or (optimization_steps[0] if optimization_steps else None)
+        ),
+        "optimization_steps": optimization_steps,
+        "candidate_count": accepted_count,
+        "accepted_patch_count": accepted_count,
+        "stage_matches_basis": stage_matches_basis,
+    }
+
+
+def revision_round_continuation_contract(
+    round_record: dict[str, Any],
+    *,
+    max_revision_rounds: int,
+) -> dict[str, Any]:
+    basis_blocking_stage = round_record.get("basis_blocking_stage")
+    basis_stage = str(basis_blocking_stage) if basis_blocking_stage else None
+    direction_sources = [
+        source
+        for source in (
+            _grid_direction_source(
+                round_record,
+                "shape_candidate_grid",
+                basis_blocking_stage=basis_stage,
+            ),
+            _grid_direction_source(
+                round_record,
+                "ink_gray_candidate_grid",
+                basis_blocking_stage=basis_stage,
+            ),
+            _grid_direction_source(
+                round_record,
+                "photo_texture_candidate_grid",
+                basis_blocking_stage=basis_stage,
+            ),
+            _patch_direction_source(round_record, basis_blocking_stage=basis_stage),
+        )
+        if source is not None
+    ]
+    has_stage_specific_direction = bool(direction_sources)
+    selected_step = round_record.get("selected_optimization_step")
+    return {
+        "round": round_record.get("round"),
+        "max_revision_rounds": max(1, int(max_revision_rounds or 1)),
+        "max_rounds_is_strategy": False,
+        "requires_stage_specific_candidate_direction": True,
+        "basis_blocking_stage": basis_stage,
+        "basis_stage_source": round_record.get("basis_stage_source"),
+        "candidate_direction_sources": direction_sources,
+        "has_stage_specific_candidate_direction": has_stage_specific_direction,
+        "continuation_allowed": has_stage_specific_direction,
+        "selected_optimization_step": selected_step,
+        "selected_reason": round_record.get("selected_reason"),
+        "missing_direction_reason": (
+            None
+            if has_stage_specific_direction
+            else "no stage-specific candidate grid or accepted stage patch for current blocking stage"
+        ),
+    }
+
+
 def model_stage_context(report: dict[str, Any] | None, pipeline_profile: str) -> dict[str, Any]:
     if not isinstance(report, dict):
         return {
