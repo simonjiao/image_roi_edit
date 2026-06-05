@@ -34,7 +34,7 @@ from roi_image_edit.roi_locator import (
     text_chars,
     text_run_box,
 )
-from roi_image_edit.stage_policy import STAGE_LABELS, STAGE_ORDER
+from roi_image_edit.stages import stage_gate_for_report as ordered_stage_gate_for_report
 
 
 def text_complexity_ratio(plan: RenderPlan, params: CandidateParams) -> float:
@@ -1365,53 +1365,7 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
 
 
 def stage_gate_for_report(report: dict[str, Any]) -> dict[str, Any]:
-    strict_stage_issues = strict_gate_stage_issues(report)
-    font_style = report.get("font_style_gate")
-    if isinstance(font_style, dict):
-        strict_stage_issues["text_shape"].extend(
-            issue for issue in font_style.get("issues", []) if isinstance(issue, dict)
-        )
-
-    text_shape_issues = (
-        strict_stage_issues["text_shape"]
-        + local_stroke_body_issues(report, allow_excess_black_core=True)
-        + local_neighbor_style_issues(report, allow_excess_black_core=True)
-        + list(report.get("local_pose_issues") or [])
-    )
-    ink_issues = strict_stage_issues["ink_gray_balance"] + list(report.get("local_ink_balance_issues") or [])
-    photo_issues = list(report.get("local_photo_texture_issues") or [])
-    background_issues = strict_stage_issues["background_cleanup"] + list(
-        report.get("local_background_texture_issues") or []
-    )
-
-    stage_issue_map = {
-        "hard_boundary": [] if report.get("pass") else [{"type": "hard_check_failed"}],
-        "text_shape": text_shape_issues,
-        "ink_gray_balance": ink_issues,
-        "photo_texture": photo_issues,
-        "background_cleanup": background_issues,
-    }
-    stages = [
-        {
-            "id": stage_id,
-            "label": STAGE_LABELS[stage_id],
-            "pass": not stage_issue_map[stage_id],
-            "issues": stage_issue_map[stage_id],
-        }
-        for stage_id in STAGE_ORDER
-    ]
-
-    blocking_stage = None
-    for stage in stages:
-        if not stage["pass"]:
-            blocking_stage = stage["id"]
-            break
-    return {
-        "order": [stage["id"] for stage in stages],
-        "blocking_stage": blocking_stage,
-        "pass": blocking_stage is None,
-        "stages": stages,
-    }
+    return ordered_stage_gate_for_report(report)
 
 
 def stage_issues(report: dict[str, Any] | None, stage_id: str) -> list[dict[str, Any]]:
