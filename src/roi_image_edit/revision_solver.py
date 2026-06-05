@@ -153,6 +153,56 @@ class PhotoTextureCandidateGrid:
     report: dict[str, Any]
 
 
+def layered_candidate_search_report(*grid_reports: dict[str, Any]) -> dict[str, Any]:
+    stages: list[dict[str, Any]] = []
+    for report in grid_reports:
+        if not isinstance(report, dict):
+            continue
+        budget = report.get("budget") if isinstance(report.get("budget"), dict) else {}
+        stage_record = {
+            "stage_id": report.get("stage_id"),
+            "optimization_step": report.get("optimization_step"),
+            "enabled": bool(report.get("enabled")),
+            "candidate_count": int(report.get("candidate_count") or 0),
+        }
+        if budget:
+            stage_record["raw_candidate_budget"] = int(budget.get("raw_candidate_budget") or 0)
+            stage_record["retained_count"] = int(budget.get("retained_count") or 0)
+            stage_record["pruned_count"] = int(budget.get("pruned_count") or 0)
+            stage_record["within_budget"] = bool(budget.get("within_budget"))
+        else:
+            stage_record["reason"] = report.get("reason")
+        stages.append(stage_record)
+
+    return {
+        "strategy": "layered_stage_search",
+        "cross_stage_cartesian_search": False,
+        "contract": "Generate and prune candidates within each blocking stage; do not multiply shape, ink-gray, and photo-texture axes into a single full Cartesian search.",
+        "stage_order": [stage.get("stage_id") for stage in stages],
+        "enabled_stage_ids": [
+            stage.get("stage_id")
+            for stage in stages
+            if stage.get("enabled")
+        ],
+        "stages": stages,
+        "raw_candidate_budget_by_stage": {
+            str(stage.get("stage_id")): stage.get("raw_candidate_budget")
+            for stage in stages
+            if stage.get("enabled")
+        },
+        "retained_count_by_stage": {
+            str(stage.get("stage_id")): stage.get("retained_count")
+            for stage in stages
+            if stage.get("enabled")
+        },
+        "pruned_count_by_stage": {
+            str(stage.get("stage_id")): stage.get("pruned_count")
+            for stage in stages
+            if stage.get("enabled")
+        },
+    }
+
+
 def final_acceptance_delivers(acceptance: dict[str, Any]) -> bool:
     final_level = str(acceptance.get("acceptance_level", "")).strip().lower()
     final_decision = str(acceptance.get("final_decision", "")).strip().lower()

@@ -65,6 +65,7 @@ from roi_image_edit.revision_solver import (
     final_acceptance_delivers,
     final_font_revision_candidates,
     ink_gray_candidate_grid,
+    layered_candidate_search_report,
     photo_texture_candidate_grid,
     report_blocks_text_shape,
     revision_selection_score,
@@ -500,6 +501,11 @@ def run_region_vision_checks(
                 limit=6,
             )
             photo_texture_params = photo_candidate_grid.candidates
+            layered_search_report = layered_candidate_search_report(
+                shape_candidate_grid.report,
+                ink_candidate_grid.report,
+                photo_candidate_grid.report,
+            )
             round_record: dict[str, Any] = {
                 "round": round_idx,
                 "basis_candidate_id": current_params.candidate_id,
@@ -522,6 +528,7 @@ def run_region_vision_checks(
                 "shape_candidate_grid": shape_candidate_grid.report,
                 "ink_gray_candidate_grid": ink_candidate_grid.report,
                 "photo_texture_candidate_grid": photo_candidate_grid.report,
+                "layered_candidate_search": layered_search_report,
                 "stage_filter_report": local_stage_filter_report,
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
@@ -544,6 +551,7 @@ def run_region_vision_checks(
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
                         "stage_optimization_policy": basis_stage_optimization_policy,
                         "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
+                        "layered_candidate_search": layered_search_report,
                         **stage_progress_fields(current_report),
                     },
                 )
