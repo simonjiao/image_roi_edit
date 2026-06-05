@@ -59,6 +59,7 @@ from roi_image_edit.model_suggestions import (
     model_stage_response_contract,
     model_suggestion_filter_report,
 )
+from roi_image_edit.pre_candidate_gates import pre_candidate_gate_report
 
 from roi_image_edit.revision_solver import (
     constrained_revision_params,
@@ -1399,11 +1400,26 @@ def process_region(
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
     slot_report = plan.slot_quality_report or {}
+    pre_candidate_report = pre_candidate_gate_report(
+        candidate_count=0,
+        regions=[{"id": region_id, "roi": list(roi)}],
+        slot_quality_report=slot_report,
+    )
     if source_count and not slot_report.get("pass", False):
         region_dir.mkdir(parents=True, exist_ok=True)
         rejected_compare_path = region_dir / "slot_quality_rejected_compare.png"
         compare_region_preview(original, original, roi).save(rejected_compare_path)
         if progress:
+            progress(
+                "pre_candidate_gate_failed",
+                {
+                    "region_id": region_id,
+                    "pipeline_profile": pipeline_profile,
+                    "candidate_count": 0,
+                    "failed_gate": pre_candidate_report["failed_gate"],
+                    "pre_candidate_gate_report": pre_candidate_report,
+                },
+            )
             progress(
                 "slot_quality_failed",
                 {
@@ -1411,6 +1427,7 @@ def process_region(
                     "pipeline_profile": pipeline_profile,
                     "blocking_stage": "hard_boundary",
                     "slot_quality_report": slot_report,
+                    "pre_candidate_gate_report": pre_candidate_report,
                 },
             )
         summary = {
@@ -1443,6 +1460,7 @@ def process_region(
                     },
                 },
                 "slot_quality_report": slot_report,
+                "pre_candidate_gate_report": pre_candidate_report,
             },
             "vision": {
                 "enabled": False,
@@ -1464,6 +1482,7 @@ def process_region(
                         "重新选择只覆盖旧值文字和必要空白的 ROI；不能包含字段标签或右侧未修改文字。"
                     ],
                 },
+                "pre_candidate_gate_report": pre_candidate_report,
             },
             "accepted": False,
             "applied": False,
@@ -1956,6 +1975,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         filename = str(image_item.get("filename") or "image.png")
         instruction_details: dict[str, Any] | None = None
         failure_image: Image.Image | None = None
+        pre_candidate_report: dict[str, Any] | None = None
         try:
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
@@ -1987,12 +2007,31 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             display_image: Image.Image | None = None
             regions = list(image_item.get("regions", []))
             if not regions:
-                image, regions, orientation_summary = auto_orient_for_instruction(
-                    image,
-                    instruction=str(image_item.get("instruction") or ""),
-                    source_text=source_text,
-                    target_text=target_text,
-                )
+                try:
+                    image, regions, orientation_summary = auto_orient_for_instruction(
+                        image,
+                        instruction=str(image_item.get("instruction") or ""),
+                        source_text=source_text,
+                        target_text=target_text,
+                    )
+                except Exception as exc:
+                    pre_candidate_report = pre_candidate_gate_report(
+                        candidate_count=0,
+                        orientation_summary=orientation_summary,
+                        regions=[],
+                        failure_step="field_roi_selection",
+                        error=str(exc),
+                    )
+                    emit(
+                        "pre_candidate_gate_failed",
+                        {
+                            "image_id": image_id,
+                            "candidate_count": 0,
+                            "failed_gate": pre_candidate_report["failed_gate"],
+                            "pre_candidate_gate_report": pre_candidate_report,
+                        },
+                    )
+                    raise
                 emit(
                     "auto_roi_finished",
                     {
@@ -2125,7 +2164,17 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             )
             emit("image_finished", {"image_id": image_id, "accepted": image_accepted})
         except Exception as exc:
-            emit("image_failed", {"image_id": image_id, "error": str(exc)})
+            failure_progress: dict[str, Any] = {"image_id": image_id, "error": str(exc)}
+            if pre_candidate_report:
+                failure_progress.update(
+                    {
+                        "failure_stage": "pre_candidate_generation",
+                        "candidate_count": pre_candidate_report["candidate_count"],
+                        "failed_gate": pre_candidate_report["failed_gate"],
+                        "pre_candidate_gate_report": pre_candidate_report,
+                    }
+                )
+            emit("image_failed", failure_progress)
             results.append(
                 failed_image_result(
                     run_dir=run_dir,
@@ -2134,6 +2183,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     error=str(exc),
                     image=failure_image,
                     instruction_details=instruction_details,
+                    pre_candidate_gate_report=pre_candidate_report,
                 )
             )
     response = {

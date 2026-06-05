@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,6 +52,8 @@ class FailureArtifactsTest(unittest.TestCase):
             failure = image_result["stage_evidence"]["failure"]
             self.assertEqual(failure["failure_stage"], "pre_candidate_generation")
             self.assertEqual(failure["candidate_count"], 0)
+            self.assertEqual(failure["pre_candidate_gate_report"]["failed_gate"], "field_roi_selection")
+            self.assertEqual(failure["pre_candidate_gate_report"]["candidate_count"], 0)
             rejected_input = Path(image_result["artifacts"]["rejected_input"])
             failure_report = Path(image_result["artifacts"]["failure_report"])
             self.assertTrue(rejected_input.exists())
@@ -70,6 +73,17 @@ class FailureArtifactsTest(unittest.TestCase):
             self.assertEqual(result_image["artifacts"]["final_is_rejected_candidate"], True)
             progress_lines = progress_path.read_text(encoding="utf-8").splitlines()
             self.assertTrue(any('"event": "image_failed"' in line for line in progress_lines))
+            progress_records = [json.loads(line) for line in progress_lines]
+            pre_candidate_events = [
+                record for record in progress_records if record.get("event") == "pre_candidate_gate_failed"
+            ]
+            self.assertEqual(len(pre_candidate_events), 1)
+            self.assertEqual(pre_candidate_events[0]["failed_gate"], "field_roi_selection")
+            self.assertEqual(pre_candidate_events[0]["candidate_count"], 0)
+            self.assertEqual(
+                pre_candidate_events[0]["pre_candidate_gate_report"]["gate_order"],
+                ["orientation_check", "field_roi_selection", "slot_quality_gate", "protected_text_guard"],
+            )
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ def failed_image_result(
     error: str,
     image: Image.Image | None,
     instruction_details: dict[str, Any] | None,
+    pre_candidate_gate_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_stem = safe_image_stem(filename, image_id)
     rejected_input_path: Path | None = None
@@ -37,6 +38,7 @@ def failed_image_result(
         "candidate_count": 0,
         "failure_stage": "pre_candidate_generation",
         "reason": "image_processing_failed_before_candidate_generation",
+        "pre_candidate_gate_report": pre_candidate_gate_report,
     }
     report_path = run_dir / f"{safe_stem}_failure_report.json"
     write_json(report_path, report)
