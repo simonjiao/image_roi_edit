@@ -1356,6 +1356,8 @@ def save_stage_candidate_evidence(
             "params": asdict(params),
             "strict_gate": report.get("strict_gate"),
             "shape_change_report": report.get("shape_change_report"),
+            "row_baseline_metrics": report.get("row_baseline_metrics"),
+            "placement_strategy_report": report.get("placement_strategy_report"),
             "ink_gray_metrics": report.get("char_gray_band_metrics"),
             "photo_texture_metrics": report.get("photo_texture_metrics"),
             "background_texture_metrics": report.get("background_texture_metrics"),

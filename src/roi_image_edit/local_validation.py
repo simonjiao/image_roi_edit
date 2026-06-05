@@ -29,6 +29,7 @@ from roi_image_edit.iterative_pipeline import (
     hard_check,
     is_mostly_cjk,
     local_score,
+    mask_bbox,
     params_label,
     replacement_char_bboxes,
     render_candidate,
@@ -156,6 +157,188 @@ def same_row_reference_boxes(plan: RenderPlan) -> tuple[tuple[int, int, int, int
             if box[3] - box[1] >= max(4, int(round(row_h * 0.35))):
                 boxes.append(box)
     return tuple(boxes[:8])
+
+
+def _box_center_y(box: tuple[int, int, int, int]) -> float:
+    return (float(box[1]) + float(box[3])) / 2.0
+
+
+def _box_height(box: tuple[int, int, int, int]) -> float:
+    return max(1.0, float(box[3] - box[1]))
+
+
+def _union_boxes(boxes: tuple[tuple[int, int, int, int], ...]) -> tuple[int, int, int, int] | None:
+    if not boxes:
+        return None
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(np.median(np.array(values, dtype=np.float32)))
+
+
+def _weighted_reference(source_value: float, neighbor_value: float | None) -> tuple[float, str]:
+    if neighbor_value is None:
+        return source_value, "source_slots_only"
+    return source_value * 0.72 + neighbor_value * 0.28, "source_slots_primary_same_row_context"
+
+
+def _row_baseline_issue(
+    issue_type: str,
+    *,
+    actual: float,
+    reference: float,
+    delta: float,
+    limit: float,
+) -> dict[str, Any]:
+    return {
+        "type": issue_type,
+        "actual": round(actual, 3),
+        "reference": round(reference, 3),
+        "delta_y": round(delta, 3),
+        "limit": round(limit, 3),
+    }
+
+
+def row_baseline_metrics(
+    original: Image.Image,
+    plan: RenderPlan,
+    params: CandidateParams,
+) -> dict[str, Any]:
+    source_chars = text_chars(plan.source_text or "")
+    target_chars = text_chars(plan.target_text)
+    if not target_chars or not plan.slot_boxes:
+        return {"enabled": False, "reason": "missing_target_text_or_source_slots"}
+
+    slot_count = min(len(plan.slot_boxes), len(source_chars) or len(plan.slot_boxes))
+    source_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1)[:slot_count])
+    source_boxes = tuple(text_run_box(slot) for slot in source_slots)
+    source_box = _union_boxes(source_boxes)
+    if source_box is None:
+        return {"enabled": False, "reason": "missing_source_box"}
+
+    try:
+        layer = draw_replacement_layer(size=original.size, plan=plan, params=params, original=original)
+    except OSError as exc:
+        return {"enabled": False, "reason": "font_render_failed", "error": str(exc)}
+    alpha = np.array(layer.getchannel("A"))
+    alpha_max = int(alpha.max()) if alpha.size else 0
+    if alpha_max <= 0:
+        return {"enabled": False, "reason": "empty_replacement_alpha"}
+    candidate_box = mask_bbox(alpha > max(18, int(round(alpha_max * 0.10))))
+    if candidate_box is None:
+        return {"enabled": False, "reason": "missing_replacement_bbox"}
+
+    protected_boxes = same_row_reference_boxes(plan)
+    source_center_y = _median([_box_center_y(box) for box in source_boxes]) or _box_center_y(source_box)
+    source_top_y = _median([float(box[1]) for box in source_boxes]) or float(source_box[1])
+    source_bottom_y = _median([float(box[3]) for box in source_boxes]) or float(source_box[3])
+    source_height = _median([_box_height(box) for box in source_boxes]) or _box_height(source_box)
+    protected_center_y = _median([_box_center_y(box) for box in protected_boxes])
+    protected_top_y = _median([float(box[1]) for box in protected_boxes])
+    protected_bottom_y = _median([float(box[3]) for box in protected_boxes])
+
+    reference_center_y, reference_basis = _weighted_reference(source_center_y, protected_center_y)
+    reference_top_y, _ = _weighted_reference(source_top_y, protected_top_y)
+    reference_bottom_y, _ = _weighted_reference(source_bottom_y, protected_bottom_y)
+
+    candidate_center_y = _box_center_y(candidate_box)
+    center_delta = candidate_center_y - reference_center_y
+    top_delta = float(candidate_box[1]) - reference_top_y
+    bottom_delta = float(candidate_box[3]) - reference_bottom_y
+    center_limit = max(1.1, min(1.6, float(source_height) * 0.08))
+    edge_limit = max(1.3, min(2.0, float(source_height) * 0.10))
+
+    issues: list[dict[str, Any]] = []
+    if center_delta > center_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_center_y_too_low",
+                actual=candidate_center_y,
+                reference=reference_center_y,
+                delta=center_delta,
+                limit=center_limit,
+            )
+        )
+    elif center_delta < -center_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_center_y_too_high",
+                actual=candidate_center_y,
+                reference=reference_center_y,
+                delta=center_delta,
+                limit=center_limit,
+            )
+        )
+    if top_delta > edge_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_top_too_low",
+                actual=float(candidate_box[1]),
+                reference=reference_top_y,
+                delta=top_delta,
+                limit=edge_limit,
+            )
+        )
+    elif top_delta < -edge_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_top_too_high",
+                actual=float(candidate_box[1]),
+                reference=reference_top_y,
+                delta=top_delta,
+                limit=edge_limit,
+            )
+        )
+    if bottom_delta > edge_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_bottom_too_low",
+                actual=float(candidate_box[3]),
+                reference=reference_bottom_y,
+                delta=bottom_delta,
+                limit=edge_limit,
+            )
+        )
+    elif bottom_delta < -edge_limit:
+        issues.append(
+            _row_baseline_issue(
+                "row_baseline_bottom_too_high",
+                actual=float(candidate_box[3]),
+                reference=reference_bottom_y,
+                delta=bottom_delta,
+                limit=edge_limit,
+            )
+        )
+
+    return {
+        "enabled": True,
+        "basis": reference_basis,
+        "draw_mode": plan.draw_mode,
+        "candidate_box": list(candidate_box),
+        "source_box": list(source_box),
+        "source_slot_boxes": [list(box) for box in source_boxes],
+        "same_row_protected_boxes": [list(box) for box in protected_boxes],
+        "candidate_center_y": round(candidate_center_y, 3),
+        "source_center_y": round(source_center_y, 3),
+        "protected_center_y": None if protected_center_y is None else round(protected_center_y, 3),
+        "reference_center_y": round(reference_center_y, 3),
+        "center_delta_y": round(center_delta, 3),
+        "top_delta_y": round(top_delta, 3),
+        "bottom_delta_y": round(bottom_delta, 3),
+        "limits": {
+            "center_delta_y": round(center_limit, 3),
+            "edge_delta_y": round(edge_limit, 3),
+        },
+        "issues": issues,
+    }
 
 
 def build_reference_profile(
@@ -1420,6 +1603,7 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
             or issue_type.startswith("bbox_")
             or issue_type.startswith("centroid_")
             or issue_type.startswith("ink_area_ratio_")
+            or issue_type.startswith("row_baseline_")
             or "font_" in issue_type
         ):
             stages["text_shape"].append(issue)
@@ -1611,20 +1795,32 @@ def constraint_audit(
 def alignment_vertical_penalty(report: dict[str, Any] | None) -> float:
     if not isinstance(report, dict):
         return 0.0
-    alignment = report.get("char_alignment_metrics")
-    if not isinstance(alignment, dict) or not alignment.get("enabled"):
-        return 0.0
     penalty = 0.0
-    for item in alignment.get("per_char", []):
-        if not isinstance(item, dict) or not item.get("candidate_box"):
-            continue
+    alignment = report.get("char_alignment_metrics")
+    if isinstance(alignment, dict) and alignment.get("enabled"):
+        for item in alignment.get("per_char", []):
+            if not isinstance(item, dict) or not item.get("candidate_box"):
+                continue
+            try:
+                center_dy = float(item.get("center_dy") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            penalty += abs(center_dy) * 32.0
+            penalty += max(0.0, -center_dy) * 72.0
+            penalty += max(0.0, center_dy - 0.75) * 96.0
+    row_baseline = report.get("row_baseline_metrics")
+    if isinstance(row_baseline, dict) and row_baseline.get("enabled"):
         try:
-            center_dy = float(item.get("center_dy") or 0.0)
+            center_delta = float(row_baseline.get("center_delta_y") or 0.0)
+            top_delta = float(row_baseline.get("top_delta_y") or 0.0)
+            bottom_delta = float(row_baseline.get("bottom_delta_y") or 0.0)
         except (TypeError, ValueError):
-            continue
-        penalty += abs(center_dy) * 32.0
-        penalty += max(0.0, -center_dy) * 72.0
-        penalty += max(0.0, center_dy - 0.75) * 96.0
+            center_delta = top_delta = bottom_delta = 0.0
+        penalty += abs(center_delta) * 42.0
+        penalty += max(0.0, center_delta) * 70.0
+        penalty += max(0.0, abs(top_delta) - 0.6) * 14.0
+        penalty += max(0.0, abs(bottom_delta) - 0.6) * 14.0
+        penalty += len(row_baseline.get("issues") or []) * 180.0
     return penalty
 
 
@@ -2168,6 +2364,12 @@ def candidate_report(
         max_char_center_dy=max_char_center_dy,
         max_replacement_center_y_range=max_replacement_center_y_range,
     )
+    row_baseline = row_baseline_metrics(original, plan, params)
+    row_baseline_issues = (
+        row_baseline.get("issues")
+        if isinstance(row_baseline, dict) and isinstance(row_baseline.get("issues"), list)
+        else []
+    )
     font_style = font_style_gate(
         original,
         plan,
@@ -2199,6 +2401,7 @@ def candidate_report(
     report["background_cleanup_report"] = background_cleanup
     report["extra_source_slot_cleanup_metrics"] = cleanup_metrics
     report["char_alignment_metrics"] = alignment_metrics
+    report["row_baseline_metrics"] = row_baseline
     report["placement_strategy_report"] = placement_strategy_report(
         plan,
         alignment_metrics,
@@ -2227,12 +2430,14 @@ def candidate_report(
         and not cleanup_issues
         and not pre_cleanup_issues
         and not alignment_issues
+        and not row_baseline_issues
         and not shape_issues
         and bool(font_style.get("pass", True)),
         "issues": strict_issues
         + cleanup_issues
         + list(pre_cleanup_issues)
         + alignment_issues
+        + list(row_baseline_issues)
         + list(shape_issues)
         + list(font_style.get("issues", [])),
     }

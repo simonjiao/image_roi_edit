@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import inspect
 
-from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun
+from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun, generate_candidates
 import roi_image_edit.processing_service as processing_service
 from roi_image_edit.revision_solver import (
     TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS,
@@ -81,6 +81,24 @@ def text_shape_report() -> dict:
 
 
 class ShapeCandidateGridTest(unittest.TestCase):
+    def test_initial_candidate_grid_includes_row_baseline_y_offsets(self) -> None:
+        candidates = generate_candidates(
+            params(),
+            font_candidates=[
+                ("Songti", "/tmp/songti.ttf"),
+                ("GBSN", "/tmp/gbsn.ttf"),
+            ],
+            font_style_reference=font_style_reference(),
+            font_pool_size=2,
+            iteration=0,
+            limit=80,
+        )
+
+        text_dy_values = {candidate.text_dy for candidate in candidates}
+        self.assertIn(-2, text_dy_values)
+        self.assertIn(-1, text_dy_values)
+        self.assertIn(1, text_dy_values)
+
     def test_text_shape_grid_reports_budget_and_allowed_delta_keys(self) -> None:
         base = params()
         grid = text_shape_reset_candidate_grid(

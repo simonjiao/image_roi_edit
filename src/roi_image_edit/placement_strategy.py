@@ -227,6 +227,13 @@ def placement_strategy_report(
     source_count = len(_text_chars(plan.source_text or ""))
     target_count = len(_text_chars(plan.target_text))
     length_change = _length_change(source_count, target_count)
+    target_slot_count = len(plan.slot_boxes)
+    if (
+        length_change == "longer"
+        and plan.draw_mode == "line_chars"
+        and plan.placement_strategy == "left_anchor_span"
+    ):
+        target_slot_count = max(target_slot_count, target_count)
     slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
     per_char = alignment_metrics.get("per_char") if isinstance(alignment_metrics, dict) else []
     if not isinstance(per_char, list):
@@ -253,6 +260,8 @@ def placement_strategy_report(
             "draw_mode": plan.draw_mode,
             "is_cjk": is_mostly_cjk((plan.source_text or "") + plan.target_text),
             "slot_count": len(plan.slot_boxes),
+            "source_slot_count": len(plan.slot_boxes),
+            "target_slot_count": target_slot_count,
             "slot_quality_pass": slot_quality_pass,
             "shape_change_large": _shape_change_large(slot_report),
             "manual_source_missing": not bool(source_count),
@@ -264,6 +273,11 @@ def placement_strategy_report(
             "baseline_checked": "max_baseline_dy" in constraints,
             "char_spacing_checked": "max_char_spacing_delta" in constraints or "max_rhythm_delta" in constraints,
             "protected_text_guard_checked": constraints.get("protected_text_overlap_pixels") == 0,
+            "longer_text_appends_slots": bool(
+                length_change == "longer"
+                and plan.draw_mode == "line_chars"
+                and plan.placement_strategy == "left_anchor_span"
+            ),
             "cleanup_required": bool(constraints.get("cleanup_extra_source_slots_required")),
             "auto_acceptance_confidence": constraints.get("auto_acceptance_confidence"),
             "auto_acceptance_confidence_cap": constraints.get("auto_acceptance_confidence_cap"),

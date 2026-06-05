@@ -2592,7 +2592,7 @@ def build_region_plan(
         slot_report["length_change_report"] = length_report
     draw_mode = "auto"
     if target_count and (source_count and target_count > source_count):
-        draw_mode = "center"
+        draw_mode = "line_chars" if is_mostly_cjk(target_text) else "auto"
     elif target_count and (source_count and target_count < source_count):
         draw_mode = "line_chars" if is_mostly_cjk(target_text) else "auto"
     elif target_count and len(slots) < target_count:

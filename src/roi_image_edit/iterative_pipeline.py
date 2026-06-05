@@ -1430,13 +1430,8 @@ def apply_text_angle(alpha_layer: Image.Image, roi: tuple[int, int, int, int], a
 
 def text_rotation_box(plan: RenderPlan) -> tuple[int, int, int, int]:
     chars = [ch for ch in plan.target_text if not ch.isspace()]
-    if (
-        chars
-        and plan.draw_mode in {"auto", "per_char", "line_chars"}
-        and is_mostly_cjk(plan.target_text)
-        and len(plan.slot_boxes) >= len(chars)
-    ):
-        used_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1)[: len(chars)])
+    used_slots = target_char_slots_for_plan(plan)
+    if chars and plan.draw_mode in {"auto", "per_char", "line_chars"} and is_mostly_cjk(plan.target_text) and used_slots:
         return (
             min(slot.x1 for slot in used_slots),
             min(slot.y1 for slot in used_slots),
@@ -1446,13 +1441,61 @@ def text_rotation_box(plan: RenderPlan) -> tuple[int, int, int, int]:
     return plan.target_roi
 
 
+def target_char_slots_for_plan(plan: RenderPlan) -> tuple[TextRun, ...]:
+    chars = text_chars(plan.target_text)
+    if not chars or not plan.slot_boxes:
+        return ()
+    ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    if len(ordered_slots) >= len(chars):
+        return ordered_slots[: len(chars)]
+    source_chars = text_chars(plan.source_text)
+    if (
+        not source_chars
+        or len(chars) <= len(source_chars)
+        or plan.placement_strategy != "left_anchor_span"
+        or plan.draw_mode != "line_chars"
+    ):
+        return ordered_slots
+
+    widths = [max(1, slot.x2 - slot.x1) for slot in ordered_slots]
+    heights = [max(1, slot.y2 - slot.y1) for slot in ordered_slots]
+    areas = [max(1, slot.area) for slot in ordered_slots]
+    gaps = [
+        max(1, ordered_slots[idx + 1].x1 - ordered_slots[idx].x2)
+        for idx in range(len(ordered_slots) - 1)
+    ]
+    slot_w = max(1, int(round(float(np.median(np.array(widths, dtype=np.float32))))))
+    slot_h = max(1, int(round(float(np.median(np.array(heights, dtype=np.float32))))))
+    slot_area = max(1, int(round(float(np.median(np.array(areas, dtype=np.float32))))))
+    gap = max(1, int(round(float(np.median(np.array(gaps, dtype=np.float32)))))) if gaps else max(1, int(round(slot_w * 0.14)))
+    center_y = slot_row_center_y(plan, len(source_chars)) or float(ordered_slots[-1].y1 + ordered_slots[-1].y2) / 2.0
+    y1 = int(round(center_y - slot_h / 2.0))
+    y2 = y1 + slot_h
+    slots = list(ordered_slots)
+    next_x1 = ordered_slots[-1].x2 + gap
+    while len(slots) < len(chars):
+        slots.append(TextRun(x1=next_x1, y1=y1, x2=next_x1 + slot_w, y2=y2, area=slot_area))
+        next_x1 += slot_w + gap
+    return tuple(slots)
+
+
+def source_slot_for_target_index(plan: RenderPlan, index: int) -> TextRun | None:
+    source_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    if not source_slots:
+        return None
+    source_chars = text_chars(plan.source_text)
+    if source_chars and index < len(source_chars):
+        return source_slots[min(index, len(source_slots) - 1)]
+    return source_slots[-1]
+
+
 def slot_row_center_y(plan: RenderPlan, count: int) -> float | None:
     if count <= 0 or not plan.slot_boxes:
         return None
     ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
     source_chars = [ch for ch in (plan.source_text or "") if not ch.isspace()]
     reference_count = len(source_chars) if source_chars else count
-    reference_slots = ordered_slots[: min(len(ordered_slots), max(count, reference_count))]
+    reference_slots = ordered_slots[: min(len(ordered_slots), reference_count or count)]
     centers = [float(slot.y1 + slot.y2) / 2.0 for slot in reference_slots]
     if not centers:
         return None
@@ -1721,6 +1764,7 @@ def draw_replacement_layer(
 
     chars = text_chars(plan.target_text)
     changed_indices = changed_text_slot_indices(plan)
+    target_slots = target_char_slots_for_plan(plan)
     use_slots = (
         plan.draw_mode == "per_char"
         or plan.draw_mode == "line_chars"
@@ -1730,7 +1774,7 @@ def draw_replacement_layer(
     center_in_slot = plan.placement_strategy == "center_primary"
 
     if use_slots and chars:
-        ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+        ordered_slots = target_slots if target_slots else tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
         for idx, ch in enumerate(chars):
             if changed_indices is not None and idx not in changed_indices:
                 continue
@@ -2534,17 +2578,17 @@ def char_gray_band_metrics(
         return {"enabled": False, "reason": "non-CJK span replacement uses ROI-level metrics"}
     if plan.draw_mode == "center":
         return {"enabled": False, "reason": "centered replacement has no per-character target slots"}
-    if source_chars and len(source_chars) < len(target_chars):
-        return {"enabled": False, "reason": "target has more characters than source slots"}
-    if not plan.slot_boxes or not target_chars:
+    target_slots = target_char_slots_for_plan(plan)
+    if not target_slots or not target_chars:
         return {"enabled": False, "reason": "missing per-character slots"}
 
     old_gray = gray_array(original)
     new_gray = gray_array(candidate)
     items: list[dict[str, Any]] = []
-    for idx, ch in enumerate(target_chars[: len(plan.slot_boxes)]):
-        slot = plan.slot_boxes[idx]
-        old_roi = old_gray[slot.y1 : slot.y2, slot.x1 : slot.x2]
+    for idx, ch in enumerate(target_chars[: len(target_slots)]):
+        slot = target_slots[idx]
+        reference_slot = source_slot_for_target_index(plan, idx) or slot
+        old_roi = old_gray[reference_slot.y1 : reference_slot.y2, reference_slot.x1 : reference_slot.x2]
         new_roi = new_gray[slot.y1 : slot.y2, slot.x1 : slot.x2]
         old_counts = gray_band_counts(old_roi)
         new_counts = gray_band_counts(new_roi)
@@ -2555,6 +2599,12 @@ def char_gray_band_metrics(
                 "source_char": source_chars[idx] if idx < len(source_chars) else None,
                 "target_char": ch,
                 "slot_box": [slot.x1, slot.y1, slot.x2, slot.y2],
+                "reference_slot_box": [
+                    reference_slot.x1,
+                    reference_slot.y1,
+                    reference_slot.x2,
+                    reference_slot.y2,
+                ],
                 "old": old_counts,
                 "new": new_counts,
                 "delta": deltas,
@@ -2928,7 +2978,8 @@ def replacement_char_bboxes(
     chars = text_chars(plan.target_text)
     if plan.draw_mode == "center":
         return []
-    if not chars or len(plan.slot_boxes) < len(chars):
+    ordered_slots = target_char_slots_for_plan(plan)
+    if not chars or len(ordered_slots) < len(chars):
         return []
 
     font = ImageFont.truetype(params.font_path, params.font_size)
@@ -2936,7 +2987,6 @@ def replacement_char_bboxes(
     offsets = params.char_offsets or default_char_offsets(plan.target_text)
     row_center_y = slot_row_center_y(plan, len(chars)) if plan.draw_mode == "line_chars" else None
     center_in_slot = plan.placement_strategy == "center_primary"
-    ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
     changed_indices = changed_text_slot_indices(plan)
     for idx, ch in enumerate(chars):
         if changed_indices is not None and idx not in changed_indices:
@@ -2975,16 +3025,15 @@ def char_alignment_metrics(
     source_chars = text_chars(plan.source_text)
     if plan.draw_mode == "center":
         return {"enabled": False, "reason": "centered replacement has no per-character target slots"}
-    if source_chars and len(source_chars) < len(chars):
-        return {"enabled": False, "reason": "target has more characters than source slots"}
+    target_slots = target_char_slots_for_plan(plan)
     candidate_boxes = replacement_char_bboxes(size, plan, params)
-    if not candidate_boxes or len(plan.slot_boxes) < len(chars):
+    if not candidate_boxes or len(target_slots) < len(chars):
         return {"enabled": False, "reason": "missing per-character slots"}
 
     per_char: list[dict[str, Any]] = []
     candidate_centers: list[tuple[float, float] | None] = []
     slot_centers: list[tuple[float, float]] = []
-    ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    ordered_slots = target_slots
     for idx, (ch, candidate_box) in enumerate(zip(chars, candidate_boxes)):
         slot = ordered_slots[idx]
         slot_box = (slot.x1, slot.y1, slot.x2, slot.y2)
@@ -3090,6 +3139,39 @@ def char_alignment_issues(
                     "candidate_box": item.get("candidate_box"),
                 }
             )
+        candidate_box = item.get("candidate_box")
+        slot_box = item.get("slot_box")
+        if isinstance(candidate_box, list) and len(candidate_box) == 4 and isinstance(slot_box, list) and len(slot_box) == 4:
+            slot_h = max(1.0, float(slot_box[3] - slot_box[1]))
+            candidate_h = max(0.0, float(candidate_box[3] - candidate_box[1]))
+            min_height = max(1.0, slot_h * 0.88)
+            max_height = slot_h * 1.22
+            if candidate_h < min_height:
+                issues.append(
+                    {
+                        "type": "char_height_too_small",
+                        "index": item.get("index"),
+                        "char": item.get("char"),
+                        "actual": round(candidate_h, 3),
+                        "limit": round(min_height, 3),
+                        "slot_height": round(slot_h, 3),
+                        "slot_box": slot_box,
+                        "candidate_box": candidate_box,
+                    }
+                )
+            elif candidate_h > max_height:
+                issues.append(
+                    {
+                        "type": "char_height_too_large",
+                        "index": item.get("index"),
+                        "char": item.get("char"),
+                        "actual": round(candidate_h, 3),
+                        "limit": round(max_height, 3),
+                        "slot_height": round(slot_h, 3),
+                        "slot_box": slot_box,
+                        "candidate_box": candidate_box,
+                    }
+                )
         center_dy = item.get("center_dy")
         if (
             max_char_center_dy is not None
@@ -3496,6 +3578,14 @@ def generate_candidates(
                 mutate_params(current, text_dy=current.text_dy + 1),
             ]
         )
+
+    if iteration == 0 and len(params_list) > 1:
+        dy_base_count = min(len(params_list), max(4, (limit // 5) + 2))
+        dy_variants: list[CandidateParams] = []
+        for base in params_list[:dy_base_count]:
+            for dy in (-2, -1, 1):
+                dy_variants.append(mutate_params(base, text_dy=base.text_dy + dy))
+        params_list = params_list[:dy_base_count] + dy_variants + params_list[dy_base_count:]
 
     offsets = list(current.char_offsets)
     for idx in range(min(2, len(offsets))):

@@ -89,7 +89,7 @@ class PlacementStrategyTest(unittest.TestCase):
                 "target": "陈小慧",
                 "slots": (run(2), run(14)),
                 "slot_report": {"pass": True},
-                "draw_mode": "center",
+                "draw_mode": "line_chars",
                 "strategy": "left_anchor_span",
                 "reason": "target_text_longer_than_source",
             },
@@ -306,7 +306,7 @@ class PlacementStrategyTest(unittest.TestCase):
             target_text="陈小慧",
             slots=(run(2), run(14)),
             slot_report=slot_report,
-            draw_mode="center",
+            draw_mode="line_chars",
         )
         plan = plan_for(
             source="赵芳",
@@ -315,7 +315,7 @@ class PlacementStrategyTest(unittest.TestCase):
             strategy=strategy,
             reason=reason,
             slot_report=slot_report,
-            draw_mode="center",
+            draw_mode="line_chars",
         )
         report = strategy_report(
             plan,
@@ -329,8 +329,11 @@ class PlacementStrategyTest(unittest.TestCase):
             },
         )
         self.assertEqual(report["conditions"]["length_change"], "longer")
+        self.assertEqual(report["conditions"]["source_slot_count"], 2)
+        self.assertEqual(report["conditions"]["target_slot_count"], 3)
         self.assertEqual(report["strategy"], "left_anchor_span")
         self.assertTrue(report["strategy_contract"]["protected_text_guard_checked"])
+        self.assertTrue(report["strategy_contract"]["longer_text_appends_slots"])
         self.assertEqual(report["constraints"]["protected_text_overlap_pixels"], 0)
         self.assertEqual(report["actual_errors"]["protected_text_overlap_pixels"], 0)
         self.assertTrue(report["actual_errors"]["right_boundary_pass"])

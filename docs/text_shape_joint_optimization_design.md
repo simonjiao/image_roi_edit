@@ -66,7 +66,7 @@ background_cleanup 内部：
 | Stage | 目的 | 作用 | 阶段内 Optimization Steps | 视觉模型参与和 prompt |
 | --- | --- | --- | --- | --- |
 | `hard_boundary` | 保证这是在原图 ROI 内修改，而不是改坏整图或无关文字。 | 检查尺寸、ROI 外像素、边缘、protected text；方向/字段/旧槽位不可靠时阻塞候选生成。protected text guard 不区分左、右、上、下，任何未修改文字与目标 ROI、旧字清理范围或实际改动像素交叠都必须失败。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check`。 | 不依赖视觉模型裁决。`candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt` 会看到 hard report，但不能覆盖该阶段失败。 |
-| `text_shape` | 先把文字形态放对、放像、放稳。 | 阻塞字体、字号、槽位、基线、字距、笔画身体、局部姿态错误；禁止黑灰、模糊、背景补丁抢先掩盖形态问题。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`stroke_body_search`、`pose_shear_search`、`shape_reset`。 | `candidate_rank_prompt.txt` 可在本地 top candidates 中比较字体和形态；prompt 输入包含 `stage_context`；`final_acceptance_prompt.txt` 最终验收必须尊重本地 `text_shape` gate，模型建议会被本地 stage filter 过滤。 |
+| `text_shape` | 先把文字形态放对、放像、放稳。 | 阻塞字体、字号、槽位、行基线、字距、笔画身体、局部姿态错误；行基线必须同时考虑旧文字原位置和同一行未修改文字，不能只按 ROI 中心放置；禁止黑灰、模糊、背景补丁抢先掩盖形态问题。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`row_baseline_check`、`stroke_body_search`、`pose_shear_search`、`shape_reset`。 | `candidate_rank_prompt.txt` 可在本地 top candidates 中比较字体和形态；prompt 输入包含 `stage_context`；`final_acceptance_prompt.txt` 最终验收必须尊重本地 `text_shape` gate，模型建议会被本地 stage filter 过滤。 |
 | `ink_gray_balance` | 让新字黑灰比例接近旧字和邻字。 | 分开控制真黑核心、中灰笔画身体、外灰边，避免“太黑/太淡/太硬/太灰”混成一个方向。 | `core_black_search`、`mid_gray_body_search`、`outer_gray_control`、`opacity_search`、`core_gain_search`、`alpha_contrast_search`。 | `candidate_rank_prompt.txt` 可比较候选黑灰观感；`tuning_prompt.txt` 可建议 opacity/core/contrast 小步变化；`final_acceptance_prompt.txt` 不能接受本地黑灰 gate 失败的候选。 |
 | `photo_texture` | 匹配照片/扫描件的模糊、断裂、噪声和压缩质感。 | 在形态和黑灰过关后，修复过清晰、过干净、过糊、边缘无断裂等照片质感问题。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`、`alpha_degradation_search`。 | `candidate_rank_prompt.txt` 可比较 top candidates 的照片感；`tuning_prompt.txt` 可建议 blur/noise/compression；`final_acceptance_prompt.txt` 做最终自然度验收。 |
 | `background_cleanup` | 让最终候选周围背景自然，且没有旧字残留。 | 验收旧字残影、白影、暗影、平滑涂抹、背景纹理断裂和 ROI 边缘接缝。前置旧槽位清除失败不能拖到此阶段补救。 | `old_slot_cleanup_check`、`ghost_residual_repair`、`shadow_residual_repair`、`background_texture_repair`、`seam_gradient_repair`、`final_blend_check`。 | `candidate_rank_prompt.txt` 可指出候选补丁感；`final_acceptance_prompt.txt` 必须检查背景自然度和残影。视觉模型建议只能生成 JSON patch，不能放过本地 background gate。 |
@@ -111,9 +111,11 @@ background_cleanup 内部：
 | 同字数 CJK，字形变化小 | 槽位左上边界贴齐 | 限制中心误差、字距、基线 |
 | 同字数 CJK，字形变化大 | 槽位中心优先 | 限制左边界、基线、字距 |
 | 字数减少 | 目标字按旧值整体跨度排布 | 清理多余旧槽位 |
-| 字数增加 | 左边界锚定，向右扩展 | 不覆盖后续 protected text |
+| 字数增加 | 左边界锚定，保留旧字槽位并从旧值最右侧追加新增字 | 不覆盖后续 protected text；不得为了容纳新增字压缩旧字槽位 |
 | 数字、日期、编号 | 左对齐和基线优先 | 保持数字节奏和字段宽度 |
 | 手动 ROI 且无旧值 | 保守居中或左对齐 fallback | 必须降低自动验收置信度 |
+
+无论使用逐字绘制、span 绘制还是中心绘制，`row_baseline_metrics` 都必须输出候选整体 bbox、旧槽位 bbox、同一行 protected boxes、参考中心线和上下边界偏移。参考线以旧槽位为主，同一行未修改文字只作为上下文，防止 ROI 画得偏高或偏低时把新字整体拖离原文字所在行。
 
 同字数替换时，当前实现偏向按旧槽位左上边界绘制。这个策略适合同字体、同结构、同宽高的字符，但对结构差异明显的单字替换不够稳。目标实现应增加 `placement_strategy`：
 
@@ -171,6 +173,7 @@ shape_change_large =
 本阶段排序指标：
 
 - 字高、字宽、字距、基线。
+- 候选整体行基线相对旧槽位和同一行未修改文字的偏移。
 - 单字中心与旧槽位中心误差。
 - 左边界和右边界误差。
 - 笔画面积和复杂度修正后的体量。
