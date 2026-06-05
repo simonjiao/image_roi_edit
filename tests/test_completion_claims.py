@@ -44,9 +44,12 @@ class CompletionClaimsTest(unittest.TestCase):
         checklist = CHECKLIST.read_text(encoding="utf-8")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn("- [ ]", checklist)
-        self.assertIn("The local flow is still being hardened.", readme)
-        self.assertIn("Do not describe it as complete while", readme)
+        if "- [ ]" in checklist:
+            self.assertIn("The local flow is still being hardened.", readme)
+            self.assertIn("Do not describe it as complete while", readme)
+        else:
+            self.assertNotIn("The local flow is still being hardened.", readme)
+            self.assertNotIn("Do not describe it as complete while", readme)
         self.assertIn("local_flow_hardening_checklist.md", readme)
 
     def test_public_docs_and_prompts_do_not_claim_unverified_completion(self) -> None:

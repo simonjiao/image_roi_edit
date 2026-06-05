@@ -25,10 +25,10 @@ workflow, hard gates, iteration strategy, or visual acceptance criteria change.
 
 ## Hardening Status
 
-The local flow is still being hardened. Do not describe it as complete while
-[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md)
-contains any unchecked item. Current progress must be verified from that
-checklist plus the test commands recorded on each closed item.
+Local-flow hardening status is tracked in
+[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md).
+Current behavior must be verified from that checklist plus the test commands
+recorded on each closed item.
 
 ## Setup
 
@@ -46,17 +46,21 @@ environment checks load prompts from that package resource directory only.
 - `src/roi_image_edit/web_app.py`: Web-only entrypoint. It serves static files,
   exposes `/api/process*`, tracks in-memory job state, and starts the local HTTP
   server.
-- `src/roi_image_edit/processing_service.py`: shared image-processing service
-  used by both Web and CLI. It parses processing payloads, orchestrates image
-  and region processing, runs vision checks, and writes run artifacts.
+- `src/roi_image_edit/processing_service.py`: shared payload/job orchestration
+  entrypoint used by both Web and CLI. It parses processing payloads, manages
+  per-image run artifacts, and delegates region processing to focused modules.
+- `src/roi_image_edit/region_processing.py`: region-level candidate rendering,
+  vision ranking, local revision rounds, stage candidate evidence, and selected
+  candidate summaries.
 - `src/roi_image_edit/roi_locator.py`: instruction parsing, document
   orientation scoring, field ROI selection, source-text slot detection, and
   `RenderPlan` construction.
 - `src/roi_image_edit/local_validation.py`: reference profiles, hard/local
   validation reports, background/photo metrics, and local candidate scoring.
-- `src/roi_image_edit/revision_solver.py`: visual feedback parsing,
-  constrained revision scoring, shape-reset candidates, and final font revision
-  candidates.
+- `src/roi_image_edit/revision_selector.py`: final-acceptance delivery checks,
+  revision selection scoring, and candidate parameter constraints.
+- `src/roi_image_edit/revision_solver.py`: stage-specific shape, ink-gray, and
+  photo-texture candidate grids plus layered search reports.
 - `src/roi_image_edit/stage_policy.py`: stage order and Optimization Step
   policy. Web code imports it indirectly through the processing service and
   must not redefine stage policy.

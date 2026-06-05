@@ -41,7 +41,7 @@ class SlotQualityGateTest(unittest.TestCase):
         )
         events: list[tuple[str, dict]] = []
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("roi_image_edit.processing_service.build_region_plan", return_value=plan):
+            with patch("roi_image_edit.region_processing.build_region_plan", return_value=plan):
                 result, display, candidates, summary, accepted = process_region(
                     original,
                     (4, 4, 34, 24),
@@ -119,7 +119,7 @@ class SlotQualityGateTest(unittest.TestCase):
         )
         events: list[tuple[str, dict]] = []
         with tempfile.TemporaryDirectory() as tmp:
-            with patch("roi_image_edit.processing_service.build_region_plan", return_value=plan):
+            with patch("roi_image_edit.region_processing.build_region_plan", return_value=plan):
                 _result, _display, candidates, summary, accepted = process_region(
                     original,
                     (4, 4, 34, 24),

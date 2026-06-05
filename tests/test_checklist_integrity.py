@@ -60,6 +60,25 @@ class ChecklistIntegrityTest(unittest.TestCase):
 
         self.assertEqual(weak_evidence, [])
 
+    def test_completion_gate_matches_open_item_count(self) -> None:
+        lines = CHECKLIST.read_text(encoding="utf-8").splitlines()
+        open_lines = [
+            f"{line_no}:{line}"
+            for line_no, line in enumerate(lines, start=1)
+            if line.startswith("- [ ]")
+        ]
+        completion_lines = [
+            line
+            for line in lines
+            if "设计目标转换情况" in line and "全部关闭" in line
+        ]
+        self.assertEqual(len(completion_lines), 1)
+        completion_checked = completion_lines[0].startswith("- [x]") or completion_lines[0].startswith("- [X]")
+        if completion_checked:
+            self.assertEqual(open_lines, [])
+        else:
+            self.assertNotEqual(open_lines, [])
+
 
 if __name__ == "__main__":
     unittest.main()
