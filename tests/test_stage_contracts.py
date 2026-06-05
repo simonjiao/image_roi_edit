@@ -233,6 +233,90 @@ class StageContractsTest(unittest.TestCase):
         self.assertFalse(background_audit["allowed"])
         self.assertEqual(background_audit["optimization_steps"], ["background_cleanup"])
 
+    def test_font_structure_failure_blocks_ink_gray_primary_patches(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "font_style_gate": {"issues": [{"type": "font_style_mismatch"}]},
+                "local_ink_balance_issues": [{"type": "ink_too_light"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        self.assertFalse(gate["stage_status"]["ink_gray_balance"]["pass"])
+
+        accepted, rejected = filter_patches_for_stage(
+            [
+                {"opacity_delta": 0.03},
+                {"font_size_delta": 1},
+            ],
+            "text_shape",
+            limit=10,
+        )
+        self.assertEqual(accepted, [{"font_size_delta": 1}])
+        self.assertEqual(rejected[0]["optimization_steps"], ["ink_gray_balance"])
+        self.assertFalse(rejected[0]["allowed"])
+
+    def test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "strict_gate": {
+                    "issues": [
+                        {
+                            "type": "ink_area_ratio_too_low",
+                            "char_index": 0,
+                        }
+                    ]
+                },
+                "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        self.assertFalse(gate["stage_status"]["photo_texture"]["pass"])
+
+        accepted, rejected = filter_patches_for_stage(
+            [
+                {"stroke_opacity_delta": 0.04},
+                {"mask_threshold_delta": -3},
+                {"photo_noise_delta": 0.02},
+            ],
+            "text_shape",
+            limit=10,
+        )
+        self.assertEqual(accepted, [{"stroke_opacity_delta": 0.04}])
+        rejected_steps = [item["optimization_steps"] for item in rejected]
+        self.assertIn(["background_cleanup"], rejected_steps)
+        self.assertIn(["photo_texture"], rejected_steps)
+
+    def test_ink_gray_stage_rejects_photo_noise_as_primary_fix(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [{"type": "changed_char_neighbor_outer_gray_halo_too_high"}],
+                "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(gate["blocking_stage"], "ink_gray_balance")
+        self.assertFalse(gate["stage_status"]["photo_texture"]["pass"])
+
+        accepted, rejected = filter_patches_for_stage(
+            [
+                {"opacity_delta": -0.02},
+                {"photo_noise_delta": 0.02},
+            ],
+            "ink_gray_balance",
+            limit=10,
+        )
+        self.assertEqual(accepted, [{"opacity_delta": -0.02}])
+        self.assertEqual(rejected[0]["optimization_steps"], ["photo_texture"])
+        self.assertFalse(rejected[0]["allowed"])
+
     def test_optimization_step_is_not_a_stage_id(self) -> None:
         audit = optimization_policy_audit(
             "text_shape",

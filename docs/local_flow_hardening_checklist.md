@@ -48,11 +48,11 @@
 ### B. 旧 7 类诊断关注点映射到当前 5 个 stage
 
 - [x] `slot_alignment` 必须映射到 `hard_boundary` 的 ROI/slot 安全条件和 `text_shape.slot_alignment_search`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_stage_gate_exposes_diagnostic_concern_mapping_as_stage_evidence` 验证 stage gate 输出 `diagnostic_concern_mapping`，其中 `slot_alignment.current_stages=(hard_boundary,text_shape)`、`optimization_steps` 含 `slot_quality_gate`、`report_fields` 含 `slot_quality_report`。
-- [ ] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；验证方式是字体失败样例不会进入 `ink_gray_balance` 主调参。
+- [x] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证映射，`tests/test_stage_contracts.py::StageContractsTest.test_font_structure_failure_blocks_ink_gray_primary_patches` 验证字体失败时 blocking stage 为 `text_shape` 且 `opacity_delta` 这类 ink patch 被拒绝。
 - [ ] `pose_geometry` 必须映射到 `text_shape.pose_shear_search`，且不能固化某张图的左倾/右倾；验证方式是姿态报告来自旧槽位、邻字或局部投影指标。
-- [ ] `stroke_body` 必须映射到 `text_shape.stroke_body_search`，且在真实笔画体量未过时不能被 `edge_quality` 或 `photo_texture` 抢先处理；验证方式是粗细失败样例的 `blocking_stage=text_shape`。
+- [x] `stroke_body` 必须映射到 `text_shape.stroke_body_search`，且在真实笔画体量未过时不能被 `edge_quality` 或 `photo_texture` 抢先处理；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证映射，`tests/test_stage_contracts.py::StageContractsTest.test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise` 验证笔画体量失败时 blocking stage 为 `text_shape`，`background_cleanup` 和 `photo_texture` 补丁被拒绝。
 - [ ] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；验证方式是黑芯过量和核心不足分别生成相反方向候选。
-- [ ] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；验证方式是灰边过量不会先破坏已通过的 stroke body。
+- [x] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证拆分映射，`tests/test_stage_contracts.py::StageContractsTest.test_ink_gray_stage_rejects_photo_noise_as_primary_fix` 验证灰边/黑灰阶段不会用 photo noise 作为主修复。
 - [x] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_photo_texture_concern_maps_to_named_within_stage_steps` 验证五个阶段内步骤映射，`tests/test_stage_contracts.py::StageContractsTest.test_photo_texture_blocks_only_after_shape_and_ink_pass` 验证只有形态和黑灰通过后才由 `photo_texture` 阻塞。
 - [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类诊断关注点当成本地 gate。
 
@@ -212,8 +212,8 @@
 - [ ] 一个问题失败后不能把所有补丁族混合评分；验证方式是候选生成报告只显示当前 blocking stage 主导 patch。
 - [x] 视觉模型说 `ok` 不能覆盖本地阶段失败；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
 - [x] 字体没过时不能调 blur；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
-- [ ] 粗细没过时不能先清灰边；验证方式是粗细失败 fixture。
-- [ ] 灰边过多时不能继续加 photo_noise 制造灰雾；验证方式是 edge/gray fixture。
+- [x] 粗细没过时不能先清灰边；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise` 验证笔画体量失败时 `mask_threshold_delta`/background cleanup 补丁被拒绝。
+- [x] 灰边过多时不能继续加 photo_noise 制造灰雾；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_ink_gray_stage_rejects_photo_noise_as_primary_fix` 验证 `ink_gray_balance` 阻塞时 `photo_noise_delta` 被拒绝。
 - [ ] 不能把某张图的左倾/右倾写成通用规则；验证方式是代码搜索禁止具体图片/文字特例。
 - [ ] 不能为单个字写特殊规则；验证方式是代码和 prompt 中无具体人名、具体目标字调参规则。
 - [ ] 不能用更多迭代次数替代阶段判定；验证方式是 max rounds 增加前必须有 stage-specific new candidate direction。

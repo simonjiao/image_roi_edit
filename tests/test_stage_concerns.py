@@ -63,6 +63,26 @@ class StageConcernMappingTest(unittest.TestCase):
         self.assertIn("photo_texture_metrics", photo["report_fields"])
         self.assertEqual(photo["optimization_step_scope"], "within_stage_not_public_stage")
 
+    def test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps(self) -> None:
+        font = mapping_for_concern("font_structure")
+        self.assertEqual(font["current_stages"], ("text_shape",))
+        self.assertEqual(font["optimization_steps"], ("font_style_search", "font_size_search"))
+
+        stroke = mapping_for_concern("stroke_body")
+        self.assertEqual(stroke["current_stages"], ("text_shape",))
+        self.assertEqual(stroke["optimization_steps"], ("stroke_body_search",))
+
+        tone = mapping_for_concern("tone_gray")
+        self.assertEqual(tone["current_stages"], ("ink_gray_balance",))
+        self.assertEqual(
+            tone["optimization_steps"],
+            ("core_black_search", "mid_gray_body_search", "opacity_search"),
+        )
+
+        edge = mapping_for_concern("edge_quality")
+        self.assertEqual(edge["current_stages"], ("ink_gray_balance", "photo_texture"))
+        self.assertEqual(edge["optimization_steps"], ("outer_gray_control", "edge_breakup_match"))
+
 
 if __name__ == "__main__":
     unittest.main()
