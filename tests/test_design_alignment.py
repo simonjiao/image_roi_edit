@@ -50,6 +50,43 @@ class DesignAlignmentTest(unittest.TestCase):
         self.assertIn("staged_roi_pipeline_design.md", checklist)
         self.assertIn("旧 7 类诊断关注点必须说明与当前 5 stage 结构的关系", checklist)
 
+    def test_text_shape_gap_table_syncs_status_to_checklist_items(self) -> None:
+        doc = (ROOT / "docs" / "text_shape_joint_optimization_design.md").read_text(encoding="utf-8")
+        match = re.search(r"## 现有流程差距\n(?P<body>.*?)\n## 分层联合优化设计", doc, re.DOTALL)
+        self.assertIsNotNone(match)
+        body = match.group("body") if match else ""
+        rows = [
+            line
+            for line in body.splitlines()
+            if line.startswith("| ") and not line.startswith("| ---") and "目标能力" not in line
+        ]
+
+        self.assertEqual(len(rows), 11)
+        for row in rows:
+            self.assertRegex(row, r"\| (已覆盖|部分覆盖|未完成)")
+            self.assertIn("local_flow_hardening_checklist.md", row)
+            if "部分覆盖" in row or "未完成" in row:
+                self.assertIn("未完成：", row)
+        expected_status = {
+            "方向和目标字段联合选择": "部分覆盖",
+            "搜索 ROI 与编辑 ROI 分离": "部分覆盖",
+            "旧槽位完整性门禁": "部分覆盖",
+            "同字数 CJK 放置": "部分覆盖",
+            "单字形态变化检测": "部分覆盖",
+            "字体形态搜索": "已覆盖",
+            "姿态继承": "部分覆盖",
+            "黑灰门禁": "已覆盖",
+            "照片质感": "已覆盖",
+            "背景处理": "未完成",
+            "视觉模型": "已覆盖",
+        }
+        for ability, status in expected_status.items():
+            matching = [row for row in rows if f"| {ability} |" in row]
+            self.assertEqual(len(matching), 1, ability)
+            self.assertIn(f"| {status}", matching[0])
+        self.assertIn("[145-150](local_flow_hardening_checklist.md#k-背景处理拆分)", body)
+        self.assertIn("[95-96](local_flow_hardening_checklist.md#f-放置策略选择)", body)
+
 
 if __name__ == "__main__":
     unittest.main()
