@@ -113,7 +113,7 @@
 
 ### H. 字体形态联合搜索
 
-- [ ] `text_shape` 阻塞时生成 shape candidate grid，且 grid 只包含字体、字号、放置、`text_dx/text_dy`、`char_offsets`、stroke body、shear；验证方式是 candidate 参数集合。
+- [x] `text_shape` 阻塞时生成 shape candidate grid，且 grid 只包含字体、字号、放置、`text_dx/text_dy`、`char_offsets`、stroke body、shear；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_candidate_grid.py::ShapeCandidateGridTest.test_text_shape_grid_reports_budget_and_allowed_delta_keys` 验证 `text_shape_reset_candidate_grid` 只允许字体、字号、text dx/dy、char offsets 和 stroke-body 参数变化，禁止 opacity、blur、mask/inpaint、photo_warp、edge_breakup、photo_noise、jpeg_quality 变化，并声明 shear 来源为旧槽位/邻字继承；`test_processing_service_preserves_shape_grid_report_in_revision_rounds` 验证 revision round 写入 `shape_candidate_grid`。
 - [x] 形态排序必须包含字高、字宽、字距、基线；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `shape_score_breakdown.components.height_width_spacing_baseline` 输出 width、height、gap 和 baseline 明细。
 - [x] 形态排序必须包含单字中心与旧槽位中心误差；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `center_error.max_abs_centroid_dx/dy`。
 - [x] 形态排序必须包含左边界和右边界误差；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_scoring.py::ShapeScoringTest.test_breakdown_records_all_shape_ranking_components` 验证 `boundary_error.max_abs_left_delta_px` 和 `max_abs_right_delta_px`。
@@ -152,7 +152,7 @@
 ### L. 分层联合优化和搜索预算
 
 - [ ] 禁止全量笛卡尔积搜索；验证方式是候选生成报告记录分层阶段和剪枝数量，而不是单个全组合总数。
-- [ ] Stage A shape search 本地候选预算为 300-1500，剪枝后保留 top 20-50；验证方式是候选统计字段。
+- [x] Stage A shape search 本地候选预算为 300-1500，剪枝后保留 top 20-50；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_candidate_grid.py::ShapeCandidateGridTest.test_text_shape_grid_reports_budget_and_allowed_delta_keys` 验证 `shape_candidate_grid.budget.raw_candidate_budget` 在 300-1500 内、`retained_count=48`、`pruned_count>0`。
 - [ ] Stage B ink-gray search 本地候选预算为 100-800，剪枝后保留 top 8-20；验证方式是候选统计字段。
 - [ ] Stage C photo texture search 本地候选预算为 30-200，剪枝后保留 top 3-8；验证方式是候选统计字段。
 - [ ] Stage D vision final check 只看 top 3-8；验证方式是视觉请求候选数。

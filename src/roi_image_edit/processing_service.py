@@ -66,7 +66,7 @@ from roi_image_edit.revision_solver import (
     final_font_revision_candidates,
     report_blocks_text_shape,
     revision_selection_score,
-    text_shape_reset_candidates,
+    text_shape_reset_candidate_grid,
 )
 from roi_image_edit.stage_patchers import (
     acceptance_blocking_stage,
@@ -477,13 +477,14 @@ def run_region_vision_checks(
                 for patch in local_stage_filter_report.get("rejected_patches", [])
                 if isinstance(patch, dict)
             ]
-            shape_reset_params = text_shape_reset_candidates(
+            shape_candidate_grid = text_shape_reset_candidate_grid(
                 current_params,
                 font_style_reference,
                 plan,
                 current_report,
                 limit=48,
             )
+            shape_reset_params = shape_candidate_grid.candidates
             round_record: dict[str, Any] = {
                 "round": round_idx,
                 "basis_candidate_id": current_params.candidate_id,
@@ -501,6 +502,7 @@ def run_region_vision_checks(
                     for key, value in patch_dispatch_report.items()
                     if key not in {"patches", "stage_filter_report"}
                 },
+                "shape_candidate_grid": shape_candidate_grid.report,
                 "stage_filter_report": local_stage_filter_report,
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,

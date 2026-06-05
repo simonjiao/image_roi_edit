@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from roi_image_edit.iterative_pipeline import (
@@ -33,6 +33,46 @@ from roi_image_edit.stage_patchers import (
     acceptance_reports_too_dark_or_bold,
 )
 from roi_image_edit.stages import stage_gate_for_report
+
+
+TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS = frozenset(
+    {
+        "font_name",
+        "font_path",
+        "font_size",
+        "text_dx",
+        "text_dy",
+        "char_offsets",
+        "stroke_opacity",
+        "ink_gain",
+        "alpha_contrast",
+        "core_ink_gain",
+        "core_darken_strength",
+        "core_darken_threshold",
+        "core_darken_target_gray",
+    }
+)
+TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
+    {
+        "opacity",
+        "blur",
+        "mask_threshold",
+        "mask_dilate_iterations",
+        "inpaint_radius",
+        "photo_warp",
+        "edge_breakup",
+        "photo_noise",
+        "jpeg_quality",
+    }
+)
+TEXT_SHAPE_GRID_TOP_LIMIT = 48
+TEXT_SHAPE_GRID_BUDGET_RANGE = (300, 1500)
+
+
+@dataclass(frozen=True)
+class ShapeCandidateGrid:
+    candidates: list[CandidateParams]
+    report: dict[str, Any]
 
 
 def final_acceptance_delivers(acceptance: dict[str, Any]) -> bool:
@@ -476,20 +516,21 @@ def normalized_offset_candidates(plan: RenderPlan, params: CandidateParams) -> t
         add_offsets(((5, 0), (-1, 0)))
     if not candidates:
         candidates.append(default_char_offsets(plan.target_text))
-    return tuple(candidates[:4])
+    return tuple(candidates[:3])
 
 
-def text_shape_reset_candidates(
-    params: CandidateParams,
-    font_style_reference: dict[str, Any],
-    plan: RenderPlan,
-    report: dict[str, Any] | None,
-    *,
-    limit: int = 48,
-) -> list[CandidateParams]:
-    if not report_blocks_text_shape(report):
-        return []
+def params_delta_keys(base: CandidateParams, candidate: CandidateParams) -> frozenset[str]:
+    base_data = asdict(base)
+    candidate_data = asdict(candidate)
+    changed = {
+        key
+        for key, value in candidate_data.items()
+        if key != "candidate_id" and value != base_data.get(key)
+    }
+    return frozenset(changed)
 
+
+def shape_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     shape_issues = stage_issues(report, "text_shape")
     has_outer_halo = any(
         str(issue.get("type") or "") == "changed_char_neighbor_outer_gray_halo_too_high"
@@ -507,44 +548,78 @@ def text_shape_reset_candidates(
         for issue in shape_issues
         if isinstance(issue, dict)
     )
+    return {
+        "outer_halo": has_outer_halo,
+        "body_gap": has_body_gap,
+        "pose_gap": has_pose_gap,
+    }
 
-    if has_outer_halo:
-        shape_grid = (
-            (1.00, 0.10, 0.02, 0.02, 0.16, 0.12, 0.10, 0.06, 0.004, 0.008, 98),
-            (0.98, 0.12, 0.04, 0.02, 0.14, 0.14, 0.12, 0.06, 0.004, 0.010, 98),
-            (0.96, 0.14, 0.04, 0.03, 0.12, 0.16, 0.12, 0.07, 0.006, 0.012, 96),
-            (1.00, 0.08, 0.06, 0.01, 0.20, 0.12, 0.10, 0.05, 0.002, 0.006, 99),
-        )
-        size_deltas = (0, -1, 1)
-    elif has_body_gap:
-        shape_grid = (
-            (0.90, 0.16, 0.03, 0.00, 0.18, 0.00, 0.00, 0.06, 0.004, 0.008, 99),
-            (0.92, 0.14, 0.04, 0.00, 0.16, 0.04, 0.04, 0.06, 0.004, 0.008, 99),
-            (0.94, 0.16, 0.04, 0.01, 0.14, 0.08, 0.06, 0.06, 0.004, 0.010, 98),
-            (1.00, 0.12, 0.04, 0.04, 0.10, 0.18, 0.14, 0.07, 0.006, 0.012, 96),
-            (0.98, 0.14, 0.06, 0.03, 0.10, 0.18, 0.14, 0.07, 0.006, 0.014, 96),
-            (0.96, 0.16, 0.08, 0.02, 0.12, 0.16, 0.12, 0.08, 0.008, 0.016, 95),
-            (1.00, 0.10, 0.08, 0.02, 0.16, 0.14, 0.12, 0.06, 0.004, 0.010, 98),
-            (0.94, 0.18, 0.06, 0.03, 0.08, 0.20, 0.14, 0.08, 0.008, 0.018, 94),
-            (1.00, 0.14, 0.02, 0.05, 0.08, 0.22, 0.16, 0.08, 0.006, 0.014, 96),
-        )
-        size_deltas = (0, 1, -1, 2)
-    else:
-        shape_grid = (
-            (1.00, 0.12, 0.04, 0.03, 0.12, 0.16, 0.12, 0.07, 0.006, 0.012, 96),
-            (0.98, 0.16, 0.04, 0.03, 0.10, 0.18, 0.14, 0.08, 0.006, 0.014, 96),
-            (1.00, 0.10, 0.06, 0.02, 0.16, 0.14, 0.12, 0.06, 0.004, 0.010, 98),
-        )
-        size_deltas = (0, -1, 1)
 
-    if has_pose_gap:
+def shape_stroke_body_grid(flags: dict[str, bool]) -> tuple[tuple[float, float, float, float, float], ...]:
+    if flags.get("outer_halo"):
+        return (
+            (0.02, 0.02, 0.16, 0.12, 0.10),
+            (0.04, 0.02, 0.14, 0.14, 0.12),
+            (0.04, 0.03, 0.12, 0.16, 0.12),
+            (0.06, 0.01, 0.20, 0.12, 0.10),
+        )
+    if flags.get("body_gap"):
+        return (
+            (0.03, 0.00, 0.18, 0.00, 0.00),
+            (0.04, 0.00, 0.16, 0.04, 0.04),
+            (0.04, 0.01, 0.14, 0.08, 0.06),
+            (0.04, 0.04, 0.10, 0.18, 0.14),
+        )
+    return (
+        (0.04, 0.03, 0.12, 0.16, 0.12),
+        (0.04, 0.03, 0.10, 0.18, 0.14),
+        (0.06, 0.02, 0.16, 0.14, 0.12),
+    )
+
+
+def text_shape_reset_candidate_grid(
+    params: CandidateParams,
+    font_style_reference: dict[str, Any],
+    plan: RenderPlan,
+    report: dict[str, Any] | None,
+    *,
+    limit: int = TEXT_SHAPE_GRID_TOP_LIMIT,
+) -> ShapeCandidateGrid:
+    if not report_blocks_text_shape(report):
+        return ShapeCandidateGrid(
+            candidates=[],
+            report={
+                "enabled": False,
+                "reason": "text_shape_not_blocking",
+                "stage_id": "text_shape",
+                "candidate_count": 0,
+            },
+        )
+
+    flags = shape_issue_flags(report)
+    stroke_body_grid = shape_stroke_body_grid(flags)
+    size_deltas = (0, -1, 1)
+    if flags.get("body_gap"):
+        size_deltas = (0, 1, -1)
+    if flags.get("pose_gap"):
         size_deltas = tuple(dict.fromkeys(size_deltas + (0,)))
 
     max_font_size = max_font_size_for_plan(plan)
+    font_items = shape_font_items(params, font_style_reference, limit=4)
     offset_candidates = normalized_offset_candidates(plan, params)
+    text_dx_candidates = tuple(dict.fromkeys((params.text_dx, 0, -1, 1)))[:3]
     text_dy_candidates = tuple(dict.fromkeys((params.text_dy, 0, -1, 1)))[:3]
+    raw_budget = (
+        len(font_items)
+        * len(size_deltas)
+        * len(offset_candidates)
+        * len(text_dx_candidates)
+        * len(text_dy_candidates)
+        * len(stroke_body_grid)
+    )
+
     variants: list[CandidateParams] = []
-    for font_item in shape_font_items(params, font_style_reference, limit=5):
+    for font_item in font_items:
         font_name = str(font_item.get("font_name") or params.font_name)
         font_path = str(font_item.get("font_path") or params.font_path)
         try:
@@ -554,44 +629,110 @@ def text_shape_reset_candidates(
         for size_delta in size_deltas:
             font_size = max(8, min(max_font_size, base_size + int(size_delta)))
             for offsets in offset_candidates:
-                for text_dy in text_dy_candidates:
-                    for (
-                        opacity,
-                        blur,
-                        stroke_opacity,
-                        ink_gain,
-                        alpha_contrast,
-                        core_ink_gain,
-                        core_darken_strength,
-                        photo_warp,
-                        edge_breakup,
-                        photo_noise,
-                        jpeg_quality,
-                    ) in shape_grid:
-                        variants.append(
-                            mutate_params(
-                                params,
-                                font_name=font_name,
-                                font_path=font_path,
-                                font_size=font_size,
-                                opacity=opacity,
-                                blur=blur,
-                                stroke_opacity=stroke_opacity,
-                                ink_gain=ink_gain,
-                                alpha_contrast=alpha_contrast,
-                                core_ink_gain=core_ink_gain,
-                                core_darken_strength=core_darken_strength,
-                                core_darken_threshold=130,
-                                core_darken_target_gray=28,
-                                text_dy=text_dy,
-                                char_offsets=offsets,
-                                photo_warp=photo_warp,
-                                edge_breakup=edge_breakup,
-                                photo_noise=photo_noise,
-                                jpeg_quality=jpeg_quality,
+                for text_dx in text_dx_candidates:
+                    for text_dy in text_dy_candidates:
+                        for (
+                            stroke_opacity,
+                            ink_gain,
+                            alpha_contrast,
+                            core_ink_gain,
+                            core_darken_strength,
+                        ) in stroke_body_grid:
+                            variants.append(
+                                mutate_params(
+                                    params,
+                                    font_name=font_name,
+                                    font_path=font_path,
+                                    font_size=font_size,
+                                    stroke_opacity=stroke_opacity,
+                                    ink_gain=ink_gain,
+                                    alpha_contrast=alpha_contrast,
+                                    core_ink_gain=core_ink_gain,
+                                    core_darken_strength=core_darken_strength,
+                                    core_darken_threshold=130,
+                                    core_darken_target_gray=28,
+                                    text_dx=text_dx,
+                                    text_dy=text_dy,
+                                    char_offsets=offsets,
+                                    opacity=params.opacity,
+                                    blur=params.blur,
+                                    mask_threshold=params.mask_threshold,
+                                    mask_dilate_iterations=params.mask_dilate_iterations,
+                                    inpaint_radius=params.inpaint_radius,
+                                    photo_warp=params.photo_warp,
+                                    edge_breakup=params.edge_breakup,
+                                    photo_noise=params.photo_noise,
+                                    jpeg_quality=params.jpeg_quality,
+                                )
                             )
-                        )
-    return dedupe_params(variants, limit)
+    candidates = dedupe_params(variants, min(limit, TEXT_SHAPE_GRID_TOP_LIMIT))
+    candidate_records: list[dict[str, Any]] = []
+    violations: list[dict[str, Any]] = []
+    for candidate in candidates:
+        delta_keys = params_delta_keys(params, candidate)
+        blocked_delta_keys = sorted(delta_keys & TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS)
+        undeclared_delta_keys = sorted(delta_keys - TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS)
+        record = {
+            "candidate_id": candidate.candidate_id,
+            "delta_keys": sorted(delta_keys),
+            "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
+            "blocked_delta_keys": blocked_delta_keys,
+            "undeclared_delta_keys": undeclared_delta_keys,
+        }
+        candidate_records.append(record)
+        if blocked_delta_keys or undeclared_delta_keys:
+            violations.append(record)
+
+    budget_min, budget_max = TEXT_SHAPE_GRID_BUDGET_RANGE
+    report_payload = {
+        "enabled": True,
+        "stage_id": "text_shape",
+        "optimization_step": "shape_reset",
+        "budget": {
+            "raw_candidate_budget": raw_budget,
+            "budget_min": budget_min,
+            "budget_max": budget_max,
+            "within_budget": budget_min <= raw_budget <= budget_max,
+            "retained_top_limit": min(limit, TEXT_SHAPE_GRID_TOP_LIMIT),
+            "retained_count": len(candidates),
+            "pruned_count": max(0, raw_budget - len(candidates)),
+        },
+        "axes": {
+            "font_count": len(font_items),
+            "font_size_delta_count": len(size_deltas),
+            "placement_strategy": plan.placement_strategy,
+            "placement_strategy_reason": plan.placement_strategy_reason,
+            "text_dx_count": len(text_dx_candidates),
+            "text_dy_count": len(text_dy_candidates),
+            "char_offsets_count": len(offset_candidates),
+            "stroke_body_grid_count": len(stroke_body_grid),
+            "pose_shear_source": "renderer_reference_slot_shear_from_source_slots_and_neighbors",
+        },
+        "issue_flags": flags,
+        "allowed_delta_keys": sorted(TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS),
+        "blocked_delta_keys": sorted(TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS),
+        "candidate_count": len(candidates),
+        "candidate_delta_audit": candidate_records,
+        "violations": violations,
+    }
+    return ShapeCandidateGrid(candidates=candidates, report=report_payload)
+
+
+def text_shape_reset_candidates(
+    params: CandidateParams,
+    font_style_reference: dict[str, Any],
+    plan: RenderPlan,
+    report: dict[str, Any] | None,
+    *,
+    limit: int = TEXT_SHAPE_GRID_TOP_LIMIT,
+) -> list[CandidateParams]:
+    return text_shape_reset_candidate_grid(
+        params,
+        font_style_reference,
+        plan,
+        report,
+        limit=limit,
+    ).candidates
 
 
 
