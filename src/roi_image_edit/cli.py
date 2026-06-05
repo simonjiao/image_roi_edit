@@ -16,7 +16,7 @@ from roi_image_edit.iterative_pipeline import (
     DEFAULT_MAX_ITERATIONS,
     run_pipeline,
 )
-from roi_image_edit.web_app import image_to_data_url, process_payload
+from roi_image_edit.processing_service import image_to_data_url, process_payload
 
 
 def parse_rect(value: str) -> dict[str, int]:

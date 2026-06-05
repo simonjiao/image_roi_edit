@@ -1,6 +1,6 @@
 # ROI Text Replacement Rules
 
-本文档记录本项目在对话和回归中沉淀下来的处理规则。它不是聊天纪要，而是配合代码一起工作的工程规则：后续修改 `src/roi_image_edit/iterative_pipeline.py`、`src/roi_image_edit/web_app.py`、CLI 或 Web 流程时，应先对照这些规则。
+本文档记录本项目在对话和回归中沉淀下来的处理规则。它不是聊天纪要，而是配合代码一起工作的工程规则：后续修改 `src/roi_image_edit/processing_service.py`、`src/roi_image_edit/iterative_pipeline.py`、`src/roi_image_edit/stage_policy.py`、CLI 或 Web 流程时，应先对照这些规则。
 
 本地流程强化方案和不可折中的实施 checklist 见
 [`docs/local_flow_hardening_checklist.md`](local_flow_hardening_checklist.md)。
@@ -53,6 +53,7 @@
 
 阶段是本地 gate，优化步骤是阶段内部的候选生成、搜索或参数补丁。二者不能混用。
 阶段顺序、阶段名称和 Optimization Step 策略定义在 `src/roi_image_edit/stage_policy.py`；Web 入口只能导入这些策略，不应在 `web_app.py` 中重新定义。
+Web 入口只负责 HTTP/API/job 状态；处理流程集中在 `src/roi_image_edit/processing_service.py`，后续 ROI 定位、候选生成、验收评分和修订求解器应继续从该服务中拆成更小 core 模块。
 
 | Stage | 目的和作用 | 主要 Optimization Steps | 视觉 prompt |
 | --- | --- | --- | --- |

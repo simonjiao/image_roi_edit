@@ -34,6 +34,24 @@ Prompt text files are packaged under
 [`src/roi_image_edit/prompts/`](src/roi_image_edit/prompts/). CLI, Web, and
 environment checks load prompts from that package resource directory only.
 
+## Module Boundaries
+
+- `src/roi_image_edit/web_app.py`: Web-only entrypoint. It serves static files,
+  exposes `/api/process*`, tracks in-memory job state, and starts the local HTTP
+  server.
+- `src/roi_image_edit/processing_service.py`: shared image-processing service
+  used by both Web and CLI. It parses processing payloads, runs auto ROI,
+  candidate generation, hard checks, vision checks, revision rounds, and writes
+  run artifacts.
+- `src/roi_image_edit/stage_policy.py`: stage order and Optimization Step
+  policy. Web code imports it indirectly through the processing service and
+  must not redefine stage policy.
+- `src/roi_image_edit/iterative_pipeline.py`: lower-level rendering, metric,
+  font, hard-check, and OpenAI-compatible vision-client primitives.
+
+When changing pipeline logic, keep HTTP/UI concerns in `web_app.py` and move
+processing or stage behavior into service/core modules.
+
 ## CLI
 
 Check dependencies, packaged prompt files, API config, and font availability:

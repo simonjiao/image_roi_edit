@@ -32,6 +32,20 @@ Prompt 文本文件打包在
 [`src/roi_image_edit/prompts/`](src/roi_image_edit/prompts/) 下。CLI、Web
 和环境检查都只从这个 package resource 目录读取 prompt。
 
+## 模块边界
+
+- `src/roi_image_edit/web_app.py`：只保留 Web 入口。负责静态文件、
+  `/api/process*`、内存 job 状态和本地 HTTP 服务启动。
+- `src/roi_image_edit/processing_service.py`：Web 和 CLI 共用的图片处理服务。
+  负责解析处理 payload、自动 ROI、候选生成、硬校验、视觉验收、修订迭代和运行产物。
+- `src/roi_image_edit/stage_policy.py`：阶段顺序和 Optimization Step 策略。
+  Web 代码只能通过处理服务使用这些策略，不能在 `web_app.py` 里重新定义。
+- `src/roi_image_edit/iterative_pipeline.py`：更底层的渲染、指标、字体、硬校验和
+  OpenAI 兼容视觉客户端基础能力。
+
+修改流水线逻辑时，HTTP/UI 相关内容留在 `web_app.py`；处理逻辑或阶段规则应放在
+service/core 模块中。
+
 ## CLI
 
 检查依赖、打包 prompt、API 配置和字体可用性：
