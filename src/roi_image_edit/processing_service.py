@@ -75,6 +75,7 @@ from roi_image_edit.run_artifacts import (
     request_audit_payload,
     result_audit_payload,
     stage_progress_fields,
+    vision_candidate_request_payload,
 )
 from roi_image_edit.stage_profiles import resolve_stage_profile
 from roi_image_edit.stages import stage_gate_for_report
@@ -186,7 +187,8 @@ def run_region_vision_checks(
     original_context_path = region_dir / "vision_original_context.png"
     save_region_context(original, context_box, original_context_path)
 
-    vision_rendered = rendered[: max(1, candidate_limit)]
+    effective_candidate_limit = max(1, int(candidate_limit or 0))
+    vision_rendered = rendered[:effective_candidate_limit]
     vision_sheet_path = region_dir / "vision_candidate_sheet.png"
     sheet_items = [
         (
@@ -197,10 +199,27 @@ def run_region_vision_checks(
     ]
     make_contact_sheet(sheet_items, vision_sheet_path, scale=1, cols=1)
 
-    hard_reports = attach_stage_context_to_rank_report(
+    hard_reports = vision_candidate_request_payload(
         compact_hard_reports(vision_rendered, plan),
         pipeline_profile=pipeline_profile,
+        requested_vision_candidate_limit=int(candidate_limit or 0),
+        total_candidate_count=len(rendered),
     )
+    vision_request_path = region_dir / "vision_candidate_request.json"
+    write_json(vision_request_path, hard_reports)
+    if progress:
+        progress(
+            "vision_candidate_request_ready",
+            {
+                "candidate_count": hard_reports.get("candidate_count"),
+                "vision_candidate_limit": hard_reports.get("vision_candidate_limit"),
+                "requested_vision_candidate_limit": hard_reports.get("requested_vision_candidate_limit"),
+                "total_candidate_count": hard_reports.get("total_candidate_count"),
+                "candidate_count_within_limit": hard_reports.get("candidate_count_within_limit"),
+                "stage_context_complete": hard_reports.get("stage_context_complete"),
+                "request_path": str(vision_request_path),
+            },
+        )
     prompt = candidate_prompt_template.replace(
         "{hard_check_report}",
         json.dumps(hard_reports, ensure_ascii=False, indent=2),

@@ -136,3 +136,34 @@ def attach_stage_context_to_rank_report(
         "rule": "Vision suggestions may diagnose any issue, but executable patches must stay within the current blocking stage allowed_patch_keys.",
     }
     return enriched
+
+
+def vision_candidate_request_payload(
+    hard_reports: dict[str, Any],
+    *,
+    pipeline_profile: str,
+    requested_vision_candidate_limit: int,
+    total_candidate_count: int,
+) -> dict[str, Any]:
+    enriched = attach_stage_context_to_rank_report(
+        hard_reports,
+        pipeline_profile=pipeline_profile,
+    )
+    requested_limit = int(requested_vision_candidate_limit or 0)
+    total_count = max(0, int(total_candidate_count or 0))
+    effective_limit = requested_limit if requested_limit > 0 else total_count
+    effective_limit = max(1, effective_limit) if total_count else max(1, effective_limit)
+    candidate_count = int(enriched.get("candidate_count") or 0)
+    stage_context_by_candidate = enriched.get("stage_context_by_candidate")
+    stage_context_complete = (
+        isinstance(stage_context_by_candidate, dict)
+        and set(stage_context_by_candidate) == set(enriched.get("candidate_ids") or [])
+    )
+    return {
+        **enriched,
+        "requested_vision_candidate_limit": requested_limit,
+        "vision_candidate_limit": effective_limit,
+        "total_candidate_count": total_count,
+        "candidate_count_within_limit": candidate_count <= effective_limit,
+        "stage_context_complete": stage_context_complete,
+    }

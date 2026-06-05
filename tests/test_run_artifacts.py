@@ -8,6 +8,7 @@ from roi_image_edit.run_artifacts import (
     request_audit_payload,
     result_audit_payload,
     stage_progress_fields,
+    vision_candidate_request_payload,
 )
 
 
@@ -167,6 +168,38 @@ class RunArtifactsTest(unittest.TestCase):
         )
         self.assertIsNone(enriched["stage_context_by_candidate"]["c2"]["blocking_stage"])
         self.assertEqual(enriched["stage_filter_contract"]["authoritative"], "local_stage_filter")
+
+    def test_vision_candidate_request_records_limit_and_stage_context(self) -> None:
+        hard_reports = {
+            "candidates": {
+                "c1": {
+                    "hard_check": {
+                        "pass": False,
+                        "pipeline_profile": "photo_scan",
+                        "issues": [{"type": "roi_outside"}],
+                    }
+                },
+                "c2": {"hard_check": {"pass": True, "pipeline_profile": "photo_scan"}},
+            }
+        }
+        request = vision_candidate_request_payload(
+            hard_reports,
+            pipeline_profile="photo_scan",
+            requested_vision_candidate_limit=2,
+            total_candidate_count=8,
+        )
+
+        self.assertEqual(request["requested_vision_candidate_limit"], 2)
+        self.assertEqual(request["vision_candidate_limit"], 2)
+        self.assertEqual(request["total_candidate_count"], 8)
+        self.assertEqual(request["candidate_count"], 2)
+        self.assertTrue(request["candidate_count_within_limit"])
+        self.assertTrue(request["stage_context_complete"])
+        self.assertEqual(set(request["stage_context_by_candidate"]), {"c1", "c2"})
+        self.assertEqual(
+            request["stage_context_by_candidate"]["c1"]["blocking_stage"],
+            "hard_boundary",
+        )
 
 
 if __name__ == "__main__":
