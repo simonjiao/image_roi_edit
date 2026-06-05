@@ -217,7 +217,7 @@
 - [x] 不能把某张图的左倾/右倾写成通用规则；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_no_hardcoded_special_cases.py::NoHardcodedSpecialCasesTest.test_runtime_code_and_prompts_do_not_encode_specific_names_images_or_target_char_rules` 验证 runtime code 和 packaged prompts 不含具体图片号、`本图`/`这个字` 或目标字符左右倾特例。
 - [x] 不能为单个字写特殊规则；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_no_hardcoded_special_cases.py::NoHardcodedSpecialCasesTest.test_runtime_code_and_prompts_do_not_encode_specific_names_images_or_target_char_rules` 验证 runtime code 和 packaged prompts 不含具体人名或目标字调参规则。
 - [ ] 不能用更多迭代次数替代阶段判定；验证方式是 max rounds 增加前必须有 stage-specific new candidate direction。
-- [ ] 不允许“先交付，再靠用户肉眼指出问题”作为成功标准；验证方式是 deliver 需要全部本地 stage 和最终视觉验收通过。
+- [x] 不允许“先交付，再靠用户肉眼指出问题”作为成功标准；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver` 验证视觉模型给出 `pass/deliver` 时，只要本地 `stage_gate.blocking_stage` 不为空，本地会强制改为 `revise`，不能交付。
 
 ### S. 设计文档状态同步
 
@@ -259,7 +259,7 @@
 - [ ] “设计目标转换情况”中的所有 `[ ]` 项全部关闭。
 - [ ] A-T 中保留的每个 `[x]` 都有同条或相邻说明中的当前证据，证据不足时必须降级为 `[ ]`。
 - [ ] 回归 Case A-D 已转成可执行用例并通过。
-- [ ] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过。
+- [x] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patchers_declare_primary_allowed_and_blocked_keys` 验证每个 stage patcher 声明 primary、allowed、blocked 且 allowed/blocked 不冲突，`test_stage_patcher_outputs_do_not_contain_undeclared_keys` 验证输出不含未声明参数，`test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary` 验证跨阶段 patch 会被拒绝或声明次级影响。
 - [ ] README、设计文档和 prompt 不再声称未验证能力已经完成。
 - [ ] 所有交付任务都能从 `result.json`、`progress.jsonl`、stage evidence 和候选图解释通过或失败。
 
