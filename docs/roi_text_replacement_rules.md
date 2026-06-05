@@ -4,6 +4,8 @@
 
 本地流程强化方案和不可折中的实施 checklist 见
 [`docs/local_flow_hardening_checklist.md`](local_flow_hardening_checklist.md)。
+文字形态门禁、放置策略、现有差距和分层联合优化设计见
+[`docs/text_shape_joint_optimization_design.md`](text_shape_joint_optimization_design.md)。
 当本文档中的现有经验值或旧规则与该 checklist 冲突时，以 checklist 中的原图参照、阶段求解和动态门禁要求为准。
 
 ## 目标边界

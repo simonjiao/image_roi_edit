@@ -12,6 +12,9 @@
 
 本方案不接受折中交付。若候选没有通过硬校验、阶段门禁和最终视觉验收，只能作为 rejected candidate 展示，不能标记为成功应用。
 
+文字形态门禁、放置策略、现有差距和分层联合优化设计见
+[`docs/text_shape_joint_optimization_design.md`](text_shape_joint_optimization_design.md)。当本 checklist 与该设计文档描述同一能力时，checklist 记录实施状态，设计文档记录目标结构和实施顺序。
+
 ## Current Implementation Status
 
 - 已接入 `reference_profile` 报告字段，包含旧文字、邻字、动态墨色阈值和动态核心变浅阈值。
