@@ -394,6 +394,8 @@ def run_region_vision_checks(
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
+                        "stage_optimization_policy": basis_stage_optimization_policy,
+                        "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
                         **stage_progress_fields(current_report),
                     },
                 )
@@ -516,6 +518,7 @@ def run_region_vision_checks(
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
                         "stage_optimization_policy": basis_stage_optimization_policy,
+                        "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
                         **stage_progress_fields(current_report),
                     },
                 )

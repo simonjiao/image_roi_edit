@@ -156,6 +156,105 @@ def build_process_summary(
     }
 
 
+def _format_progress_list(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        items = [str(item) for item in value if str(item)]
+        return ",".join(items) if items else "none"
+    if value is None:
+        return "none"
+    return str(value)
+
+
+def progress_selected_optimization_step(record: dict) -> object:
+    direct = record.get("selected_optimization_step")
+    if direct:
+        return direct
+    policy = record.get("stage_optimization_policy")
+    if isinstance(policy, dict):
+        return policy.get("optimization_step")
+    return None
+
+
+def progress_blocking_stage(record: dict) -> object:
+    return (
+        record.get("blocking_stage")
+        or record.get("current_blocking_stage")
+        or record.get("basis_blocking_stage")
+        or record.get("stage_id")
+    )
+
+
+def format_process_progress_line(event: str, record: dict) -> str | None:
+    if event in {"revision_round_started", "revision_round_candidates", "revision_round_finished"}:
+        pieces = [
+            "[progress]",
+            event,
+            f"round={record.get('round')}",
+            f"profile={record.get('pipeline_profile')}",
+            f"blocking_stage={progress_blocking_stage(record)}",
+            f"reason={record.get('blocking_stage_reason') or record.get('selected_reason') or record.get('stop_reason')}",
+            f"allowed_params={_format_progress_list(record.get('allowed_patch_keys'))}",
+            f"blocked_params={_format_progress_list(record.get('blocked_patch_keys'))}",
+            f"selected_optimization_step={progress_selected_optimization_step(record)}",
+        ]
+        if event == "revision_round_candidates":
+            pieces.extend(
+                [
+                    f"patches={record.get('patch_count')}",
+                    f"shape_resets={record.get('shape_reset_count')}",
+                    f"basis_severity={record.get('basis_stage_severity')}",
+                ]
+            )
+        if event == "revision_round_finished":
+            pieces.extend(
+                [
+                    f"accepted={record.get('accepted')}",
+                    f"decision={record.get('final_decision')}",
+                    f"score={record.get('score')}",
+                ]
+            )
+        return " ".join(pieces)
+
+    if event in {
+        "run_started",
+        "image_started",
+        "auto_roi_finished",
+        "region_started",
+        "slot_quality_failed",
+        "region_candidates_finished",
+        "region_initial_acceptance",
+        "finalist_revision_started",
+        "finalist_revision_finished",
+        "region_finished",
+        "image_finished",
+    }:
+        detail = " ".join(
+            f"{key}={value}"
+            for key, value in record.items()
+            if key not in {"time", "event"}
+        )
+        return f"[progress] {event} {detail}".rstrip()
+
+    if event == "finalist_revision_candidate_started":
+        return (
+            "[progress] "
+            f"finalist {record.get('index')}/{record.get('total')} "
+            f"start candidate={record.get('candidate_id')} "
+            f"font={record.get('font_name')} size={record.get('font_size')}"
+        )
+
+    if event == "finalist_revision_candidate_finished":
+        return (
+            "[progress] "
+            f"finalist {record.get('index')}/{record.get('total')} "
+            f"accepted={record.get('accepted')} "
+            f"decision={record.get('final_decision')} "
+            f"blocking_stage={record.get('blocking_stage')} "
+            f"score={record.get('score')}"
+        )
+    return None
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -217,63 +316,9 @@ def main() -> None:
         def print_progress(event: str, record: dict) -> None:
             if args.as_json:
                 return
-            if event == "revision_round_finished":
-                print(
-                    "[progress] "
-                    f"round {record.get('round')} "
-                    f"accepted={record.get('accepted')} "
-                    f"decision={record.get('final_decision')} "
-                    f"blocking_stage={record.get('blocking_stage')} "
-                    f"score={record.get('score')}",
-                    flush=True,
-                )
-            elif event == "revision_round_candidates":
-                print(
-                    "[progress] "
-                    f"round {record.get('round')} "
-                    f"basis_stage={record.get('basis_blocking_stage')} "
-                    f"basis_severity={record.get('basis_stage_severity')} "
-                    f"patches={record.get('patch_count')} "
-                    f"shape_resets={record.get('shape_reset_count')}",
-                    flush=True,
-                )
-            elif event in {
-                "run_started",
-                "image_started",
-                "auto_roi_finished",
-                "region_started",
-                "slot_quality_failed",
-                "region_candidates_finished",
-                "region_initial_acceptance",
-                "finalist_revision_started",
-                "finalist_revision_finished",
-                "region_finished",
-                "image_finished",
-            }:
-                detail = " ".join(
-                    f"{key}={value}"
-                    for key, value in record.items()
-                    if key not in {"time", "event"}
-                )
-                print(f"[progress] {event} {detail}".rstrip(), flush=True)
-            elif event == "finalist_revision_candidate_started":
-                print(
-                    "[progress] "
-                    f"finalist {record.get('index')}/{record.get('total')} "
-                    f"start candidate={record.get('candidate_id')} "
-                    f"font={record.get('font_name')} size={record.get('font_size')}",
-                    flush=True,
-                )
-            elif event == "finalist_revision_candidate_finished":
-                print(
-                    "[progress] "
-                    f"finalist {record.get('index')}/{record.get('total')} "
-                    f"accepted={record.get('accepted')} "
-                    f"decision={record.get('final_decision')} "
-                    f"blocking_stage={record.get('blocking_stage')} "
-                    f"score={record.get('score')}",
-                    flush=True,
-                )
+            line = format_process_progress_line(event, record)
+            if line:
+                print(line, flush=True)
 
         response = process_payload(payload, progress=print_progress)
         image_result = response["images"][0]
