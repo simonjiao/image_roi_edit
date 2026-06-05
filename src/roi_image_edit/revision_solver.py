@@ -134,6 +134,62 @@ PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS = frozenset(
 PHOTO_TEXTURE_GRID_TOP_LIMIT = 6
 PHOTO_TEXTURE_GRID_BUDGET_RANGE = (30, 200)
 
+TEXT_SHAPE_PRUNE_REASON_CATEGORIES = (
+    "glyph_height",
+    "center_alignment",
+    "baseline_alignment",
+    "character_spacing",
+    "protected_distance",
+    "font_style",
+    "stroke_body",
+    "pose_inheritance",
+)
+INK_GRAY_PRUNE_REASON_CATEGORIES = (
+    "true_black_core",
+    "deep_core_density",
+    "outer_gray_edge",
+    "mid_gray_body",
+    "complexity_adjustment",
+)
+PHOTO_TEXTURE_PRUNE_REASON_CATEGORIES = (
+    "over_sharp",
+    "over_blurry",
+    "missing_edge_breakup",
+    "background_too_smooth",
+    "white_or_shadow_ghost",
+    "old_residual",
+    "roi_gradient_break",
+)
+
+_PRUNE_REASON_SOURCES = {
+    "text_shape": {
+        "glyph_height": ("font_size", "slot_height", "max_font_size_for_plan"),
+        "center_alignment": ("text_dx", "text_dy", "char_alignment_metrics.center"),
+        "baseline_alignment": ("text_dy", "char_offsets", "char_alignment_metrics.baseline"),
+        "character_spacing": ("char_offsets", "slot_boxes", "placement_strategy"),
+        "protected_distance": ("protected_boxes", "target_roi", "right_boundary"),
+        "font_style": ("font_name", "font_path", "font_style_reference.ranked_fonts"),
+        "stroke_body": ("stroke_opacity", "ink_gain", "alpha_contrast", "core_ink_gain"),
+        "pose_inheritance": ("char_offsets", "source_slot_shear", "neighbor_shear"),
+    },
+    "ink_gray_balance": {
+        "true_black_core": ("opacity", "core_ink_gain", "core_darken_strength", "lt55"),
+        "deep_core_density": ("core_darken_threshold", "core_darken_target_gray", "lt90"),
+        "outer_gray_edge": ("stroke_opacity", "alpha_contrast", "outer_gray_halo"),
+        "mid_gray_body": ("stroke_opacity", "ink_gain", "gray_band_metrics"),
+        "complexity_adjustment": ("reference_profile", "target_source_complexity_ratio"),
+    },
+    "photo_texture": {
+        "over_sharp": ("blur", "alpha_contrast", "photo_texture_too_sharp"),
+        "over_blurry": ("blur", "photo_texture_too_blurry"),
+        "missing_edge_breakup": ("edge_breakup", "photo_texture_edge_breakup_missing"),
+        "background_too_smooth": ("photo_noise", "background_fill_too_smooth"),
+        "white_or_shadow_ghost": ("background_white_ghost_residual", "background_shadow_ghost_residual"),
+        "old_residual": ("background_trailing_patch_too_smooth", "cleanup_mask_report"),
+        "roi_gradient_break": ("roi_gradient", "background_texture_metrics"),
+    },
+}
+
 
 @dataclass(frozen=True)
 class ShapeCandidateGrid:
@@ -151,6 +207,62 @@ class InkGrayCandidateGrid:
 class PhotoTextureCandidateGrid:
     candidates: list[CandidateParams]
     report: dict[str, Any]
+
+
+def prune_reason_contract(stage_id: str, raw_budget: int, retained_count: int) -> dict[str, Any]:
+    sources = _PRUNE_REASON_SOURCES[stage_id]
+    return {
+        "stage_id": stage_id,
+        "retention_method": "dedupe_then_axis_priority_top_n",
+        "raw_candidate_budget": int(raw_budget),
+        "retained_count": int(retained_count),
+        "pruned_count": max(0, int(raw_budget) - int(retained_count)),
+        "required_categories": list(sources),
+        "category_sources": {category: list(value) for category, value in sources.items()},
+    }
+
+
+def _candidate_reason_categories(stage_id: str, delta_keys: frozenset[str]) -> list[str]:
+    if stage_id == "text_shape":
+        mapping = {
+            "font_name": ("font_style",),
+            "font_path": ("font_style",),
+            "font_size": ("glyph_height", "protected_distance"),
+            "text_dx": ("center_alignment",),
+            "text_dy": ("center_alignment", "baseline_alignment"),
+            "char_offsets": ("baseline_alignment", "character_spacing", "pose_inheritance"),
+            "stroke_opacity": ("stroke_body",),
+            "ink_gain": ("stroke_body",),
+            "alpha_contrast": ("stroke_body",),
+            "core_ink_gain": ("stroke_body",),
+            "core_darken_strength": ("stroke_body",),
+            "core_darken_threshold": ("stroke_body",),
+            "core_darken_target_gray": ("stroke_body",),
+        }
+    elif stage_id == "ink_gray_balance":
+        mapping = {
+            "opacity": ("true_black_core", "deep_core_density"),
+            "stroke_opacity": ("mid_gray_body", "outer_gray_edge"),
+            "ink_gain": ("mid_gray_body",),
+            "alpha_contrast": ("outer_gray_edge",),
+            "core_ink_gain": ("true_black_core", "complexity_adjustment"),
+            "core_darken_strength": ("true_black_core", "complexity_adjustment"),
+            "core_darken_threshold": ("deep_core_density", "complexity_adjustment"),
+            "core_darken_target_gray": ("deep_core_density", "complexity_adjustment"),
+        }
+    else:
+        mapping = {
+            "blur": ("over_sharp", "over_blurry"),
+            "alpha_contrast": ("over_sharp",),
+            "photo_warp": ("roi_gradient_break",),
+            "edge_breakup": ("missing_edge_breakup", "roi_gradient_break"),
+            "photo_noise": ("background_too_smooth", "old_residual"),
+            "jpeg_quality": ("background_too_smooth", "old_residual"),
+        }
+    categories: set[str] = set()
+    for key in delta_keys:
+        categories.update(mapping.get(key, ()))
+    return sorted(categories)
 
 
 def layered_candidate_search_report(*grid_reports: dict[str, Any]) -> dict[str, Any]:
@@ -815,6 +927,7 @@ def text_shape_reset_candidate_grid(
         record = {
             "candidate_id": candidate.candidate_id,
             "delta_keys": sorted(delta_keys),
+            "reason_categories": _candidate_reason_categories("text_shape", delta_keys),
             "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
             "blocked_delta_keys": blocked_delta_keys,
             "undeclared_delta_keys": undeclared_delta_keys,
@@ -837,6 +950,7 @@ def text_shape_reset_candidate_grid(
             "retained_count": len(candidates),
             "pruned_count": max(0, raw_budget - len(candidates)),
         },
+        "prune_reason_contract": prune_reason_contract("text_shape", raw_budget, len(candidates)),
         "axes": {
             "font_count": len(font_items),
             "font_size_delta_count": len(size_deltas),
@@ -845,6 +959,7 @@ def text_shape_reset_candidate_grid(
             "text_dx_count": len(text_dx_candidates),
             "text_dy_count": len(text_dy_candidates),
             "char_offsets_count": len(offset_candidates),
+            "protected_box_count": len(plan.protected_boxes),
             "stroke_body_grid_count": len(stroke_body_grid),
             "pose_shear_source": "renderer_reference_slot_shear_from_source_slots_and_neighbors",
         },
@@ -1080,6 +1195,7 @@ def ink_gray_candidate_grid(
             "parent_candidate_id": params.candidate_id,
             "parent_shape_candidate_id": shape_parent_id,
             "delta_keys": sorted(delta_keys),
+            "reason_categories": _candidate_reason_categories("ink_gray_balance", delta_keys),
             "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
             "blocked_delta_keys": blocked_delta_keys,
             "undeclared_delta_keys": undeclared_delta_keys,
@@ -1137,6 +1253,7 @@ def ink_gray_candidate_grid(
                 "retained_count": len(candidates),
                 "pruned_count": max(0, raw_budget - len(candidates)),
             },
+            "prune_reason_contract": prune_reason_contract("ink_gray_balance", raw_budget, len(candidates)),
             "axes": {
                 "opacity_count": len(opacity_values),
                 "stroke_opacity_count": len(stroke_values),
@@ -1295,6 +1412,7 @@ def photo_texture_candidate_grid(
             "candidate_id": candidate.candidate_id,
             "parent_candidate_id": params.candidate_id,
             "delta_keys": sorted(delta_keys),
+            "reason_categories": _candidate_reason_categories("photo_texture", delta_keys),
             "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
             "blocked_delta_keys": blocked_delta_keys,
             "undeclared_delta_keys": undeclared_delta_keys,
@@ -1320,6 +1438,7 @@ def photo_texture_candidate_grid(
                 "retained_count": len(candidates),
                 "pruned_count": max(0, raw_budget - len(candidates)),
             },
+            "prune_reason_contract": prune_reason_contract("photo_texture", raw_budget, len(candidates)),
             "axes": {
                 "blur_count": len(blur_values),
                 "alpha_contrast_count": len(alpha_values),

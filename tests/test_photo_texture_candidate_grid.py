@@ -9,6 +9,7 @@ from roi_image_edit.processing_service import prior_stage_regression_report
 from roi_image_edit.revision_solver import (
     PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS,
     PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS,
+    PHOTO_TEXTURE_PRUNE_REASON_CATEGORIES,
     photo_texture_candidate_grid,
 )
 
@@ -76,12 +77,21 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
             grid.report["axes"]["residual_retexture_keys"],
             ["edge_breakup", "photo_noise", "jpeg_quality"],
         )
+        self.assertEqual(
+            tuple(grid.report["prune_reason_contract"]["required_categories"]),
+            PHOTO_TEXTURE_PRUNE_REASON_CATEGORIES,
+        )
+        self.assertEqual(
+            grid.report["prune_reason_contract"]["category_sources"]["white_or_shadow_ghost"],
+            ["background_white_ghost_residual", "background_shadow_ghost_residual"],
+        )
         self.assertEqual(grid.report["violations"], [])
 
         for candidate, audit in zip(grid.candidates, grid.report["candidate_delta_audit"]):
             self.assertTrue(audit["allowed_delta_keys_only"], audit)
             self.assertFalse(audit["blocked_delta_keys"], audit)
             self.assertFalse(audit["undeclared_delta_keys"], audit)
+            self.assertTrue(set(audit["reason_categories"]) <= set(PHOTO_TEXTURE_PRUNE_REASON_CATEGORIES))
             self.assertEqual(audit["parent_candidate_id"], base.candidate_id)
             self.assertLessEqual(abs(candidate.blur - base.blur), 0.08)
             self.assertLessEqual(abs(candidate.alpha_contrast - base.alpha_contrast), 0.02)

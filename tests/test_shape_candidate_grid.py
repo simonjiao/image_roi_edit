@@ -8,6 +8,7 @@ import roi_image_edit.processing_service as processing_service
 from roi_image_edit.revision_solver import (
     TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS,
     TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS,
+    TEXT_SHAPE_PRUNE_REASON_CATEGORIES,
     text_shape_reset_candidate_grid,
     text_shape_reset_candidates,
 )
@@ -108,11 +109,20 @@ class ShapeCandidateGridTest(unittest.TestCase):
             "renderer_reference_slot_shear_from_source_slots_and_neighbors",
         )
         self.assertEqual(grid.report["axes"]["placement_strategy"], "center_primary")
+        self.assertEqual(
+            tuple(grid.report["prune_reason_contract"]["required_categories"]),
+            TEXT_SHAPE_PRUNE_REASON_CATEGORIES,
+        )
+        self.assertEqual(
+            grid.report["prune_reason_contract"]["category_sources"]["protected_distance"],
+            ["protected_boxes", "target_roi", "right_boundary"],
+        )
 
         for candidate, audit in zip(grid.candidates, grid.report["candidate_delta_audit"]):
             self.assertTrue(audit["allowed_delta_keys_only"], audit)
             self.assertFalse(audit["blocked_delta_keys"], audit)
             self.assertFalse(audit["undeclared_delta_keys"], audit)
+            self.assertTrue(set(audit["reason_categories"]) <= set(TEXT_SHAPE_PRUNE_REASON_CATEGORIES))
             self.assertEqual(candidate.opacity, base.opacity)
             self.assertEqual(candidate.blur, base.blur)
             self.assertEqual(candidate.mask_threshold, base.mask_threshold)

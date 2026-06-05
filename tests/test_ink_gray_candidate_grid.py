@@ -9,6 +9,7 @@ import roi_image_edit.processing_service as processing_service
 from roi_image_edit.revision_solver import (
     INK_GRAY_GRID_ALLOWED_DELTA_KEYS,
     INK_GRAY_GRID_BLOCKED_DELTA_KEYS,
+    INK_GRAY_PRUNE_REASON_CATEGORIES,
     ink_gray_candidate_grid,
     layered_candidate_search_report,
 )
@@ -158,6 +159,14 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             grid.report["axes"]["forbidden_combined_strategy_directions"],
             ["increase_blur", "increase_photo_noise", "expand_outer_gray_halo"],
         )
+        self.assertEqual(
+            tuple(grid.report["prune_reason_contract"]["required_categories"]),
+            INK_GRAY_PRUNE_REASON_CATEGORIES,
+        )
+        self.assertEqual(
+            grid.report["prune_reason_contract"]["category_sources"]["complexity_adjustment"],
+            ["reference_profile", "target_source_complexity_ratio"],
+        )
         self.assertTrue(
             any(
                 candidate.core_ink_gain > base.core_ink_gain
@@ -171,6 +180,8 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             self.assertEqual(candidate.blur, base.blur)
             self.assertEqual(candidate.photo_noise, base.photo_noise)
             self.assertEqual(candidate.edge_breakup, base.edge_breakup)
+        for audit in grid.report["candidate_delta_audit"]:
+            self.assertTrue(set(audit["reason_categories"]) <= set(INK_GRAY_PRUNE_REASON_CATEGORIES))
 
     def test_parent_shape_candidate_survives_multiple_ink_gray_rounds(self) -> None:
         ink_round_parent = replace(params(), candidate_id="ink-round-01")
