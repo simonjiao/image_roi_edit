@@ -37,6 +37,13 @@
         <div class="panes">
           <div class="pane source-pane">
             <div class="pane-title">原图</div>
+            <div class="zoom-toolbar" aria-label="原图缩放">
+              <button class="zoom-button zoom-out" type="button" title="缩小">−</button>
+              <input class="zoom-slider" type="range" min="10" max="600" step="5" value="100" aria-label="缩放比例" />
+              <div class="zoom-value">100%</div>
+              <button class="zoom-button zoom-in" type="button" title="放大">+</button>
+              <button class="zoom-button zoom-reset" type="button" title="适配窗口">⤢</button>
+            </div>
             <div class="canvas-shell">
               <canvas class="source-canvas"></canvas>
             </div>

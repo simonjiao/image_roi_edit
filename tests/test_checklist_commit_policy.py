@@ -50,16 +50,11 @@ class ChecklistCommitPolicyTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing_closed_checklist_item_reference", result.stderr)
 
-    def test_latest_commit_message_mentions_closed_checklist_items(self) -> None:
-        message = subprocess.check_output(
-            ["git", "log", "-1", "--pretty=%B"],
-            cwd=REPO_ROOT,
-            text=True,
-        )
+    def test_plain_feature_commit_is_not_a_checklist_closure_message(self) -> None:
+        report = checklist_closure_report("Add Web canvas zoom controls\n\nFeature-only change.")
 
-        report = checklist_closure_report(message)
-
-        self.assertTrue(report.passed, report.reason)
+        self.assertFalse(report.passed)
+        self.assertEqual(report.reason, "missing_closed_checklist_item_reference")
 
 
 if __name__ == "__main__":

@@ -10,6 +10,10 @@ const state = {
   dragging: null,
 };
 
+const MIN_CANVAS_ZOOM = 0.1;
+const MAX_CANVAS_ZOOM = 6;
+const CANVAS_ZOOM_STEP = 0.1;
+
 function uid(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -48,12 +52,63 @@ function getItem(itemId) {
 
 function canvasPoint(canvas, event) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const rectWidth = rect.width || canvas.width || 1;
+  const rectHeight = rect.height || canvas.height || 1;
+  const scaleX = canvas.width / rectWidth;
+  const scaleY = canvas.height / rectHeight;
   return {
     x: Math.max(0, Math.min(canvas.width, (event.clientX - rect.left) * scaleX)),
     y: Math.max(0, Math.min(canvas.height, (event.clientY - rect.top) * scaleY)),
   };
+}
+
+function clampCanvasZoom(zoom) {
+  const value = Number(zoom);
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.max(MIN_CANVAS_ZOOM, Math.min(MAX_CANVAS_ZOOM, value));
+}
+
+function fitZoomForItem(item) {
+  const imageWidth = item.image?.naturalWidth || item.elements.canvas?.width || 1;
+  const imageHeight = item.image?.naturalHeight || item.elements.canvas?.height || 1;
+  const shell = item.elements.canvasShell;
+  const shellRect = shell?.getBoundingClientRect ? shell.getBoundingClientRect() : null;
+  const shellWidth = shell?.clientWidth || shellRect?.width || imageWidth;
+  const shellHeight = shell?.clientHeight || shellRect?.height || imageHeight;
+  const availableWidth = Math.max(1, shellWidth - 24);
+  const availableHeight = Math.max(1, shellHeight - 24);
+  return clampCanvasZoom(Math.min(1, availableWidth / imageWidth, availableHeight / imageHeight));
+}
+
+function applyCanvasZoom(item) {
+  const canvas = item.elements.canvas;
+  const imageWidth = item.image?.naturalWidth || canvas.width || 1;
+  const imageHeight = item.image?.naturalHeight || canvas.height || 1;
+  const zoom = clampCanvasZoom(item.zoom || 1);
+  canvas.style.width = `${Math.max(1, Math.round(imageWidth * zoom))}px`;
+  canvas.style.height = `${Math.max(1, Math.round(imageHeight * zoom))}px`;
+  if (item.elements.zoomSlider) {
+    item.elements.zoomSlider.value = String(Math.round(zoom * 100));
+  }
+  if (item.elements.zoomValue) {
+    item.elements.zoomValue.textContent = `${Math.round(zoom * 100)}%`;
+  }
+}
+
+function setItemZoom(item, zoom, mode = "manual") {
+  item.zoom = clampCanvasZoom(zoom);
+  item.zoomMode = mode;
+  applyCanvasZoom(item);
+}
+
+function resetItemZoomToFit(item) {
+  setItemZoom(item, fitZoomForItem(item), "fit");
+}
+
+function changeItemZoom(item, delta) {
+  setItemZoom(item, (item.zoom || fitZoomForItem(item)) + delta);
 }
 
 function normalizedRect(start, end) {
@@ -97,6 +152,7 @@ function drawCanvas(item) {
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.setLineDash([]);
   }
+  applyCanvasZoom(item);
 }
 
 function updateRegionCount(item) {
@@ -541,7 +597,13 @@ function renderItem(item) {
   item.elements = {
     fileName: node.querySelector(".file-name"),
     removeButton: node.querySelector(".remove-button"),
+    canvasShell: node.querySelector(".canvas-shell"),
     canvas: node.querySelector(".source-canvas"),
+    zoomOut: node.querySelector(".zoom-out"),
+    zoomIn: node.querySelector(".zoom-in"),
+    zoomSlider: node.querySelector(".zoom-slider"),
+    zoomValue: node.querySelector(".zoom-value"),
+    zoomReset: node.querySelector(".zoom-reset"),
     instruction: node.querySelector(".instruction-input"),
     clearRects: node.querySelector(".clear-rects"),
     regionCount: node.querySelector(".region-count"),
@@ -570,6 +632,31 @@ function renderItem(item) {
   });
 
   item.elements.instruction.addEventListener("input", updateProcessButton);
+
+  item.elements.zoomOut.addEventListener("click", () => {
+    changeItemZoom(item, -CANVAS_ZOOM_STEP);
+  });
+
+  item.elements.zoomIn.addEventListener("click", () => {
+    changeItemZoom(item, CANVAS_ZOOM_STEP);
+  });
+
+  item.elements.zoomSlider.addEventListener("input", () => {
+    setItemZoom(item, Number(item.elements.zoomSlider.value) / 100);
+  });
+
+  item.elements.zoomReset.addEventListener("click", () => {
+    resetItemZoomToFit(item);
+  });
+
+  item.elements.canvasShell.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.12 : 0.88;
+    setItemZoom(item, (item.zoom || fitZoomForItem(item)) * factor);
+  });
 
   item.elements.drawerToggle.addEventListener("click", () => {
     item.elements.resultShell.classList.toggle("drawer-open");
@@ -607,6 +694,7 @@ function renderItem(item) {
   });
 
   imageList.appendChild(node);
+  resetItemZoomToFit(item);
   drawCanvas(item);
   updateRegionCount(item);
 }
@@ -626,6 +714,8 @@ async function addFiles(files) {
       image,
       regions: [],
       instruction: "",
+      zoom: 1,
+      zoomMode: "fit",
       elements: {},
       node: null,
     };
@@ -700,3 +790,13 @@ fileInput.addEventListener("change", async () => {
 });
 
 processButton.addEventListener("click", processAll);
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    state.items.forEach((item) => {
+      if (item.zoomMode === "fit") {
+        resetItemZoomToFit(item);
+      }
+    });
+  });
+}

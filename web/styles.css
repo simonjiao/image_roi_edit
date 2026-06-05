@@ -189,6 +189,47 @@ select {
   font-weight: 650;
 }
 
+.zoom-toolbar {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #f8f9f9;
+}
+
+.zoom-button {
+  width: 30px;
+  height: 28px;
+  flex: 0 0 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.zoom-button:hover {
+  border-color: var(--accent);
+}
+
+.zoom-slider {
+  width: min(180px, 38vw);
+  accent-color: var(--accent);
+}
+
+.zoom-value {
+  min-width: 52px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .canvas-shell,
 .result-shell {
   position: relative;
@@ -211,10 +252,17 @@ select {
   background-size: 16px 16px;
 }
 
+.source-pane .canvas-shell {
+  align-items: safe center;
+  justify-content: safe center;
+  padding: 12px;
+}
+
 .source-canvas {
   display: block;
-  max-width: 100%;
-  max-height: 70vh;
+  flex: 0 0 auto;
+  max-width: none;
+  max-height: none;
   cursor: crosshair;
   background: #fff;
 }
@@ -476,6 +524,16 @@ select {
 
   .controls {
     grid-template-columns: 1fr;
+  }
+
+  .zoom-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+  }
+
+  .zoom-slider {
+    flex: 1;
+    min-width: 130px;
   }
 
   .status-text {
