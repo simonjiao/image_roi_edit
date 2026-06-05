@@ -55,14 +55,20 @@ class FailureArtifactsTest(unittest.TestCase):
             failure_report = Path(image_result["artifacts"]["failure_report"])
             self.assertTrue(rejected_input.exists())
             self.assertTrue(failure_report.exists())
+            self.assertTrue(image_result["artifacts"]["final_is_rejected_candidate"])
             saved_report = read_json(failure_report)
             self.assertEqual(saved_report["accepted"], False)
             self.assertEqual(saved_report["applied"], False)
-            result_json = read_json(Path(response["runDir"]) / "result.json")
+            result_path = Path(response["runDir"]) / "result.json"
+            progress_path = Path(response["runDir"]) / "progress.jsonl"
+            self.assertTrue(result_path.exists())
+            self.assertTrue(progress_path.exists())
+            result_json = read_json(result_path)
             result_image = result_json["images"][0]
             self.assertFalse(result_image["applied"])
             self.assertEqual(result_image["stage_evidence"]["failure"]["candidate_count"], 0)
-            progress_lines = (Path(response["runDir"]) / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(result_image["artifacts"]["final_is_rejected_candidate"], True)
+            progress_lines = progress_path.read_text(encoding="utf-8").splitlines()
             self.assertTrue(any('"event": "image_failed"' in line for line in progress_lines))
 
 

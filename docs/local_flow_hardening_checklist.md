@@ -193,7 +193,7 @@
 
 ### P. 进度、UI 和失败产物
 
-- [ ] 失败也必须保留 rejected candidate、progress、result、stage evidence；验证方式是失败任务 run directory 文件存在性测试。
+- [x] 失败也必须保留 rejected candidate、progress、result、stage evidence；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_failure_artifacts.py::FailureArtifactsTest.test_auto_roi_failure_preserves_rejected_artifacts_and_result_evidence` 验证自动 ROI 失败任务保留 rejected input、failure report、`final_is_rejected_candidate=true`、run directory 下的 `result.json` 和 `progress.jsonl`，且 `result.json` 保留 failure stage evidence、`progress.jsonl` 记录 `image_failed`。
 - [x] CLI 每轮必须显示或输出 `round`、`profile`、`blocking_stage`、`reason`、`allowed_params`、`blocked_params`、`selected_optimization_step`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_cli_progress.py` 验证 `revision_round_candidates` 和 `revision_round_finished` 文本进度行都包含这些字段，且 `processing_service.py` 在轮次事件中写入 `selected_optimization_step`。
 - [ ] Web 每轮必须展示 `blocking_stage`、当前阶段失败原因、本轮候选图、因前置阶段失败被拒绝的候选、最终 `accepted` 状态；验证方式是浏览器截图或 DOM 测试。
 - [ ] 失败任务必须保留自动方向选择报告、search/edit ROI 标注图、slot quality report、shape top candidates、ink-gray top candidates、photo texture top candidates、final visual candidates、rejected final candidate；验证方式是 run directory 文件存在性测试。
