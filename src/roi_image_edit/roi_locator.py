@@ -205,16 +205,21 @@ def auto_region_evidence(region: dict[str, Any]) -> dict[str, Any]:
         slot_report = {}
     source_text_value = str(region.get("sourceText") or "") if isinstance(region, dict) else ""
     target_text_value = str(region.get("targetText") or "") if isinstance(region, dict) else ""
+    search_roi = region.get("_autoSearchRoi") if isinstance(region, dict) else None
+    target_roi = region.get("_autoTargetRoi") if isinstance(region, dict) else None
+    protected_boxes = region.get("_autoProtectedBoxes") if isinstance(region, dict) else []
+    roi_metrics = auto_roi_geometry_metrics(search_roi, edit_roi, protected_boxes)
     return {
         "field_key": region.get("_autoFieldKey") if isinstance(region, dict) else None,
-        "search_roi": region.get("_autoSearchRoi") if isinstance(region, dict) else None,
+        "search_roi": search_roi,
         "edit_roi": edit_roi,
-        "target_roi": region.get("_autoTargetRoi") if isinstance(region, dict) else None,
+        "target_roi": target_roi,
         "source_text": source_text_value,
         "target_text": target_text_value,
         "auto_score": region.get("_autoScore") if isinstance(region, dict) else None,
         "slot_boxes": region.get("_autoSlotBoxes") if isinstance(region, dict) else [],
-        "protected_boxes": region.get("_autoProtectedBoxes") if isinstance(region, dict) else [],
+        "protected_boxes": protected_boxes,
+        "roi_geometry": roi_metrics,
         "slot_quality_pass": slot_report.get("pass"),
         "slot_quality_issue_count": len(slot_report.get("issues") or []),
         "source_count": slot_report.get("source_count"),
@@ -222,6 +227,64 @@ def auto_region_evidence(region: dict[str, Any]) -> dict[str, Any]:
         "actual_slot_count": slot_report.get("actual_count"),
         "length_change": slot_report.get("length_change"),
     }
+
+
+def auto_roi_geometry_metrics(
+    search_roi: object,
+    edit_roi: object,
+    protected_boxes: object,
+) -> dict[str, Any]:
+    search_box = normalize_box(search_roi)
+    edit_box = normalize_box(edit_roi)
+    protected = [
+        box
+        for box in (
+            normalize_box(item)
+            for item in protected_boxes
+            if isinstance(protected_boxes, (list, tuple))
+        )
+        if box is not None
+    ]
+    search_area = box_area(search_box) if search_box else 0
+    edit_area = box_area(edit_box) if edit_box else 0
+    edit_within_search = bool(
+        search_box
+        and edit_box
+        and search_box[0] <= edit_box[0] <= edit_box[2] <= search_box[2]
+        and search_box[1] <= edit_box[1] <= edit_box[3] <= search_box[3]
+    )
+    edit_protected_overlap = (
+        sum(box_overlap_area(edit_box, box) for box in protected)
+        if edit_box
+        else 0
+    )
+    search_protected_overlap = (
+        sum(box_overlap_area(search_box, box) for box in protected)
+        if search_box
+        else 0
+    )
+    return {
+        "search_area": search_area,
+        "edit_area": edit_area,
+        "search_area_gte_edit_area": bool(search_area >= edit_area and edit_area > 0),
+        "edit_within_search_roi": edit_within_search,
+        "protected_box_count": len(protected),
+        "search_protected_overlap_pixels": int(search_protected_overlap),
+        "edit_protected_overlap_pixels": int(edit_protected_overlap),
+        "edit_avoids_protected_text": bool(edit_box and edit_protected_overlap == 0),
+    }
+
+
+def normalize_box(value: object) -> tuple[int, int, int, int] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        x1, y1, x2, y2 = [int(round(float(item))) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
 
 
 def target_field_quality_summary(region_evidence: list[dict[str, Any]]) -> dict[str, Any]:

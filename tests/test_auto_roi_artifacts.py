@@ -25,6 +25,7 @@ def region() -> dict:
         "_autoSearchRoi": [2, 4, 46, 26],
         "_autoEditRoi": [10, 8, 32, 22],
         "_autoTargetRoi": [9, 7, 33, 23],
+        "_autoProtectedBoxes": [[0, 7, 8, 23]],
         "_autoSlotQualityReport": {
             "pass": True,
             "source_count": 2,
@@ -43,11 +44,15 @@ class AutoRoiArtifactsTest(unittest.TestCase):
         self.assertTrue(payload["all_have_search_roi"])
         self.assertTrue(payload["all_have_edit_roi"])
         self.assertTrue(payload["all_edit_roi_within_search_roi"])
+        self.assertTrue(payload["all_search_area_gte_edit_area"])
+        self.assertTrue(payload["all_edit_roi_avoid_protected_text"])
         item = payload["regions"][0]
         self.assertEqual(item["field_key"], "name")
         self.assertEqual(item["search_roi"], [2, 4, 46, 26])
         self.assertEqual(item["edit_roi"], [10, 8, 32, 22])
         self.assertEqual(item["target_roi"], [9, 7, 33, 23])
+        self.assertGreater(item["roi_geometry"]["search_protected_overlap_pixels"], 0)
+        self.assertEqual(item["roi_geometry"]["edit_protected_overlap_pixels"], 0)
         self.assertTrue(item["slot_quality_pass"])
 
     def test_auto_roi_overlay_draws_and_saves_annotated_regions(self) -> None:

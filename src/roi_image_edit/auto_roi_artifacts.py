@@ -16,6 +16,18 @@ def auto_roi_evidence_payload(regions: list[dict[str, Any]] | tuple[dict[str, An
         "all_have_search_roi": all(bool(item.get("search_roi")) for item in evidence_items) if evidence_items else False,
         "all_have_edit_roi": all(bool(item.get("edit_roi")) for item in evidence_items) if evidence_items else False,
         "all_edit_roi_within_search_roi": all(edit_roi_within_search_roi(item) for item in evidence_items) if evidence_items else False,
+        "all_search_area_gte_edit_area": all(
+            bool((item.get("roi_geometry") or {}).get("search_area_gte_edit_area"))
+            for item in evidence_items
+        )
+        if evidence_items
+        else False,
+        "all_edit_roi_avoid_protected_text": all(
+            bool((item.get("roi_geometry") or {}).get("edit_avoids_protected_text"))
+            for item in evidence_items
+        )
+        if evidence_items
+        else False,
     }
 
 
