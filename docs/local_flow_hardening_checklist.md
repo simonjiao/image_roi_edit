@@ -236,7 +236,7 @@
 - [ ] `revision_solver.py` 中的旧评分和候选选择逻辑必须继续收敛为 dispatcher/selector，不能重新生成跨阶段混合 patch；验证方式是代码搜索和 stage filter 单测。
 - [ ] `processing_service.py` 不能继续承载 ROI 定位、候选生成、验收评分、修订求解器的长期核心逻辑；验证方式是这些能力迁移到 `roi_locator.py`、stage modules、solver modules 或等价 core 模块。
 - [ ] `iterative_pipeline.py` 的视觉 prompt 上下文必须只通过 stage context 结构传递阶段信息，不能手写散落的 prompt 拼接逻辑；验证方式是 prompt payload 单测。
-- [ ] `web_app.py` 必须只保留 HTTP/API/job 状态和本地 Web 服务启动，不承载阶段策略或图像处理逻辑；验证方式是代码搜索不出现 detector、patcher、candidate generation 逻辑。
+- [x] `web_app.py` 必须只保留 HTTP/API/job 状态和本地 Web 服务启动，不承载阶段策略或图像处理逻辑；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_web_boundary.py` 验证 `web_app.py` 只能从 core 导入 `processing_service.process_payload`，且不能调用 stage、patcher、candidate generation 或图像处理入口。
 - [ ] `result.json` 和 `progress.jsonl` 必须是所有阶段证据的稳定外部接口；验证方式是 schema 测试覆盖 stage、profile、candidate、patch、vision suggestion 和 rejection reason。
 
 ## 已知实现证据
