@@ -47,13 +47,13 @@
 
 ### B. 旧 7 类诊断关注点映射到当前 5 个 stage
 
-- [ ] `slot_alignment` 必须映射到 `hard_boundary` 的 ROI/slot 安全条件和 `text_shape.slot_alignment_search`；验证方式是 stage evidence 记录旧名、当前 stage、Optimization Step 和报告字段。
+- [x] `slot_alignment` 必须映射到 `hard_boundary` 的 ROI/slot 安全条件和 `text_shape.slot_alignment_search`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_stage_gate_exposes_diagnostic_concern_mapping_as_stage_evidence` 验证 stage gate 输出 `diagnostic_concern_mapping`，其中 `slot_alignment.current_stages=(hard_boundary,text_shape)`、`optimization_steps` 含 `slot_quality_gate`、`report_fields` 含 `slot_quality_report`。
 - [ ] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；验证方式是字体失败样例不会进入 `ink_gray_balance` 主调参。
 - [ ] `pose_geometry` 必须映射到 `text_shape.pose_shear_search`，且不能固化某张图的左倾/右倾；验证方式是姿态报告来自旧槽位、邻字或局部投影指标。
 - [ ] `stroke_body` 必须映射到 `text_shape.stroke_body_search`，且在真实笔画体量未过时不能被 `edge_quality` 或 `photo_texture` 抢先处理；验证方式是粗细失败样例的 `blocking_stage=text_shape`。
 - [ ] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；验证方式是黑芯过量和核心不足分别生成相反方向候选。
 - [ ] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；验证方式是灰边过量不会先破坏已通过的 stroke body。
-- [ ] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；验证方式是 `photo_texture` 只在形态和黑灰通过后成为 blocking stage。
+- [x] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_photo_texture_concern_maps_to_named_within_stage_steps` 验证五个阶段内步骤映射，`tests/test_stage_contracts.py::StageContractsTest.test_photo_texture_blocks_only_after_shape_and_ink_pass` 验证只有形态和黑灰通过后才由 `photo_texture` 阻塞。
 - [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类诊断关注点当成本地 gate。
 
 ### C. 全局硬约束

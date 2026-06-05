@@ -8,6 +8,7 @@ from roi_image_edit.stage_policy import (
     optimization_policy_for_stage,
     patch_keys_for_steps,
 )
+from roi_image_edit.stage_concerns import diagnostic_concern_mapping_report
 from roi_image_edit.stage_profiles import StageProfile, stage_profile
 
 
@@ -246,6 +247,7 @@ def stage_gate_for_report(
         "pass": blocking is None,
         "stage_status": stage_status,
         "stages": stages,
+        "diagnostic_concern_mapping": diagnostic_concern_mapping_report(),
     }
 
 
