@@ -258,6 +258,56 @@ def rotated_auto_orientation_variants(img: Image.Image) -> tuple[tuple[str, Imag
     )
 
 
+def document_orientation_quality(img: Image.Image) -> dict[str, Any]:
+    image_w, image_h = img.size
+    components = page_text_components(img)
+    line_count = 0
+    long_line_count = 0
+    top_line_count = 0
+    left_header_count = 0
+    total_line_width = 0.0
+    for group in group_page_text_lines(components):
+        merged = merge_overlapping_text_components(group)
+        if len(merged) < 3:
+            continue
+        x1 = min(run.x1 for run in merged)
+        y1 = min(run.y1 for run in merged)
+        x2 = max(run.x2 for run in merged)
+        y2 = max(run.y2 for run in merged)
+        width = max(1, x2 - x1)
+        height = max(1, y2 - y1)
+        if width < max(42, int(round(image_w * 0.06))):
+            continue
+        if width < height * 3.2:
+            continue
+        line_count += 1
+        total_line_width += min(1.0, width / max(1, image_w))
+        center_y = (y1 + y2) / 2.0
+        if width >= image_w * 0.28:
+            long_line_count += 1
+        if center_y <= image_h * 0.34:
+            top_line_count += 1
+            if x1 <= image_w * 0.42:
+                left_header_count += 1
+    score = (
+        line_count * 4.0
+        + long_line_count * 8.0
+        + top_line_count * 6.0
+        + left_header_count * 10.0
+        + total_line_width * 5.0
+    )
+    if image_w > image_h and top_line_count >= 2:
+        score += 12.0
+    return {
+        "score": round(float(score), 3),
+        "component_count": len(components),
+        "line_count": line_count,
+        "long_line_count": long_line_count,
+        "top_line_count": top_line_count,
+        "left_header_count": left_header_count,
+    }
+
+
 def auto_orient_for_instruction(
     img: Image.Image,
     *,
@@ -267,7 +317,9 @@ def auto_orient_for_instruction(
 ) -> tuple[Image.Image, list[dict[str, Any]], dict[str, Any]]:
     attempts: list[dict[str, Any]] = []
     first_error: ValueError | None = None
-    for orientation, candidate in rotated_auto_orientation_variants(img):
+    successes: list[tuple[float, float, int, str, Image.Image, list[dict[str, Any]], dict[str, Any]]] = []
+    for orientation_index, (orientation, candidate) in enumerate(rotated_auto_orientation_variants(img)):
+        orientation_quality = document_orientation_quality(candidate)
         try:
             regions = auto_select_regions_for_instruction(
                 candidate,
@@ -284,27 +336,58 @@ def auto_orient_for_instruction(
                     "size": list(candidate.size),
                     "ok": False,
                     "error": str(exc),
+                    "direction_quality": orientation_quality,
                 }
             )
             continue
+        auto_score = min(float(region.get("_autoScore", 0.0)) for region in regions)
+        selection_score = auto_score - float(orientation_quality.get("score") or 0.0)
+        attempt = {
+            "orientation": orientation,
+            "size": list(candidate.size),
+            "ok": True,
+            "auto_score": round(float(auto_score), 3),
+            "direction_score": orientation_quality.get("score"),
+            "selection_score": round(float(selection_score), 3),
+            "direction_quality": orientation_quality,
+            "regions": [
+                {
+                    "id": str(region.get("id") or ""),
+                    "rect": region.get("rect") or {},
+                    "auto_score": region.get("_autoScore"),
+                    "target_roi": region.get("_autoTargetRoi"),
+                }
+                for region in regions
+            ],
+        }
         attempts.append(
-            {
-                "orientation": orientation,
-                "size": list(candidate.size),
-                "ok": True,
-                "regions": [
-                    {
-                        "id": str(region.get("id") or ""),
-                        "rect": region.get("rect") or {},
-                    }
-                    for region in regions
-                ],
-            }
+            attempt
         )
+        successes.append(
+            (
+                -float(orientation_quality.get("score") or 0.0),
+                selection_score,
+                orientation_index,
+                orientation,
+                candidate,
+                regions,
+                attempt,
+            )
+        )
+
+    if successes:
+        successes.sort(key=lambda item: (item[0], item[1]))
+        selected_direction_key, selected_score, _orientation_index, orientation, candidate, regions, selected_attempt = successes[0]
+        margin = None
+        if len(successes) > 1:
+            margin = round(float(successes[1][0] - selected_direction_key), 3)
         return candidate, regions, {
             "applied": orientation != "none",
             "orientation": orientation,
             "attempts": attempts,
+            "selected_score": round(float(selected_score), 3),
+            "direction_margin": margin,
+            "selected_attempt": selected_attempt,
         }
 
     if first_error is not None:
@@ -1283,6 +1366,68 @@ def non_cjk_value_slot_after_label(
     return (best_line_fallback[1],) if best_line_fallback is not None else ()
 
 
+def cjk_value_slots_after_colon(
+    img: Image.Image,
+    roi: tuple[int, int, int, int],
+    *,
+    source_text: str,
+    target_text: str,
+) -> tuple[TextRun, ...]:
+    basis_text = source_text or target_text
+    desired_count = len(text_chars(source_text)) or len(text_chars(target_text))
+    if desired_count < 2 or not is_mostly_cjk(basis_text):
+        return ()
+
+    roi_w = max(1, roi[2] - roi[0])
+    for threshold in (150, 135, 165, 120):
+        components = merge_overlapping_text_components(
+            tuple(sorted(component_text_runs(img, roi, threshold=threshold), key=lambda item: item.x1))
+        )
+        if len(components) < desired_count + 2:
+            continue
+        heights = [text_run_height(run) for run in components]
+        median_h = float(np.median(heights)) if heights else 1.0
+        for idx, separator in enumerate(components):
+            if idx < 2 or not is_colon_like_run(separator, median_h):
+                continue
+            if separator.x1 < roi[0] + roi_w * 0.26 or separator.x1 > roi[0] + roi_w * 0.76:
+                continue
+            left_runs = components[:idx]
+            if len(left_runs) < 2:
+                continue
+            value_runs: list[TextRun] = []
+            last_x2 = separator.x2
+            for run in components[idx + 1 :]:
+                gap = run.x1 - last_x2
+                if not value_runs and gap > max(38.0, median_h * 1.45):
+                    break
+                if value_runs and gap > max(14.0, median_h * 0.65):
+                    break
+                if is_colon_like_run(run, median_h):
+                    break
+                if text_run_height(run) < max(8.0, median_h * 0.45):
+                    continue
+                value_runs.append(run)
+                last_x2 = run.x2
+                if len(value_runs) >= desired_count:
+                    break
+            if len(value_runs) >= desired_count:
+                return tuple(value_runs[:desired_count])
+            if len(value_runs) == 1:
+                value = value_runs[0]
+                value_w = value.x2 - value.x1
+                if value_w >= median_h * desired_count * 0.70:
+                    split = split_run_by_projection(
+                        img,
+                        value,
+                        parts=desired_count,
+                        threshold=threshold,
+                    )
+                    if len(split) >= desired_count:
+                        return tuple(sorted(split[:desired_count], key=lambda item: item.x1))
+    return ()
+
+
 def component_slots_for_region(
     img: Image.Image,
     roi: tuple[int, int, int, int],
@@ -1303,6 +1448,14 @@ def component_slots_for_region(
     )
     if non_cjk_slot:
         return non_cjk_slot
+    cjk_after_colon_slots = cjk_value_slots_after_colon(
+        img,
+        roi,
+        source_text=source_text,
+        target_text=target_text,
+    )
+    if cjk_after_colon_slots:
+        return cjk_after_colon_slots
     component_label_slots = source_slots_after_label_components(
         img,
         roi,
@@ -1475,19 +1628,195 @@ def is_colon_like_run(run: TextRun, median_h: float) -> bool:
     return width <= max(7.0, median_h * 0.38) and height <= max(14.0, median_h * 0.85)
 
 
+def name_anchor_score(
+    label: TextRun,
+    separator: TextRun,
+    *,
+    median_h: float,
+    image_size: tuple[int, int],
+) -> float | None:
+    image_w, image_h = image_size
+    label_w = max(1, label.x2 - label.x1)
+    label_h = text_run_height(label)
+    sep_gap = separator.x1 - label.x2
+    if label_h < max(9.0, median_h * 0.55):
+        return None
+    if label_w < max(12.0, median_h * 0.85):
+        return None
+    label_ratio = label_w / max(1.0, label_h)
+    # "姓名" and "姓 名" are usually a compact two-character label. A very wide
+    # label near a colon is often another field or table text, not the name label.
+    if label_ratio < 0.55 or label_ratio > 3.40:
+        return None
+    spaced_name_label = label_ratio >= 2.0
+    max_label_w = max(110.0 if spaced_name_label else 68.0, median_h * (5.40 if spaced_name_label else 3.80))
+    if label_w > max_label_w:
+        return None
+    max_sep_gap = max(24.0, median_h * (3.20 if spaced_name_label else 0.85))
+    if sep_gap < -2 or sep_gap > max_sep_gap:
+        return None
+    if label.x1 > image_w * 0.32:
+        return None
+    if text_run_center_y(label) > image_h * 0.30:
+        return None
+    score = 0.0
+    center_y = text_run_center_y(label)
+    expected_sep_gap = median_h * (2.45 if spaced_name_label else 0.25)
+    score += abs(center_y - image_h * 0.105) * 0.75
+    score += max(0.0, label.x1 - image_w * 0.12) * 0.35
+    score += abs(sep_gap - expected_sep_gap) * 0.5
+    score += abs(label_ratio - 1.55) * 4.0
+    return score
+
+
+def name_label_variants_before_separator(
+    components: tuple[TextRun, ...],
+    separator_index: int,
+    *,
+    median_h: float,
+) -> tuple[TextRun, ...]:
+    if separator_index <= 0:
+        return ()
+    variants = [components[separator_index - 1]]
+    if separator_index >= 2:
+        left = components[separator_index - 2]
+        right = components[separator_index - 1]
+        gap = right.x1 - left.x2
+        if -2 <= gap <= max(22.0, median_h * 1.25):
+            variants.append(
+                TextRun(
+                    x1=min(left.x1, right.x1),
+                    y1=min(left.y1, right.y1),
+                    x2=max(left.x2, right.x2),
+                    y2=max(left.y2, right.y2),
+                    area=left.area + right.area,
+                )
+            )
+    return tuple(variants)
+
+
+def coarse_name_field_candidate_rois(
+    img: Image.Image,
+    *,
+    source_text: str,
+    target_text: str,
+) -> tuple[tuple[float, tuple[int, int, int, int]], ...]:
+    source_count = len(text_chars(source_text))
+    target_count = len(text_chars(target_text))
+    if source_count <= 0:
+        return ()
+    image_w, image_h = img.size
+    components = page_text_components(img)
+    if not components:
+        return ()
+    heights = [text_run_height(run) for run in components if text_run_height(run) >= 8]
+    median_h = float(np.median(heights)) if heights else 18.0
+    scored: list[tuple[float, tuple[int, int, int, int]]] = []
+    for separator in components:
+        sep_cy = text_run_center_y(separator)
+        if separator.x1 > image_w * 0.28 or sep_cy > image_h * 0.30:
+            continue
+        if not is_colon_like_run(separator, median_h):
+            continue
+        row_tol = max(24.0, median_h * 1.10)
+        same_row = tuple(
+            run
+            for run in components
+            if abs(text_run_center_y(run) - sep_cy) <= row_tol
+        )
+        left_runs = tuple(
+            run
+            for run in same_row
+            if run.x2 <= separator.x1
+            and run.x1 <= image_w * 0.28
+            and not is_colon_like_run(run, median_h)
+        )
+        if not left_runs:
+            continue
+        label_parts = tuple(sorted(left_runs, key=lambda item: item.x1)[-2:])
+        if len(label_parts) < 2:
+            continue
+        label = TextRun(
+            x1=min(run.x1 for run in label_parts),
+            y1=min(run.y1 for run in label_parts),
+            x2=max(run.x2 for run in label_parts),
+            y2=max(run.y2 for run in label_parts),
+            area=sum(run.area for run in label_parts),
+        )
+        anchor_score = name_anchor_score(
+            label,
+            separator,
+            median_h=median_h,
+            image_size=img.size,
+        )
+        if anchor_score is None:
+            continue
+        value_runs: list[TextRun] = []
+        last_x2 = separator.x2
+        max_value_gap = max(42.0, median_h * 4.6)
+        for run in sorted(same_row, key=lambda item: item.x1):
+            if run.x1 <= separator.x2:
+                continue
+            gap = run.x1 - last_x2
+            if value_runs and gap > max(34.0, median_h * 1.55):
+                break
+            if not value_runs and gap > max_value_gap:
+                break
+            if is_colon_like_run(run, median_h):
+                continue
+            if text_run_height(run) < max(8.0, median_h * 0.45):
+                continue
+            value_runs.append(run)
+            last_x2 = run.x2
+            if len(value_runs) >= source_count:
+                break
+        if not value_runs:
+            continue
+        if len(value_runs) < source_count and not (
+            is_mostly_cjk(source_text)
+            and len(value_runs) == 1
+            and (value_runs[0].x2 - value_runs[0].x1) >= median_h * 0.70
+        ):
+            continue
+        source_end = value_runs[min(source_count, len(value_runs)) - 1].x2
+        desired_right = int(round(separator.x2 + median_h * (max(source_count, target_count) * 1.6 + 1.0)))
+        right = max(source_end + int(round(median_h * 0.55)), desired_right)
+        roi = clamp_box(
+            (
+                max(0, label.x1 - max(8, int(round(median_h * 0.40)))),
+                max(0, min(label.y1, separator.y1, *(run.y1 for run in value_runs)) - max(5, int(round(median_h * 0.25)))),
+                min(image_w, right),
+                min(image_h, max(label.y2, separator.y2, *(run.y2 for run in value_runs)) + max(5, int(round(median_h * 0.25)))),
+            ),
+            img.size,
+        )
+        if roi[2] - roi[0] < 24 or roi[3] - roi[1] < 12:
+            continue
+        score = anchor_score + abs(text_run_center_y(label) - image_h * 0.11) * 0.35
+        scored.append((score, roi))
+    deduped: list[tuple[float, tuple[int, int, int, int]]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for score, roi in sorted(scored, key=lambda item: (item[0], item[1][1], item[1][0])):
+        if roi in seen:
+            continue
+        seen.add(roi)
+        deduped.append((score, roi))
+    return tuple(deduped)
+
+
 def name_field_candidate_rois(
     img: Image.Image,
     *,
     source_text: str,
     target_text: str,
-) -> tuple[tuple[int, int, int, int], ...]:
+) -> tuple[tuple[float, tuple[int, int, int, int]], ...]:
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
     if source_count <= 0:
         return ()
 
     image_w, image_h = img.size
-    rois: list[tuple[int, int, int, int]] = []
+    rois: list[tuple[float, tuple[int, int, int, int]]] = []
     for group in group_page_text_lines(page_text_components(img)):
         components = merge_overlapping_text_components(group)
         if len(components) < 3:
@@ -1499,11 +1828,24 @@ def name_field_candidate_rois(
         for idx, separator in enumerate(components):
             if idx == 0 or not is_colon_like_run(separator, median_h):
                 continue
-            label = components[idx - 1]
-            if label.x2 > separator.x1 or separator.x1 - label.x2 > max(18.0, median_h * 0.75):
+            label_options: list[tuple[float, TextRun]] = []
+            for label in name_label_variants_before_separator(components, idx, median_h=median_h):
+                anchor_score = name_anchor_score(
+                    label,
+                    separator,
+                    median_h=median_h,
+                    image_size=img.size,
+                )
+                if anchor_score is None:
+                    continue
+                if label.x2 > separator.x1 or separator.x1 - label.x2 > max(22.0, median_h * 1.25):
+                    continue
+                if label.x2 - label.x1 < label_min_w or text_run_height(label) < label_min_h:
+                    continue
+                label_options.append((anchor_score, label))
+            if not label_options:
                 continue
-            if label.x2 - label.x1 < label_min_w or text_run_height(label) < label_min_h:
-                continue
+            anchor_score, label = min(label_options, key=lambda item: item[0])
 
             value_runs: list[TextRun] = []
             next_field_x = image_w
@@ -1524,7 +1866,11 @@ def name_field_candidate_rois(
                 if len(value_runs) >= source_count:
                     break
 
-            if len(value_runs) < source_count:
+            if len(value_runs) < source_count and not (
+                is_mostly_cjk(source_text)
+                and len(value_runs) == 1
+                and (value_runs[0].x2 - value_runs[0].x1) >= median_h * 0.70
+            ):
                 continue
             source_end = value_runs[min(source_count, len(value_runs)) - 1].x2
             desired_right = int(round(separator.x2 + median_h * (max(source_count, target_count) * 1.55 + 1.0)))
@@ -1536,12 +1882,34 @@ def name_field_candidate_rois(
             bottom = min(image_h, max(run.y2 for run in [label, separator, *value_runs]) + max(5, int(round(median_h * 0.25))))
             roi = clamp_box((left, top, right, bottom), (image_w, image_h))
             if roi[2] - roi[0] >= 24 and roi[3] - roi[1] >= 12:
-                rois.append(roi)
-    deduped: list[tuple[int, int, int, int]] = []
-    for roi in sorted(rois, key=lambda item: (item[1], item[0])):
-        if roi not in deduped:
-            deduped.append(roi)
+                value_start_gap = value_runs[0].x1 - separator.x2
+                value_span = value_runs[min(source_count, len(value_runs)) - 1].x2 - value_runs[0].x1
+                score = (
+                    anchor_score
+                    + abs(value_start_gap - median_h * 0.55) * 0.35
+                    + max(0.0, value_span - median_h * source_count * 2.0) * 0.25
+                )
+                rois.append((score, roi))
+    deduped: list[tuple[float, tuple[int, int, int, int]]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for score, roi in sorted(rois, key=lambda item: (item[0], item[1][1], item[1][0])):
+        if roi in seen:
+            continue
+        seen.add(roi)
+        deduped.append((score, roi))
+    for score, roi in coarse_name_field_candidate_rois(img, source_text=source_text, target_text=target_text):
+        if roi in seen:
+            continue
+        seen.add(roi)
+        deduped.append((score, roi))
+    deduped.sort(key=lambda item: (item[0], item[1][1], item[1][0]))
     return tuple(deduped)
+
+
+def plain_rois_as_scored(
+    rois: tuple[tuple[int, int, int, int], ...],
+) -> tuple[tuple[float, tuple[int, int, int, int]], ...]:
+    return tuple((0.0, roi) for roi in rois)
 
 
 def inferred_source_placeholder_for_field(
@@ -1779,16 +2147,15 @@ def auto_select_regions_for_instruction(
     font_candidates = find_font_candidates(font_source="recommended")
     font_filter_text = source_text or target_text
     font_candidates, _rejected = filter_fonts_by_required_text(font_candidates, font_filter_text)
-    shape_limit = 70.0 if is_mostly_cjk(source_text) else 105.0
 
     def score_candidate_rois(
-        candidate_rois: tuple[tuple[int, int, int, int], ...],
+        candidate_rois: tuple[tuple[float, tuple[int, int, int, int]], ...],
         *,
         source_override: str | None = None,
     ) -> list[tuple[float, tuple[int, int, int, int], RenderPlan, str]]:
         scored: list[tuple[float, tuple[int, int, int, int], RenderPlan, str]] = []
         effective_source = source_override if source_override is not None else source_text
-        for roi in candidate_rois:
+        for roi_bias, roi in candidate_rois:
             try:
                 plan = build_region_plan(
                     img,
@@ -1803,7 +2170,13 @@ def auto_select_regions_for_instruction(
                 if text_chars(effective_source) and is_mostly_cjk(effective_source)
                 else None
             )
-            effective_shape_limit = 70.0 if is_mostly_cjk(effective_source) else 105.0
+            effective_shape_limit = (
+                220.0
+                if field_key == "name" and is_mostly_cjk(effective_source)
+                else 70.0
+                if is_mostly_cjk(effective_source)
+                else 105.0
+            )
             if shape_score is not None and shape_score > effective_shape_limit:
                 continue
             score = auto_region_score(
@@ -1815,19 +2188,18 @@ def auto_select_regions_for_instruction(
             )
             if score is None:
                 continue
-            scored.append((score, roi, plan, effective_source))
+            roi_bias_weight = 10.0 if field_key == "name" else 2.5
+            scored.append((score + roi_bias * roi_bias_weight, roi, plan, effective_source))
         return scored
 
     candidates: list[tuple[float, tuple[int, int, int, int], RenderPlan, str]] = []
     if text_chars(source_text):
-        field_candidate_rois = (
-            name_field_candidate_rois(img, source_text=source_text, target_text=target_text)
-            if field_key == "name"
-            else ()
-        )
-        candidates = score_candidate_rois(field_candidate_rois)
-        if not candidates:
-            candidates = score_candidate_rois(line_candidate_rois(img))
+        if field_key == "name":
+            candidates = score_candidate_rois(
+                name_field_candidate_rois(img, source_text=source_text, target_text=target_text)
+            )
+        else:
+            candidates = score_candidate_rois(plain_rois_as_scored(line_candidate_rois(img)))
     elif field_key:
         for field_score, roi, inferred_source in field_value_candidate_rois(
             img,
@@ -1835,10 +2207,10 @@ def auto_select_regions_for_instruction(
             target_text=target_text,
         ):
             for auto_score, auto_roi, plan, effective_source in score_candidate_rois(
-                (roi,),
+                ((field_score, roi),),
                 source_override=inferred_source,
             ):
-                candidates.append((auto_score + field_score * 2.5, auto_roi, plan, effective_source))
+                candidates.append((auto_score, auto_roi, plan, effective_source))
     else:
         raise ValueError(
             "自动选择 ROI 需要明确旧文字，或写明字段名称，例如：姓名旧值调整为新值、接收时间修改为新值。"
@@ -1852,7 +2224,7 @@ def auto_select_regions_for_instruction(
             "请手动画一个只包含旧文字和少量右侧空白的矩形，或把指令写成“字段 旧文字调整为新文字”。"
         )
 
-    _, roi, selected_plan, selected_source_text = min(candidates, key=lambda item: item[0])
+    selected_score, roi, selected_plan, selected_source_text = min(candidates, key=lambda item: item[0])
     roi = expand_auto_search_roi(
         img,
         roi,
@@ -1868,6 +2240,8 @@ def auto_select_regions_for_instruction(
             "auto": True,
             "sourceText": selected_source_text,
             "targetText": target_text,
+            "_autoScore": round(float(selected_score), 3),
+            "_autoTargetRoi": list(selected_plan.target_roi),
         }
     ]
 
@@ -6245,6 +6619,7 @@ def run_region_vision_checks(
     )
 
     strict_pass = report_strict_pass(final_report)
+    hard_boundary_pass = bool(final_report.get("pass")) if isinstance(final_report, dict) else False
     final_visual_pass = final_acceptance_delivers(final_acceptance_json)
     revision_attempts: list[dict[str, Any]] = []
     revision_rounds: list[dict[str, Any]] = []
@@ -6256,12 +6631,13 @@ def run_region_vision_checks(
             {
                 "accepted": accepted,
                 "strict_pass": strict_pass,
+                "hard_boundary_pass": hard_boundary_pass,
                 "acceptance_level": final_acceptance_json.get("acceptance_level"),
                 "final_decision": final_acceptance_json.get("final_decision"),
             },
         )
 
-    if strict_pass and not final_visual_pass:
+    if hard_boundary_pass and not accepted:
         write_json(region_dir / "final_acceptance_initial.json", final_acceptance_json)
         current_params = final_params
         current_image = final_image
@@ -7421,6 +7797,9 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     {
                         "image_id": image_id,
                         "orientation": orientation_summary.get("orientation"),
+                        "direction_score": (orientation_summary.get("selected_attempt") or {}).get("direction_score"),
+                        "selected_score": orientation_summary.get("selected_score"),
+                        "attempt_count": len(orientation_summary.get("attempts") or []),
                         "region_count": len(regions),
                     },
                 )

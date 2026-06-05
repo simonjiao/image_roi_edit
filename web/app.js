@@ -211,7 +211,9 @@ function progressEventText(record) {
     case "image_started":
       return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}`;
     case "auto_roi_finished":
-      return `自动定位完成：${record.region_count ?? 0} 个区域`;
+      return `自动定位完成：${record.region_count ?? 0} 个区域，方向 ${
+        record.orientation || "none"
+      }，方向分 ${formatNumber(record.direction_score)}`;
     case "region_started":
       return `开始处理区域：${record.source_text || "-"} -> ${record.target_text || "-"}`;
     case "region_candidates_started":
@@ -219,9 +221,9 @@ function progressEventText(record) {
     case "region_candidates_finished":
       return `候选图生成完成：${record.rendered ?? "-"} 个，最佳分 ${formatNumber(record.best_score)}`;
     case "region_initial_acceptance":
-      return `初始验收：${record.accepted ? "通过" : "未通过"}，硬校验 ${
-        record.strict_pass ? "通过" : "未通过"
-      }`;
+      return `初始验收：${record.accepted ? "通过" : "未通过"}，硬边界 ${
+        record.hard_boundary_pass ? "通过" : "未通过"
+      }，严格门槛 ${record.strict_pass ? "通过" : "未通过"}`;
     case "revision_round_started":
       return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}`;
     case "revision_round_candidates":
