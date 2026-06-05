@@ -209,7 +209,7 @@
 
 ### R. 反模式门禁
 
-- [ ] 一个问题失败后不能把所有补丁族混合评分；验证方式是候选生成报告只显示当前 blocking stage 主导 patch。
+- [x] 一个问题失败后不能把所有补丁族混合评分；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_dispatch_does_not_mix_all_patch_families_when_shape_blocks` 验证 `text_shape` 阻塞时混合的 ink/photo/background patch 会被拒绝，accepted patch 只能以当前 stage 主导。
 - [x] 视觉模型说 `ok` 不能覆盖本地阶段失败；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
 - [x] 字体没过时不能调 blur；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 - [x] 粗细没过时不能先清灰边；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise` 验证笔画体量失败时 `mask_threshold_delta`/background cleanup 补丁被拒绝。

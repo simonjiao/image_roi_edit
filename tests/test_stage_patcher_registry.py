@@ -309,6 +309,51 @@ class StagePatcherRegistryTest(unittest.TestCase):
         self.assertEqual(rejected["optimization_steps"], ["background_cleanup"])
         self.assertIn("forbidden optimization steps", rejected["decision_basis"])
 
+    def test_dispatch_does_not_mix_all_patch_families_when_shape_blocks(self) -> None:
+        dispatch = dispatch_revision_patches(
+            self.params,
+            {
+                "visual_findings": {
+                    "font_similarity": "wrong",
+                    "darkness": "too_light",
+                    "sharpness": "too_sharp",
+                    "background": "patch_visible",
+                }
+            },
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "strict_gate": {
+                    "issues": [{"type": "font_style_score_too_high"}],
+                },
+            },
+            extra_patches=[
+                {"opacity_delta": 0.06},
+                {"blur_delta": 0.08},
+                {"mask_threshold_delta": -4},
+                {"font_size_delta": 1},
+            ],
+        )
+
+        self.assertEqual(dispatch["patcher_stage"], "text_shape")
+        self.assertEqual(dispatch["selection_reason"], "blocking_stage")
+        self.assertTrue(dispatch["patches"])
+        for patch in dispatch["patches"]:
+            audit = stage_patch_filter_report([patch], "text_shape", limit=1)["decisions"][0]
+            self.assertEqual(audit["decision"], "accepted")
+            self.assertNotIn("ink_gray_balance", audit["primary_optimization_steps"])
+            self.assertNotIn("photo_texture", audit["primary_optimization_steps"])
+            self.assertNotIn("background_cleanup", audit["primary_optimization_steps"])
+
+        rejected_steps = {
+            tuple(decision.get("optimization_steps") or [])
+            for decision in dispatch["stage_filter_report"]["decisions"]
+            if decision.get("decision") == "rejected"
+        }
+        self.assertIn(("ink_gray_balance",), rejected_steps)
+        self.assertIn(("photo_texture",), rejected_steps)
+        self.assertIn(("background_cleanup",), rejected_steps)
+
 
 if __name__ == "__main__":
     unittest.main()
