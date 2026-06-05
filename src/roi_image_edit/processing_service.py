@@ -35,6 +35,7 @@ from roi_image_edit.iterative_pipeline import (
 )
 from roi_image_edit.prompt_assets import load_prompt, missing_prompt_names
 from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_auto_roi_overlay
+from roi_image_edit.failure_artifacts import failed_image_result
 
 from roi_image_edit.local_validation import (
     apply_local_acceptance_gate,
@@ -1752,6 +1753,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     for image_item in payload.get("images", []):
         image_id = str(image_item.get("id") or "")
         filename = str(image_item.get("filename") or "image.png")
+        instruction_details: dict[str, Any] | None = None
+        failure_image: Image.Image | None = None
         try:
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
@@ -1770,6 +1773,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                 },
             )
             image = image_from_data_url(str(image_item.get("dataUrl") or ""))
+            failure_image = image.copy()
             original_image = image.copy()
             orientation_summary: dict[str, Any] = {
                 "applied": False,
@@ -1922,12 +1926,14 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         except Exception as exc:
             emit("image_failed", {"image_id": image_id, "error": str(exc)})
             results.append(
-                {
-                    "id": image_id,
-                    "ok": False,
-                    "filename": filename,
-                    "error": str(exc),
-                }
+                failed_image_result(
+                    run_dir=run_dir,
+                    filename=filename,
+                    image_id=image_id,
+                    error=str(exc),
+                    image=failure_image,
+                    instruction_details=instruction_details,
+                )
             )
     response = {
         "ok": True,
