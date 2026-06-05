@@ -8,6 +8,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from roi_image_edit.background_cleanup import (
+    background_cleanup_stage_report,
+    post_blend_report,
+    pre_cleanup_report,
+)
 from roi_image_edit.iterative_pipeline import (
     CandidateParams,
     RenderPlan,
@@ -1418,7 +1423,7 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
             or "font_" in issue_type
         ):
             stages["text_shape"].append(issue)
-        elif issue_type.startswith("extra_source_slot_"):
+        elif issue_type.startswith("extra_source_slot_") or issue_type.startswith("source_slot_"):
             stages["background_cleanup"].append(issue)
         else:
             stages["ink_gray_balance"].append(issue)
@@ -2148,6 +2153,8 @@ def candidate_report(
     )
     cleanup_metrics = extra_source_slot_cleanup_metrics(original, candidate, plan, params)
     cleanup_issues = extra_source_slot_cleanup_issues(cleanup_metrics)
+    pre_cleanup = pre_cleanup_report(original, candidate, plan, params)
+    pre_cleanup_issues = pre_cleanup.get("issues") if isinstance(pre_cleanup.get("issues"), list) else []
     max_char_center_dx = 2.0
     max_char_center_dy = 2.5
     max_char_center_distance_delta = 2.0
@@ -2185,6 +2192,11 @@ def candidate_report(
     report["char_pose_metrics"] = char_pose_metrics(original, plan, params)
     report["photo_texture_metrics"] = photo_texture_metrics(original, candidate, plan, params)
     report["background_texture_metrics"] = background_texture_metrics(original, candidate, plan, params)
+    post_blend = post_blend_report(plan, report["background_texture_metrics"])
+    background_cleanup = background_cleanup_stage_report(pre_cleanup, post_blend)
+    report["pre_cleanup_report"] = pre_cleanup
+    report["post_blend_report"] = post_blend
+    report["background_cleanup_report"] = background_cleanup
     report["extra_source_slot_cleanup_metrics"] = cleanup_metrics
     report["char_alignment_metrics"] = alignment_metrics
     report["placement_strategy_report"] = placement_strategy_report(
@@ -2213,11 +2225,13 @@ def candidate_report(
         "max_font_style_score_ratio": 1.25,
         "pass": not strict_issues
         and not cleanup_issues
+        and not pre_cleanup_issues
         and not alignment_issues
         and not shape_issues
         and bool(font_style.get("pass", True)),
         "issues": strict_issues
         + cleanup_issues
+        + list(pre_cleanup_issues)
         + alignment_issues
         + list(shape_issues)
         + list(font_style.get("issues", [])),

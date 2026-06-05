@@ -142,12 +142,12 @@
 
 ### K. 背景处理拆分
 
-- [ ] 前置清除必须删除旧值槽位内旧字核心和灰边；验证方式是 source slot cleanup mask 和 residual metrics。
-- [ ] 字数减少时，前置清除必须覆盖多余旧槽位；验证方式是 extra slot cleanup crop。
-- [ ] 前置清除失败必须阻塞候选生成或最终验收；验证方式是旧残留 fixture 不能 deliver。
-- [ ] 后置融合只围绕最终文字形态做局部融合；验证方式是 final candidate 的 background patch 范围不越过 target ROI 和保护文本。
-- [ ] 后置融合必须分别报告补丁感、发白、发暗、平滑涂抹、纹理断裂和 ROI 边缘接缝；验证方式是 background metrics 字段。
-- [ ] 后置融合不能掩盖旧槽位没清干净；验证方式是 cleanup failure 优先级高于 background naturalness。
+- [x] 前置清除必须删除旧值槽位内旧字核心和灰边；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_source_slot_precleanup_removes_old_core_and_gray_edge` 验证 `source_slot_precleanup_report` 的 `source_slots_excluding_new_text_alpha` mask、旧核心/灰边像素和候选残留 ratio。
+- [x] 字数减少时，前置清除必须覆盖多余旧槽位；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_shorter_replacement_requires_extra_source_cleanup_coverage` 验证 3 字变 2 字时 `extra_source_cleanup_coverage_report` 记录 expected extra slot、cleanup crop 和 slot quality cleanup mask box。
+- [x] 前置清除失败必须阻塞候选生成或最终验收；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_source_slot_precleanup_residual_blocks_background_cleanup_stage` 验证旧字核心/灰边残留 issue 归入 `background_cleanup` blocking stage。
+- [x] 后置融合只围绕最终文字形态做局部融合；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_post_blend_scope_stays_inside_target_roi_and_avoids_protected_text` 验证 `post_blend_report.scope.scope_box == target_roi`、`outside_target_roi_pixels=0`、`protected_overlap_pixels=0`。
+- [x] 后置融合必须分别报告补丁感、发白、发暗、平滑涂抹、纹理断裂和 ROI 边缘接缝；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_post_blend_reports_patch_white_dark_smooth_texture_and_roi_edge_axes` 验证 `artifact_axes` 包含 `patch_visible`、`white_ghost`、`dark_shadow`、`smooth_smear`、`texture_break`、`roi_edge_seam` 并生成对应 issue。
+- [x] 后置融合不能掩盖旧槽位没清干净；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_background_cleanup.py::BackgroundCleanupTest.test_pre_cleanup_failure_takes_priority_over_post_blend_naturalness` 验证 `background_cleanup_stage_report.priority_order=["pre_cleanup","post_blend"]`，且 `pre_cleanup.pass=false` 时 `post_blend_can_deliver=false`、blocking step 为 `pre_cleanup`。
 
 ### L. 分层联合优化和搜索预算
 
