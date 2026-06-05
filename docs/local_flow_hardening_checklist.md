@@ -130,7 +130,7 @@
 - [x] 核心太黑时，必须生成降低 `opacity`、`core_ink_gain` 或 `core_darken_strength` 的候选；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core` 验证 `changed_char_core_too_black` 进入 `ink_gray_balance` patcher，并生成负向 `opacity_delta`、`core_ink_gain_delta` 或 `core_darken_strength_delta`。
 - [ ] 核心不足但灰边多时，不能继续加 blur 或扩大灰边，必须恢复核心密度并收紧外灰；验证方式是核心不足+灰边多 fixture。
 - [ ] 旧字和邻字指标冲突时，必须记录仲裁，并优先同一行邻字作为风格上限；验证方式是 conflict report 字段。
-- [ ] 黑灰阶段不能改变已经通过的字体、槽位和基线，除非重新回到 `text_shape`；验证方式是 candidate parent/rollback 记录。
+- [x] 黑灰阶段不能改变已经通过的字体、槽位和基线，除非重新回到 `text_shape`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_ink_gray_candidate_grid.py::InkGrayCandidateGridTest.test_ink_gray_grid_reports_budget_parent_and_allowed_delta_keys` 验证 `ink_gray_candidate_grid` 记录 `parent_shape_candidate_id`、`preserved_shape_keys`、`shape_key_changes_require_stage=text_shape`，且每个 ink 候选保持 font、字号、`text_dx/text_dy`、`char_offsets`、mask/background/photo 参数不变。
 
 ### J. 照片质感搜索
 

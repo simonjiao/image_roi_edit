@@ -73,6 +73,11 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertGreater(grid.report["budget"]["pruned_count"], 0)
         self.assertEqual(set(grid.report["allowed_delta_keys"]), INK_GRAY_GRID_ALLOWED_DELTA_KEYS)
         self.assertEqual(set(grid.report["blocked_delta_keys"]), INK_GRAY_GRID_BLOCKED_DELTA_KEYS)
+        self.assertEqual(
+            set(grid.report["preserved_shape_keys"]),
+            {"font_name", "font_path", "font_size", "text_dx", "text_dy", "char_offsets"},
+        )
+        self.assertEqual(grid.report["shape_key_changes_require_stage"], "text_shape")
         self.assertEqual(grid.report["violations"], [])
 
         for candidate, audit in zip(grid.candidates, grid.report["candidate_delta_audit"]):
