@@ -45,7 +45,8 @@
 - `too_light`：核心黑度不足；
 - `too_thin`：笔画身体不足或中灰笔画缺失。
 禁止把“核心过黑、核心黑度偏重、黑芯过量、too_dark”表述成“核心不够黑”。
-如果需要修改，必须输出 `blocking_stage`、`direction` 和 `parameter_suggestions`。参数建议只能使用本地参数名，例如 `opacity`、`blur`、`stroke_opacity`、`ink_gain`、`alpha_contrast`、`core_ink_gain`、`core_darken_strength`、`core_darken_threshold`、`core_darken_target_gray`、`font_size`、`text_dx`、`text_dy`、`photo_warp`、`edge_breakup`、`photo_noise`、`jpeg_quality`、`mask_threshold`、`mask_dilate_iterations`、`inpaint_radius`。
+如果需要修改，必须输出 `blocking_stage`、`stage_assessment`、`direction` 和 `parameter_suggestions`。参数建议只能使用本地参数名，例如 `opacity`、`blur`、`stroke_opacity`、`ink_gain`、`alpha_contrast`、`core_ink_gain`、`core_darken_strength`、`core_darken_threshold`、`core_darken_target_gray`、`font_size`、`text_dx`、`text_dy`、`photo_warp`、`edge_breakup`、`photo_noise`、`jpeg_quality`、`mask_threshold`、`mask_dilate_iterations`、`inpaint_radius`。
+`stage_assessment` 必须先判断本地 `blocking_stage` 是否真实存在；如果你认为前置阶段已经通过，必须在 `basis` 中说明依据；`suggestion_target_stage` 必须等于当前 `blocking_stage`，没有阻塞阶段时必须为 null。
 
 输出 JSON：
 
@@ -53,6 +54,12 @@
   "pass": true,
   "best_candidate": "候选编号或参数标签",
   "blocking_stage": null,
+  "stage_assessment": {
+    "blocking_stage_exists": false,
+    "current_blocking_stage": null,
+    "suggestion_target_stage": null,
+    "basis": "本地 stage_context 没有 blocking_stage，且硬校验和阶段门禁均通过。"
+  },
   "direction": "deliver / fix_text_shape / reduce_true_black_core / recover_core_black / widen_mid_gray_body / trim_outer_gray_halo / add_photo_texture / clean_background_ghost",
   "reason": "选择该候选的主要原因",
   "rejected_candidates": {

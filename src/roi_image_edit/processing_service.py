@@ -54,6 +54,7 @@ from roi_image_edit.local_validation import (
 
 from roi_image_edit.model_suggestions import (
     filter_model_patch_records,
+    model_stage_response_contract,
     model_suggestion_filter_report,
 )
 
@@ -397,9 +398,19 @@ def run_region_vision_checks(
                     },
                 )
             model_records: list[dict[str, Any]] = []
+            model_stage_response_contracts: list[dict[str, Any]] = []
             if round_idx == 1:
                 model_records.extend(
                     model_patch_records(current_params, candidate_rank_json, source="candidate_rank")
+                )
+                model_stage_response_contracts.append(
+                    {
+                        "source": "candidate_rank",
+                        **model_stage_response_contract(
+                            candidate_rank_json,
+                            str(basis_blocking_stage) if basis_blocking_stage else None,
+                        ),
+                    }
                 )
             model_records.extend(
                 model_patch_records(
@@ -407,6 +418,15 @@ def run_region_vision_checks(
                     current_acceptance,
                     source=f"final_acceptance_basis_round_{round_idx - 1}",
                 )
+            )
+            model_stage_response_contracts.append(
+                {
+                    "source": f"final_acceptance_basis_round_{round_idx - 1}",
+                    **model_stage_response_contract(
+                        current_acceptance,
+                        str(basis_blocking_stage) if basis_blocking_stage else None,
+                    ),
+                }
             )
             model_filter = filter_model_patch_records(
                 model_records,
@@ -478,6 +498,7 @@ def run_region_vision_checks(
                     if key not in {"patches", "stage_filter_report"}
                 },
                 "stage_filter_report": local_stage_filter_report,
+                "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
                 "model_suggestion_filter": model_suggestion_filter_report(model_filter),
                 "model_suggestion_attempts": model_filter.get("attempt_records") or [],

@@ -5,6 +5,7 @@ import unittest
 from roi_image_edit.iterative_pipeline import CandidateParams
 from roi_image_edit.model_suggestions import (
     filter_model_patch_records,
+    model_stage_response_contract,
     model_suggestion_filter_report,
 )
 from roi_image_edit.prompt_assets import load_prompt
@@ -34,6 +35,10 @@ class ModelSuggestionsTest(unittest.TestCase):
                 self.assertIn("stage_context", prompt)
                 self.assertIn("blocking_stage", prompt)
                 self.assertIn("blocked_patch_keys", prompt)
+                self.assertIn("stage_assessment", prompt)
+                self.assertIn("blocking_stage_exists", prompt)
+                self.assertIn("suggestion_target_stage", prompt)
+                self.assertIn("basis", prompt)
 
     def test_forbidden_model_suggestion_is_rejected_and_audited(self) -> None:
         report = {
@@ -108,6 +113,40 @@ class ModelSuggestionsTest(unittest.TestCase):
             [attempt["rejection_reason"] for attempt in report["attempt_records"]],
             [record["conversion_reason"] for record in records],
         )
+
+    def test_model_stage_response_contract_records_current_stage_and_basis(self) -> None:
+        response = {
+            "blocking_stage": "text_shape",
+            "stage_assessment": {
+                "blocking_stage_exists": True,
+                "current_blocking_stage": "text_shape",
+                "suggestion_target_stage": "text_shape",
+                "basis": "stage_context reports text_shape as the blocking stage.",
+            },
+        }
+        contract = model_stage_response_contract(response, "text_shape")
+        self.assertTrue(contract["stage_assessment_present"])
+        self.assertTrue(contract["blocking_stage_exists_matches_local"])
+        self.assertTrue(contract["current_blocking_stage_matches_local"])
+        self.assertTrue(contract["suggestion_targets_current_stage"])
+        self.assertTrue(contract["basis_present"])
+        self.assertTrue(contract["schema_complete"])
+
+    def test_model_stage_response_contract_flags_cross_stage_suggestion(self) -> None:
+        response = {
+            "blocking_stage": "photo_texture",
+            "stage_assessment": {
+                "blocking_stage_exists": True,
+                "current_blocking_stage": "text_shape",
+                "suggestion_target_stage": "photo_texture",
+                "basis": "model thinks the text looks sharp.",
+            },
+        }
+        contract = model_stage_response_contract(response, "text_shape")
+        self.assertTrue(contract["blocking_stage_exists_matches_local"])
+        self.assertTrue(contract["current_blocking_stage_matches_local"])
+        self.assertFalse(contract["suggestion_targets_current_stage"])
+        self.assertEqual(contract["suggestion_target_stage"], "photo_texture")
 
 
 if __name__ == "__main__":

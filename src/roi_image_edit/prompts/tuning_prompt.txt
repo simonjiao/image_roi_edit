@@ -26,6 +26,7 @@
 5. 如果 `stage_context.blocking_stage` 不为空，只能围绕该阶段给主建议；`suggested_patch` 不能使用 `stage_context.blocked_patch_keys` 中的参数。
 6. 如果 `text_shape` 未通过，不能把加模糊、加噪声、压缩或背景修补作为主要修复方向。
 7. 如果 `ink_gray_balance` 未通过，必须区分 `too_dark`、`too_bold`、`too_light`、`too_thin`，不要混用。
+8. 必须输出 `stage_assessment`，先声明本地 `blocking_stage` 是否存在；如果认为前置阶段已通过，必须在 `basis` 中说明依据；`suggestion_target_stage` 必须等于当前 `blocking_stage`，没有阻塞阶段时必须为 null。
 
 请重点判断：
 1. 每个 target_text 字符是否相对对应 source_text 旧槽位偏左、偏右、偏上、偏下；
@@ -51,6 +52,12 @@
 {
   "pass": true,
   "blocking_stage": null,
+  "stage_assessment": {
+    "blocking_stage_exists": false,
+    "current_blocking_stage": null,
+    "suggestion_target_stage": null,
+    "basis": "本地 stage_context 没有 blocking_stage，且硬校验和阶段门禁均通过。"
+  },
   "direction": "deliver / fix_text_shape / reduce_true_black_core / recover_core_black / widen_mid_gray_body / trim_outer_gray_halo / add_photo_texture / clean_background_ghost",
   "reason": "当前结果是否可接受，以及主要问题",
   "visual_findings": {

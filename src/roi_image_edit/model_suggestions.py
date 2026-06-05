@@ -12,6 +12,58 @@ def _local_blocking_stage(stage_id: str | None) -> str | None:
     return value or None
 
 
+def model_stage_response_contract(
+    model_json: dict[str, Any] | None,
+    local_stage_id: str | None,
+) -> dict[str, Any]:
+    local_stage = _local_blocking_stage(local_stage_id)
+    if not isinstance(model_json, dict):
+        model_json = {}
+    assessment = model_json.get("stage_assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+    stage_exists_value = assessment.get("blocking_stage_exists")
+    stage_exists_declared = stage_exists_value if isinstance(stage_exists_value, bool) else None
+    current_stage_declared = assessment.get("current_blocking_stage")
+    if current_stage_declared is not None:
+        current_stage_declared = str(current_stage_declared or "").strip() or None
+    suggestion_target_stage = assessment.get("suggestion_target_stage")
+    if suggestion_target_stage is None:
+        suggestion_target_stage = model_json.get("blocking_stage")
+    suggestion_target_stage = str(suggestion_target_stage or "").strip() or None
+    model_blocking_stage = str(model_json.get("blocking_stage") or "").strip() or None
+    basis = assessment.get("basis")
+    if not isinstance(basis, str) or not basis.strip():
+        basis = model_json.get("reason")
+    basis_text = str(basis or "").strip()
+    local_stage_exists = local_stage is not None
+    return {
+        "local_blocking_stage": local_stage,
+        "local_blocking_stage_exists": local_stage_exists,
+        "model_blocking_stage": model_blocking_stage,
+        "stage_assessment_present": bool(model_json.get("stage_assessment")),
+        "blocking_stage_exists_declared": stage_exists_declared,
+        "blocking_stage_exists_matches_local": (
+            stage_exists_declared == local_stage_exists if stage_exists_declared is not None else False
+        ),
+        "current_blocking_stage_declared": current_stage_declared,
+        "current_blocking_stage_matches_local": current_stage_declared == local_stage,
+        "suggestion_target_stage": suggestion_target_stage,
+        "suggestion_targets_current_stage": (
+            suggestion_target_stage == local_stage
+            if local_stage_exists
+            else suggestion_target_stage is None
+        ),
+        "basis": basis_text,
+        "basis_present": bool(basis_text),
+        "schema_complete": (
+            stage_exists_declared is not None
+            and current_stage_declared == local_stage
+            and bool(basis_text)
+        ),
+    }
+
+
 def _suggestion_attempt_record(record: dict[str, Any]) -> dict[str, Any]:
     policy = record.get("optimization_policy")
     if not isinstance(policy, dict):

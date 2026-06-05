@@ -71,6 +71,9 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 `revision_rounds.model_conflicts`。
 不能转成本地 patch 的视觉建议不能静默丢弃，必须在 attempt record 中记录
 `rejection_reason`。
+视觉 response 必须包含 `stage_assessment`，声明本地 `blocking_stage` 是否存在、
+建议目标阶段和判断依据；本地会把这份契约写入
+`revision_rounds.model_stage_response_contracts`，用于识别跨阶段建议。
 
 如果 `text_shape` 未通过，后续调参只能先处理字体、字号、描边/笔画身体、字槽偏移和姿态继承；不能先通过降黑、加模糊、加噪声或背景修补来掩盖形态问题。
 
