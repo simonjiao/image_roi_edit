@@ -14,6 +14,7 @@
 
 文字形态门禁、放置策略、现有差距和分层联合优化设计见
 [`docs/text_shape_joint_optimization_design.md`](text_shape_joint_optimization_design.md)。当本 checklist 与该设计文档描述同一能力时，checklist 记录实施状态，设计文档记录目标结构和实施顺序。
+本文件同时作为“完善本地流程”的唯一实施 checklist，不再另建独立覆盖清单。
 
 ## Stage Refactor Execution Checklist
 
@@ -99,6 +100,33 @@ PY
 和 `output/web/<run>/regions/<region>/stage_evidence/summary.json`
 解释“卡在哪个阶段、为什么没有继续、下一轮应该调什么”。视觉排序输入必须在
 `visual_eval_candidate_rank.json.local_stage_context` 中保留 `stage_context_by_candidate`。
+
+## 设计目标转换情况
+
+本节只记录设计目标是否已经被转换成可验证 checklist。`[x]` 表示已经有明确实施项和验证方式；
+`[ ]` 表示目标仍未完整 checklist 化，不能据此宣称本地流程完善完成。
+
+### 已转换
+
+- [x] 五个本地阶段的顺序和职责已写入本 checklist：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+- [x] stage/profile 结构、stage patcher 调度、prompt stage context、stage evidence 已形成实施项。
+- [x] 视觉模型不能覆盖本地硬门禁和 stage filter 已形成实施项。
+- [x] 失败也必须保留 rejected candidate、progress、result、stage evidence 已形成实施项。
+
+### 待补齐
+
+- [ ] 将 `staged_roi_pipeline_design.md` 里的旧 7 类阶段术语映射到当前 5 个 stage 和阶段内 Optimization Step，避免 `slot_alignment`、`font_structure`、`pose_geometry`、`stroke_body`、`tone_gray`、`edge_quality` 等旧名继续造成状态歧义。
+- [ ] 为每个 stage patcher 增加独立测试项：声明 allowed/blocked keys、输出不能包含未声明参数、跨 stage patch 必须被拒绝。
+- [ ] 将回归 Case A-D 转成可执行 checklist，必须包含 fixture 路径、运行命令、预期 `blocking_stage`、预期报告字段和通过条件。
+- [ ] 将方向、字段、旧值 ROI 联合选择转成统一 checklist：记录 `field_confidence`、`old_value_confidence`、`orientation_reason`、`search_roi`、`edit_roi`、`protected_text` 和失败原因。
+- [ ] 将 search ROI 与 edit ROI 分离扩展成所有字段通用路径，不只覆盖近期失败场景。
+- [ ] 将旧槽位完整性门禁拆成逐项 checklist：字符数匹配、核心笔画覆盖、灰边覆盖、底部覆盖、倾斜外溢覆盖、未混入 label、未混入后续文本、最后一个旧字未误判成 protected text、字数变化清理和右边界限制。
+- [ ] 将放置策略场景拆成逐项 checklist：同字数 CJK 小变化、同字数 CJK 大变化、字数减少、字数增加、数字/日期/编号、手动 ROI fallback；每项都必须记录策略、理由和验收指标。
+- [ ] 将单字形态变化检测补全为 checklist：除 bbox、质心、墨迹面积外，还要包含 row/col projection distance、margin distribution delta 和动态阈值来源。
+- [ ] 将分层联合优化预算转成 checklist：shape 本地 top 20-50、ink-gray top 8-20、photo texture top 3-8、vision top 3-8；视觉模型不得参与大规模搜索。
+- [ ] 将背景处理拆成两个独立 checklist：前置旧槽位清除和后置背景融合；前置清除失败必须阻塞候选生成或最终验收，不能拖到后置融合掩盖。
+- [ ] 为每个 profile 增加独立回归 checklist：`photo_scan`、`clean_digital`、`low_res_thumbnail`、`manual_roi_quick`，并验证同图不同 profile 的 stage 差异。
+- [ ] 对设计文档中的“现有流程差距”表做状态同步：已经实现的目标必须更新为已覆盖，未实现的目标必须在本 checklist 中保留未完成项。
 
 ## Current Implementation Status
 
@@ -446,5 +474,8 @@ PY
 - [x] 视觉模型建议被转成本地候选。
 - [x] 模型和本地指标冲突被记录。
 - [x] 失败时保留 rejected candidate、对比图、报告和下一轮计划。
+- [ ] “设计目标转换情况”中的待补齐项全部关闭。
+- [ ] 回归 Case A-D 已转成可执行用例并通过。
+- [ ] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过。
 
 任何一项未满足，都不能宣称本地流程完善完成。
