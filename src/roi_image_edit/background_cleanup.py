@@ -23,10 +23,38 @@ def _ratio(count: int, total: int) -> float:
     return round(float(count / total), 5)
 
 
+def _local_background_gray(gray: np.ndarray, box: tuple[int, int, int, int]) -> float:
+    height, width = gray.shape[:2]
+    x1, y1, x2, y2 = box
+    px1 = max(0, x1 - 8)
+    py1 = max(0, y1 - 5)
+    px2 = min(width, x2 + 8)
+    py2 = min(height, y2 + 5)
+    if px2 <= px1 or py2 <= py1:
+        return float(np.percentile(gray[y1:y2, x1:x2], 75))
+
+    yy, xx = np.mgrid[py1:py2, px1:px2]
+    slot_mask = (xx >= x1) & (xx < x2) & (yy >= y1) & (yy < y2)
+    ring_values = gray[py1:py2, px1:px2][~slot_mask]
+    if ring_values.size == 0:
+        return float(np.percentile(gray[y1:y2, x1:x2], 75))
+
+    background_values = ring_values[ring_values >= 125]
+    if background_values.size:
+        return float(np.percentile(background_values, 50))
+    return float(np.percentile(ring_values, 75))
+
+
+def _gray_residual_threshold(local_background_gray: float) -> int:
+    return int(round(max(118.0, min(155.0, local_background_gray - 12.0))))
+
+
 def _dark_residual_counts(
     old_gray: np.ndarray,
     new_gray: np.ndarray,
     mask: np.ndarray,
+    *,
+    candidate_gray_threshold: int = 165,
 ) -> dict[str, Any]:
     total = int(np.count_nonzero(mask))
     if total <= 0:
@@ -43,7 +71,7 @@ def _dark_residual_counts(
     old_core = int(np.count_nonzero(old_values < 120))
     old_gray_edge = int(np.count_nonzero((old_values >= 120) & (old_values < 165)))
     candidate_core = int(np.count_nonzero(new_values < 120))
-    candidate_gray = int(np.count_nonzero(new_values < 165))
+    candidate_gray = int(np.count_nonzero(new_values < candidate_gray_threshold))
     return {
         "old_core_pixels": old_core,
         "old_gray_edge_pixels": old_gray_edge,
@@ -77,7 +105,7 @@ def source_slot_precleanup_report(
             alpha_status = {"available": True, "reason": "replacement_layer_rendered"}
         except OSError as exc:
             alpha_status = {"available": False, "reason": "replacement_layer_font_unavailable", "error": str(exc)}
-    ignore_new_text = alpha > 18
+    ignore_new_text = alpha > 0
     ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1)[: len(source_chars)])
     per_slot: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
@@ -88,10 +116,13 @@ def source_slot_precleanup_report(
         old_crop = old_gray[y1:y2, x1:x2]
         cleanup_mask = old_crop < 165
         cleanup_mask &= ~ignore_new_text[y1:y2, x1:x2]
+        local_background = _local_background_gray(new_gray, (x1, y1, x2, y2))
+        gray_threshold = _gray_residual_threshold(local_background)
         counts = _dark_residual_counts(
             old_gray[y1:y2, x1:x2],
             new_gray[y1:y2, x1:x2],
             cleanup_mask,
+            candidate_gray_threshold=gray_threshold,
         )
         item = {
             "index": index,
@@ -99,6 +130,8 @@ def source_slot_precleanup_report(
             "box": [x1, y1, x2, y2],
             "cleanup_pixels": int(np.count_nonzero(cleanup_mask)),
             "excluded_by_new_text_alpha_pixels": int(np.count_nonzero((old_crop < 165) & ignore_new_text[y1:y2, x1:x2])),
+            "local_background_gray": round(local_background, 3),
+            "candidate_gray_residual_threshold": gray_threshold,
             **counts,
         }
         per_slot.append(item)
@@ -132,6 +165,8 @@ def source_slot_precleanup_report(
         "thresholds": {
             "old_core_threshold": 120,
             "old_gray_edge_threshold": 165,
+            "candidate_core_threshold": 120,
+            "candidate_gray_threshold_rule": "max(118, min(155, local_background_gray - 12))",
             "max_core_residual_ratio": max_core_residual_ratio,
             "max_gray_residual_ratio": max_gray_residual_ratio,
         },

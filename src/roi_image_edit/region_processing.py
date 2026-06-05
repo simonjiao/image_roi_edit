@@ -119,6 +119,31 @@ ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
+def report_stage_status_pass(report: dict[str, Any] | None, stage_id: str | None) -> bool:
+    if not isinstance(report, dict) or not stage_id:
+        return False
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    stage_status = stage_gate.get("stage_status")
+    if not isinstance(stage_status, dict):
+        return bool(stage_gate.get("pass") and not stage_gate.get("blocking_stage"))
+    stage_report = stage_status.get(stage_id)
+    return isinstance(stage_report, dict) and bool(stage_report.get("pass"))
+
+
+def progresses_past_blocking_stage(
+    report: dict[str, Any] | None,
+    current_blocking_stage: str | None,
+    next_blocking_stage: str | None,
+) -> bool:
+    if not current_blocking_stage or current_blocking_stage == "text_shape":
+        return False
+    if not report_stage_status_pass(report, current_blocking_stage):
+        return False
+    return next_blocking_stage != current_blocking_stage
+
+
 def load_processing_prompts() -> tuple[str, str, str]:
     required = ("master_prompt.txt", "candidate_rank_prompt.txt", "final_acceptance_prompt.txt")
     missing = missing_prompt_names(required)
@@ -734,6 +759,11 @@ def run_region_vision_checks(
                     and patched_blocking_stage != "text_shape"
                 )
                 current_blocking_stage = basis_blocking_stage
+                progresses_past_current_stage = progresses_past_blocking_stage(
+                    patched_report,
+                    str(current_blocking_stage) if current_blocking_stage else None,
+                    str(patched_blocking_stage) if patched_blocking_stage else None,
+                )
                 current_stage_improvement = 0.0
                 current_stage_severity_before = 0.0
                 current_stage_severity_after = 0.0
@@ -771,6 +801,7 @@ def run_region_vision_checks(
                     "stage_pass": report_stage_pass(patched_report),
                     "blocking_stage": patched_blocking_stage,
                     "progresses_past_text_shape": progresses_past_text_shape,
+                    "progresses_past_current_stage": progresses_past_current_stage,
                     "improves_current_stage": improves_current_stage,
                     "current_blocking_stage": current_blocking_stage,
                     "current_stage_severity_before": round(float(current_stage_severity_before), 3),
@@ -859,7 +890,12 @@ def run_region_vision_checks(
                 revision_attempts.append(attempt_record)
                 if (
                     prior_regression.get("pass")
-                    and (patched_strict or progresses_past_text_shape or improves_current_stage)
+                    and (
+                        patched_strict
+                        or progresses_past_text_shape
+                        or progresses_past_current_stage
+                        or improves_current_stage
+                    )
                 ):
                     round_candidates.append(
                         (

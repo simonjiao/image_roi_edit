@@ -704,6 +704,85 @@ def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     }
 
 
+def _numeric_issue_gap(issue: dict[str, Any]) -> float | None:
+    try:
+        actual = float(issue.get("actual"))
+        limit = float(issue.get("limit"))
+    except (TypeError, ValueError):
+        return None
+    return actual - limit
+
+
+def ink_gray_near_threshold_micro_tuning(report: dict[str, Any] | None) -> dict[str, Any]:
+    issues = stage_issues(report, "ink_gray_balance")
+    if not issues:
+        return {"enabled": False, "reason": "no_ink_gray_issues"}
+    allowed_issue_types = {"core_mean_gray_too_light", "core_lighten_too_high"}
+    issue_types = {str(issue.get("type") or "") for issue in issues}
+    if issue_types - allowed_issue_types:
+        return {
+            "enabled": False,
+            "reason": "other_ink_gray_issues_present",
+            "issue_types": sorted(issue_types),
+        }
+
+    gaps: list[float] = []
+    for issue in issues:
+        gap = _numeric_issue_gap(issue)
+        if gap is None or gap <= 0:
+            return {
+                "enabled": False,
+                "reason": "missing_or_nonpositive_issue_gap",
+                "issue_types": sorted(issue_types),
+            }
+        gaps.append(gap)
+
+    max_gap = max(gaps)
+    if max_gap > 0.75:
+        return {
+            "enabled": False,
+            "reason": "issue_gap_not_near_threshold",
+            "max_gap": round(max_gap, 3),
+            "limit": 0.75,
+            "issue_types": sorted(issue_types),
+        }
+
+    return {
+        "enabled": True,
+        "reason": "near_threshold_core_light_micro_tuning",
+        "max_gap": round(max_gap, 3),
+        "limit": 0.75,
+        "issue_types": sorted(issue_types),
+        "candidate_family": "core_only_micro_recovery",
+    }
+
+
+def ink_gray_micro_tuning_candidates(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+) -> list[CandidateParams]:
+    micro = ink_gray_near_threshold_micro_tuning(report)
+    if not micro.get("enabled"):
+        return []
+    core_gain = params.core_ink_gain
+    darken = params.core_darken_strength
+    target = params.core_darken_target_gray
+    threshold = params.core_darken_threshold
+    variants = [
+        mutate_params(params, core_darken_strength=darken + 0.003),
+        mutate_params(params, core_darken_strength=darken + 0.006),
+        mutate_params(params, core_ink_gain=core_gain + 0.003),
+        mutate_params(params, core_ink_gain=core_gain + 0.006),
+        mutate_params(params, core_ink_gain=core_gain + 0.004, core_darken_strength=darken + 0.004),
+        mutate_params(params, core_darken_threshold=threshold + 1),
+        mutate_params(params, core_darken_target_gray=target - 1),
+        mutate_params(params, core_darken_strength=darken + 0.004, core_darken_target_gray=target - 1),
+        mutate_params(params, alpha_contrast=params.alpha_contrast + 0.003),
+        mutate_params(params, opacity=params.opacity + 0.003),
+    ]
+    return variants
+
+
 def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
     flags = ink_gray_issue_flags(report)
     combined_core_light_outer_halo = flags["core_too_light"] and flags["outer_gray_halo"]
@@ -768,6 +847,8 @@ def ink_gray_candidate_grid(
             },
         )
 
+    micro_tuning = ink_gray_near_threshold_micro_tuning(report)
+    micro_variants = ink_gray_micro_tuning_candidates(params, report)
     axes = ink_gray_axes(params, report)
     opacity_values = axes["opacity"]
     stroke_values = axes["stroke_opacity"]
@@ -780,9 +861,9 @@ def ink_gray_candidate_grid(
         * len(ink_values)
         * len(alpha_values)
         * len(core_values)
-    )
+    ) + len(micro_variants)
 
-    variants: list[CandidateParams] = []
+    variants: list[CandidateParams] = list(micro_variants)
     for opacity in opacity_values:
         for stroke_opacity in stroke_values:
             for ink_gain in ink_values:
@@ -885,6 +966,8 @@ def ink_gray_candidate_grid(
                 "ink_gain_count": len(ink_values),
                 "alpha_contrast_count": len(alpha_values),
                 "core_tone_count": len(core_values),
+                "near_threshold_micro_tuning": micro_tuning,
+                "near_threshold_micro_candidate_count": len(micro_variants),
                 "ranking_method": "local_issue_ordered_axis_priority",
                 "combined_core_light_outer_gray_halo_strategy": (
                     "recover_core_density_and_trim_outer_gray"

@@ -162,15 +162,17 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 ## 调参规则
 
 1. 每轮只做小步参数变化，避免无法判断差异来源。
-2. 当问题是核心过黑：
+2. 如果候选已经通过当前阻塞阶段，但被后续阶段阻塞，必须把它作为可选推进候选进入下一轮；不能因为最终仍未验收就停在 `no_selectable_revision_candidate`。
+3. 当问题是核心过黑：
    - 优先降低 `opacity`、`ink_gain`、`core_ink_gain`、`core_darken_strength`；
    - 可小幅增加 `blur` 或照片质感；
    - 不应增加 `stroke_opacity` 或大幅加墨。
    - 若同阶段候选的黑芯 severity 明显下降，即使尚未一次性通过 `ink_gray_balance`，也应允许进入下一轮继续小步迭代。
-3. 当问题是核心不够黑：
+4. 当问题是核心不够黑：
    - 优先增加 `core_ink_gain` 或 `core_darken_strength`；
    - 不应直接使用粗体或黑体替代。
-4. 当问题是笔画不够粗但核心并不缺黑：
+   - 如果只剩 `core_mean_gray_too_light` / `core_lighten_too_high` 且超限很小，应进入核心微调：只做 `0.003~0.006` 级别的 `core_ink_gain`、`core_darken_strength`、`alpha_contrast` 或极小 `opacity` 调整，不改变字体、字号、位置、模糊、mask 或背景参数。
+5. 当问题是笔画不够粗但核心并不缺黑：
    - 先比较旧槽位和新字的 `<55`、`70-90`、`90-120`、`<165` 像素分布；
    - 如果 `<55` 核心已经接近或偏多，但 `70-90 + 90-120` 中间灰阶不足，应增加 `stroke_opacity`、`ink_gain`、轻微 `blur` 和照片质感；
    - 如果目标字比旧字更复杂，不能机械使用同字数 `dark_pixel_ratio <= 1.12`，应按本地渲染复杂度小幅放宽；
@@ -192,6 +194,8 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
    - 垂直位置修正必须参考 `char_alignment_metrics.center_dy` 回到旧槽位中心线；不能把“看着偏上”机械处理成固定下移多像素，避免从偏上直接变成偏低。
 7. 当问题是旧字残留：
    - 优先修正旧字掩码和槽位覆盖；
+   - 候选灰边残留必须参考候选局部背景动态阈值，不能把拍照灰底或新字低 alpha 抗锯齿边缘当作旧残留；
+   - 旧字核心残留仍然硬失败，不能因为动态灰边阈值而放过；
    - 不应通过加深新字遮盖残留。
 
 ## 产物和进度规则

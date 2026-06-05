@@ -292,6 +292,30 @@ class StagePatcherRegistryTest(unittest.TestCase):
         legacy = revision_patches_for_round(self.params, acceptance, report)
         self.assertEqual(legacy, dispatch["patches"])
 
+    def test_background_cleanup_visual_patches_are_callable(self) -> None:
+        acceptance = {
+            "visual_findings": {"background": "patch_visible"},
+            "visual_findings_text": "背景有补丁感和涂抹残影。",
+        }
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "local_background_texture_issues": [{"type": "background_patch_visible"}],
+        }
+
+        dispatch = dispatch_revision_patches(self.params, acceptance, report)
+
+        self.assertEqual(dispatch["patcher_stage"], "background_cleanup")
+        self.assertTrue(dispatch["patches"])
+        self.assertTrue(
+            any(
+                "photo_noise_delta" in patch
+                or "edge_breakup_delta" in patch
+                or "inpaint_radius_delta" in patch
+                for patch in dispatch["patches"]
+            )
+        )
+
     def test_no_runtime_switch_points_to_old_mixed_revision_path(self) -> None:
         src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
         violations: list[str] = []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from roi_image_edit.background_cleanup import (
@@ -10,7 +11,12 @@ from roi_image_edit.background_cleanup import (
     post_blend_report,
     source_slot_precleanup_report,
 )
-from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun
+from roi_image_edit.iterative_pipeline import (
+    CandidateParams,
+    RenderPlan,
+    TextRun,
+    build_source_slot_cleanup_mask,
+)
 from roi_image_edit.stages import stage_gate_for_report
 
 
@@ -63,6 +69,18 @@ class BackgroundCleanupTest(unittest.TestCase):
         self.assertEqual(item["candidate_core_residual_pixels"], 0)
         self.assertEqual(item["candidate_gray_residual_pixels"], 0)
 
+    def test_source_slot_cleanup_mask_includes_gray_edge_independent_of_candidate_threshold(self) -> None:
+        original = original_with_old_text()
+        mask = build_source_slot_cleanup_mask(
+            np.array(original),
+            plan(),
+            threshold=165,
+            dilate_iterations=1,
+        )
+
+        self.assertGreater(mask[7:18, 11:21].sum(), 0)
+        self.assertGreater(mask[7, 11], 0)
+
     def test_source_slot_precleanup_residual_blocks_background_cleanup_stage(self) -> None:
         original = original_with_old_text()
         report = source_slot_precleanup_report(original, original.copy(), plan())
@@ -79,6 +97,38 @@ class BackgroundCleanupTest(unittest.TestCase):
             "photo_scan",
         )
         self.assertEqual(gate["blocking_stage"], "background_cleanup")
+
+    def test_source_slot_precleanup_does_not_count_clean_photo_gray_as_old_residue(self) -> None:
+        original = Image.new("RGB", (64, 28), (160, 160, 160))
+        draw = ImageDraw.Draw(original)
+        draw.rectangle((12, 8, 19, 16), fill=(62, 62, 62))
+        draw.rectangle((11, 7, 20, 17), outline=(140, 140, 140))
+        cleaned = Image.new("RGB", original.size, (158, 158, 158))
+
+        report = source_slot_precleanup_report(original, cleaned, plan())
+
+        self.assertTrue(report["pass"])
+        item = report["per_slot"][0]
+        self.assertGreater(item["cleanup_pixels"], 0)
+        self.assertLess(item["candidate_gray_residual_threshold"], 165)
+        self.assertEqual(item["candidate_core_residual_pixels"], 0)
+        self.assertEqual(item["candidate_gray_residual_pixels"], 0)
+
+    def test_source_slot_precleanup_still_blocks_true_gray_edge_residue_on_photo_gray(self) -> None:
+        original = Image.new("RGB", (64, 28), (160, 160, 160))
+        draw = ImageDraw.Draw(original)
+        draw.rectangle((12, 8, 19, 16), fill=(62, 62, 62))
+        draw.rectangle((11, 7, 20, 17), outline=(140, 140, 140))
+        residue = Image.new("RGB", original.size, (158, 158, 158))
+        draw = ImageDraw.Draw(residue)
+        draw.rectangle((11, 7, 20, 17), outline=(132, 132, 132))
+
+        report = source_slot_precleanup_report(original, residue, plan())
+
+        issue_types = {issue["type"] for issue in report["issues"]}
+        self.assertFalse(report["pass"])
+        self.assertIn("source_slot_gray_edge_residue", issue_types)
+        self.assertGreater(report["per_slot"][0]["candidate_gray_residual_pixels"], 0)
 
     def test_source_slot_precleanup_continues_when_replacement_font_is_unavailable(self) -> None:
         original = original_with_old_text()

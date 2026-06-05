@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from roi_image_edit.acceptance_feedback import acceptance_reports_background_patch
 from roi_image_edit.background_cleanup import (
     background_cleanup_stage_report,
     post_blend_report,

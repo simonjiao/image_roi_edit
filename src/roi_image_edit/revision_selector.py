@@ -18,7 +18,7 @@ from roi_image_edit.local_validation import (
     report_needs_thinner_strokes,
     report_needs_wider_gray_strokes,
 )
-from roi_image_edit.stage_patchers import (
+from roi_image_edit.acceptance_feedback import (
     acceptance_reports_background_patch,
     acceptance_reports_too_dark_or_bold,
 )

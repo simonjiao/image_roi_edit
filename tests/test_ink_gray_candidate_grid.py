@@ -11,6 +11,7 @@ from roi_image_edit.revision_solver import (
     INK_GRAY_GRID_BLOCKED_DELTA_KEYS,
     INK_GRAY_PRUNE_REASON_CATEGORIES,
     ink_gray_candidate_grid,
+    ink_gray_near_threshold_micro_tuning,
     layered_candidate_search_report,
 )
 
@@ -67,6 +68,22 @@ def core_light_with_outer_halo_report() -> dict:
                 "type": "changed_char_neighbor_outer_gray_halo_too_high",
                 "outer_share_gap": 0.12,
             },
+        ],
+    }
+
+
+def near_threshold_core_light_report() -> dict:
+    return {
+        "pass": True,
+        "pipeline_profile": "photo_scan",
+        "local_ink_balance_issues": [
+            {
+                "type": "core_mean_gray_too_light",
+                "actual": 4.936,
+                "limit": 4.832,
+                "old_mean_gray": 81.2,
+                "new_mean_gray": 86.1,
+            }
         ],
     }
 
@@ -182,6 +199,61 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             self.assertEqual(candidate.edge_breakup, base.edge_breakup)
         for audit in grid.report["candidate_delta_audit"]:
             self.assertTrue(set(audit["reason_categories"]) <= set(INK_GRAY_PRUNE_REASON_CATEGORIES))
+
+    def test_near_threshold_core_light_enables_micro_tuning(self) -> None:
+        micro = ink_gray_near_threshold_micro_tuning(near_threshold_core_light_report())
+
+        self.assertTrue(micro["enabled"])
+        self.assertEqual(micro["candidate_family"], "core_only_micro_recovery")
+        self.assertLess(micro["max_gap"], 0.75)
+
+    def test_near_threshold_micro_grid_preserves_shape_and_prepends_fine_core_candidates(self) -> None:
+        base = replace(
+            params(),
+            opacity=0.64,
+            stroke_opacity=0.0,
+            ink_gain=0.0,
+            alpha_contrast=0.05,
+            core_ink_gain=0.12,
+            core_darken_strength=0.10,
+            core_darken_threshold=136,
+            core_darken_target_gray=24,
+            blur=0.57,
+        )
+        grid = ink_gray_candidate_grid(base, near_threshold_core_light_report(), limit=16)
+
+        self.assertTrue(grid.report["axes"]["near_threshold_micro_tuning"]["enabled"])
+        self.assertEqual(grid.report["axes"]["near_threshold_micro_candidate_count"], 10)
+        self.assertEqual(grid.report["budget"]["raw_candidate_budget"], 266)
+        first = grid.candidates[0]
+        self.assertEqual(first.font_name, base.font_name)
+        self.assertEqual(first.font_path, base.font_path)
+        self.assertEqual(first.font_size, base.font_size)
+        self.assertEqual(first.blur, base.blur)
+        self.assertEqual(first.text_dx, base.text_dx)
+        self.assertEqual(first.text_dy, base.text_dy)
+        self.assertEqual(first.char_offsets, base.char_offsets)
+        self.assertAlmostEqual(first.core_darken_strength, 0.103)
+        self.assertEqual(first.opacity, base.opacity)
+        self.assertEqual(first.stroke_opacity, base.stroke_opacity)
+        self.assertEqual(first.ink_gain, base.ink_gain)
+
+        changed_keys = set(grid.report["candidate_delta_audit"][0]["delta_keys"])
+        self.assertTrue(changed_keys <= INK_GRAY_GRID_ALLOWED_DELTA_KEYS)
+        self.assertFalse(changed_keys & INK_GRAY_GRID_BLOCKED_DELTA_KEYS)
+
+    def test_non_near_core_light_does_not_enable_micro_tuning(self) -> None:
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "local_ink_balance_issues": [
+                {"type": "core_mean_gray_too_light", "actual": 8.5, "limit": 4.0}
+            ],
+        }
+        micro = ink_gray_near_threshold_micro_tuning(report)
+
+        self.assertFalse(micro["enabled"])
+        self.assertEqual(micro["reason"], "issue_gap_not_near_threshold")
 
     def test_parent_shape_candidate_survives_multiple_ink_gray_rounds(self) -> None:
         ink_round_parent = replace(params(), candidate_id="ink-round-01")

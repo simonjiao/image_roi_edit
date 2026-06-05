@@ -666,6 +666,48 @@ def build_slot_text_mask(
     return mask
 
 
+def build_source_slot_cleanup_mask(
+    arr: np.ndarray,
+    plan: RenderPlan,
+    *,
+    threshold: int = 165,
+    dilate_iterations: int = 1,
+) -> np.ndarray:
+    h, w = arr.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    source_chars = text_chars(plan.source_text)
+    if not source_chars or not plan.slot_boxes:
+        return mask
+
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    cleanup_threshold = max(1, min(254, int(threshold)))
+    slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1)[: len(source_chars)])
+    tx1, ty1, tx2, ty2 = plan.target_roi
+    for slot in slots:
+        x1 = max(tx1, slot.x1)
+        y1 = max(ty1, slot.y1)
+        x2 = min(tx2, slot.x2)
+        y2 = min(ty2, slot.y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        local = (gray[y1:y2, x1:x2] < cleanup_threshold).astype(np.uint8) * 255
+        num, labels, stats, _ = cv2.connectedComponentsWithStats(local, 8)
+        clean = np.zeros_like(local)
+        for idx in range(1, num):
+            area = stats[idx, cv2.CC_STAT_AREA]
+            if area >= 2:
+                clean[labels == idx] = 255
+        mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], clean)
+
+    if np.any(mask):
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.dilate(mask, kernel, iterations=max(1, int(dilate_iterations)))
+        outside = np.ones((h, w), dtype=bool)
+        outside[ty1:ty2, tx1:tx2] = False
+        mask[outside] = 0
+    return mask
+
+
 def extra_source_slot_cleanup_boxes(plan: RenderPlan) -> tuple[tuple[int, int, int, int], ...]:
     source_chars = [ch for ch in (plan.source_text or "") if not ch.isspace()]
     target_chars = [ch for ch in plan.target_text if not ch.isspace()]
@@ -1883,6 +1925,14 @@ def render_candidate(
             dilate_iterations=params.mask_dilate_iterations,
         )
     layer = draw_replacement_layer(size=(w, h), plan=plan, params=params, original=original)
+    source_slot_cleanup_mask = build_source_slot_cleanup_mask(
+        arr,
+        plan,
+        threshold=165,
+        dilate_iterations=max(1, min(2, params.mask_dilate_iterations)),
+    )
+    if np.any(source_slot_cleanup_mask):
+        mask = np.maximum(mask, source_slot_cleanup_mask)
     trailing_cleanup_mask = build_trailing_value_cleanup_mask(plan, layer, (w, h))
     if np.any(trailing_cleanup_mask):
         mask = np.maximum(mask, trailing_cleanup_mask)
