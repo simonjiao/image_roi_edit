@@ -223,7 +223,7 @@
 
 - [ ] `text_shape_joint_optimization_design.md` 的“现有流程差距”表必须同步当前状态：已实现项标记为已覆盖，未实现项链接到本 checklist 对应条目。
 - [x] `staged_roi_pipeline_design.md` 的旧 7 类诊断关注点必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_design_alignment.py::DesignAlignmentTest.test_staged_design_declares_five_stage_gate_and_old_concern_mapping`。
-- [ ] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭。
+- [x] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_completion_claims.py::CompletionClaimsTest.test_readme_declares_hardening_status_while_checklist_is_open` 验证 checklist 仍有 `[ ]` 时 README 必须明确写出 local flow still being hardened，并指向本 checklist。
 - [ ] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”。
 
 ### T. 代码落点和模块边界
@@ -260,7 +260,7 @@
 - [ ] A-T 中保留的每个 `[x]` 都有同条或相邻说明中的当前证据，证据不足时必须降级为 `[ ]`。
 - [ ] 回归 Case A-D 已转成可执行用例并通过。
 - [x] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patchers_declare_primary_allowed_and_blocked_keys` 验证每个 stage patcher 声明 primary、allowed、blocked 且 allowed/blocked 不冲突，`test_stage_patcher_outputs_do_not_contain_undeclared_keys` 验证输出不含未声明参数，`test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary` 验证跨阶段 patch 会被拒绝或声明次级影响。
-- [ ] README、设计文档和 prompt 不再声称未验证能力已经完成。
+- [x] README、设计文档和 prompt 不再声称未验证能力已经完成；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_completion_claims.py::CompletionClaimsTest.test_public_docs_and_prompts_do_not_claim_unverified_completion` 扫描 README、`docs/*.md` 和 packaged prompts，禁止无条件当前完成态措辞如 `local flow is complete`、`本地流程完善完成`、`所有设计目标已完成`，但允许 checklist 以否定或条件形式列出门槛。
 - [ ] 所有交付任务都能从 `result.json`、`progress.jsonl`、stage evidence 和候选图解释通过或失败。
 
 任何一项未满足，都不能宣称本地流程完善完成。

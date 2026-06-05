@@ -23,6 +23,13 @@ The no-compromise local-flow hardening plan and implementation checklist are in
 When changing the ROI pipeline, update that file alongside the code if the
 workflow, hard gates, iteration strategy, or visual acceptance criteria change.
 
+## Hardening Status
+
+The local flow is still being hardened. Do not describe it as complete while
+[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md)
+contains any unchecked item. Current progress must be verified from that
+checklist plus the test commands recorded on each closed item.
+
 ## Setup
 
 ```bash
