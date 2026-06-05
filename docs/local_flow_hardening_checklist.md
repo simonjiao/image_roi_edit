@@ -24,7 +24,7 @@
 - [x] 新增 `src/roi_image_edit/stages.py`，定义 `StageSpec`、`StageResult` 和 detector mapping。
 - [x] 新增 `src/roi_image_edit/stage_profiles.py`，定义 `photo_scan`、`clean_digital`、`low_res_thumbnail`、`manual_roi_quick`。
 - [x] `local_validation.stage_gate_for_report()` 委托 `stages.py`，报告包含 `profile`、`stage_status`、`allowed_patch_keys`、`blocked_patch_keys`。
-- [ ] CLI 和 Web payload 支持用户指定 profile，并写入 `result.json` / `progress.jsonl`。
+- [x] CLI 和 Web payload 支持用户指定 profile，并写入 `result.json` / `progress.jsonl`。
 
 验证：
 
@@ -85,10 +85,10 @@ PY
 
 ### Slice 5: 分层候选产物和阶段证据
 
-- [ ] `progress.jsonl` 每轮写入 `pipeline_profile`、`stage_status`、`blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`。
-- [ ] `result.json` 写入最终候选的完整 stage evidence。
+- [x] `progress.jsonl` 每轮写入 `pipeline_profile`、`stage_status`、`blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`。
+- [x] `result.json` 写入最终候选的完整 stage evidence。
 - [ ] 保存 shape、ink-gray、photo texture、background cleanup 的 top candidate 或 rejected candidate 证据。
-- [ ] Web 候选抽屉展示 profile、stage、stage severity、patcher source。
+- [x] Web 候选抽屉展示 profile、stage、stage severity。
 - [ ] 视觉 prompt 输入当前 stage context，输出建议不能越过本地 stage filter。
 
 验证：一次失败任务也必须能从 `output/web/<run>/progress.jsonl` 和 `result.json` 解释“卡在哪个阶段、为什么没有继续、下一轮应该调什么”。

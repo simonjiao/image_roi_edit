@@ -17,6 +17,7 @@ from roi_image_edit.iterative_pipeline import (
     run_pipeline,
 )
 from roi_image_edit.processing_service import image_to_data_url, process_payload
+from roi_image_edit.stage_profiles import stage_profile_choices
 
 
 def parse_rect(value: str) -> dict[str, int]:
@@ -112,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--max-candidates", type=int, default=130)
     process.add_argument("--vision-candidate-limit", type=int, default=8)
     process.add_argument("--max-revision-rounds", type=int, default=12)
+    process.add_argument("--profile", choices=stage_profile_choices(), default="photo_scan")
     process.add_argument("--output", type=Path, default=None, help="Optional path to copy the final image.")
     process.add_argument("--json", action="store_true", dest="as_json")
 
@@ -162,6 +164,7 @@ def main() -> None:
             for idx, rect in enumerate(args.rect or [], start=1)
         ]
         payload = {
+            "profile": args.profile,
             "maxCandidates": args.max_candidates,
             "visionCandidateLimit": args.vision_candidate_limit,
             "maxRevisionRounds": args.max_revision_rounds,

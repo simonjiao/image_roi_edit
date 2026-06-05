@@ -1364,8 +1364,8 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
     return stages
 
 
-def stage_gate_for_report(report: dict[str, Any]) -> dict[str, Any]:
-    return ordered_stage_gate_for_report(report)
+def stage_gate_for_report(report: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
+    return ordered_stage_gate_for_report(report, profile or str(report.get("pipeline_profile") or "photo_scan"))
 
 
 def stage_issues(report: dict[str, Any] | None, stage_id: str) -> list[dict[str, Any]]:
@@ -1849,6 +1849,8 @@ def candidate_report(
     plan: RenderPlan,
     params: CandidateParams,
     font_style_reference: dict[str, Any],
+    *,
+    pipeline_profile: str | None = None,
 ) -> dict[str, Any]:
     report = hard_check(original, candidate, plan.target_roi, plan.protected_boxes)
     reference_profile = build_reference_profile(original, plan, params)
@@ -1905,6 +1907,7 @@ def candidate_report(
         max_score_ratio=1.25,
     )
     report["params"] = asdict(params)
+    report["pipeline_profile"] = pipeline_profile or "photo_scan"
     report["reference_profile"] = reference_profile
     report["strict_visual_metrics"] = strict_metrics
     report["char_gray_band_metrics"] = char_gray_band_metrics(original, candidate, plan)
@@ -1942,7 +1945,7 @@ def candidate_report(
     report["local_pose_issues"] = local_pose_issues(report)
     report["local_photo_texture_issues"] = local_photo_texture_issues(report)
     report["local_background_texture_issues"] = local_background_texture_issues(report)
-    report["stage_gate"] = stage_gate_for_report(report)
+    report["stage_gate"] = stage_gate_for_report(report, report["pipeline_profile"])
     return report
 
 

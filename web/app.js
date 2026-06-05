@@ -3,6 +3,7 @@ const processButton = document.getElementById("processButton");
 const imageList = document.getElementById("imageList");
 const statusText = document.getElementById("statusText");
 const template = document.getElementById("imageTemplate");
+const profileSelect = document.getElementById("profileSelect");
 
 const state = {
   items: [],
@@ -125,7 +126,7 @@ function candidateMetaLines(candidate) {
     : "";
   const lines = [
     `${candidate.index}. ${candidate.kind || "candidate"} | ${candidate.label}`,
-    `stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
+    `profile ${candidate.pipeline_profile || "photo_scan"} | stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
     `lt55 ${formatNumber(metrics.lt55_delta)} | 55-70 ${formatNumber(metrics.band_55_70_delta)} | 70-90 ${formatNumber(metrics.band_70_90_delta)}`,
     `background ${issues || "ok"} | var ${formatNumber(background.patch_variance_ratio)} | residual ${formatNumber(background.residual_energy_ratio)}`,
   ];
@@ -174,7 +175,9 @@ function renderTrace(item, entry) {
     const vision = region.summary?.vision || {};
     const nextPlan = trace.next_round_plan || vision.next_round_plan || {};
     const lines = [
-      `${region.id || "region"} | ${region.accepted ? "accepted" : "rejected"} | stage ${trace.final_blocking_stage || "pass"} | rounds ${trace.revision_round_count ?? 0}`,
+      `${region.id || "region"} | ${region.accepted ? "accepted" : "rejected"} | profile ${
+        region.summary?.plan?.pipeline_profile || "photo_scan"
+      } | stage ${trace.final_blocking_stage || "pass"} | rounds ${trace.revision_round_count ?? 0}`,
     ];
     if (trace.last_round_stop_reason) {
       lines.push(`stop: ${trace.last_round_stop_reason}`);
@@ -207,9 +210,11 @@ function progressEventText(record) {
     case "queued":
       return "等待开始处理";
     case "run_started":
-      return "任务已创建";
+      return `任务已创建：profile ${record.pipeline_profile || "photo_scan"}`;
     case "image_started":
-      return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}`;
+      return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}，profile ${
+        record.pipeline_profile || "photo_scan"
+      }`;
     case "auto_roi_finished":
       return `自动定位完成：${record.region_count ?? 0} 个区域，方向 ${
         record.orientation || "none"
@@ -225,7 +230,9 @@ function progressEventText(record) {
         record.hard_boundary_pass ? "通过" : "未通过"
       }，严格门槛 ${record.strict_pass ? "通过" : "未通过"}`;
     case "revision_round_started":
-      return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}`;
+      return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}，profile ${
+        record.pipeline_profile || "photo_scan"
+      }`;
     case "revision_round_candidates":
       return `第 ${record.round ?? "-"} 轮候选：${record.patch_count ?? 0} 个修正，${
         record.shape_reset_count ?? 0
@@ -504,6 +511,7 @@ async function processAll() {
   });
 
   const payload = {
+    profile: profileSelect.value,
     maxCandidates: 120,
     maxRevisionRounds: 12,
     images: processable.map((item) => ({

@@ -25,7 +25,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -50,7 +51,8 @@ input {
 
 .upload-button,
 .primary-button,
-.secondary-button {
+.secondary-button,
+.profile-control select {
   height: 36px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -66,6 +68,21 @@ input {
 
 .upload-button input {
   display: none;
+}
+
+.profile-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.profile-control select {
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
 }
 
 .primary-button {

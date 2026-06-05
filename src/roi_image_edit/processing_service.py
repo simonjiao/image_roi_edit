@@ -71,6 +71,7 @@ from roi_image_edit.stage_patchers import (
     patch_signature,
     revision_patches_for_round,
 )
+from roi_image_edit.stage_profiles import stage_profile
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
     build_region_plan,
@@ -94,6 +95,7 @@ ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
+        "profile": payload.get("profile"),
         "maxCandidates": payload.get("maxCandidates"),
         "images": [
             {
@@ -166,6 +168,41 @@ def processing_prompt_context(plan: RenderPlan) -> str:
     )
 
 
+def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    blocking_stage = stage_gate.get("blocking_stage") if isinstance(stage_gate, dict) else None
+    blocking_status = (
+        (stage_gate.get("stage_status") or {}).get(blocking_stage)
+        if isinstance(stage_gate.get("stage_status"), dict) and blocking_stage
+        else None
+    )
+    return {
+        "pipeline_profile": report.get("pipeline_profile") or stage_gate.get("profile"),
+        "stage_order": stage_gate.get("order"),
+        "stage_status": stage_gate.get("stage_status"),
+        "blocking_stage": blocking_stage,
+        "blocking_stage_reason": (
+            blocking_status.get("reason")
+            if isinstance(blocking_status, dict)
+            else None
+        ),
+        "allowed_patch_keys": (
+            blocking_status.get("allowed_patch_keys")
+            if isinstance(blocking_status, dict)
+            else []
+        ),
+        "blocked_patch_keys": (
+            blocking_status.get("blocked_patch_keys")
+            if isinstance(blocking_status, dict)
+            else []
+        ),
+    }
+
+
 def image_to_data_url(img: Image.Image) -> str:
     buffer = io.BytesIO()
     img.convert("RGB").save(buffer, format="PNG")
@@ -194,6 +231,7 @@ def run_region_vision_checks(
     candidate_limit: int,
     font_style_reference: dict[str, Any],
     max_revision_rounds: int = 8,
+    pipeline_profile: str = "photo_scan",
     progress: ProgressCallback | None = None,
 ) -> tuple[CandidateParams | None, dict[str, Any]]:
     if not rendered:
@@ -281,6 +319,8 @@ def run_region_vision_checks(
                 "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
+                "pipeline_profile": pipeline_profile,
+                "stage_context": stage_progress_fields(report),
             },
             "final_score": round(float(score), 3),
             "hard_check": report,
@@ -331,6 +371,7 @@ def run_region_vision_checks(
                 "hard_boundary_pass": hard_boundary_pass,
                 "acceptance_level": final_acceptance_json.get("acceptance_level"),
                 "final_decision": final_acceptance_json.get("final_decision"),
+                **stage_progress_fields(final_report),
             },
         )
 
@@ -369,6 +410,7 @@ def run_region_vision_checks(
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
+                        **stage_progress_fields(current_report),
                     },
                 )
             round_patches = revision_patches_for_round(
@@ -442,6 +484,7 @@ def run_region_vision_checks(
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
                 "stage_optimization_policy": basis_stage_optimization_policy,
+                "stage_evidence": stage_progress_fields(current_report),
                 "model_suggestions": model_records,
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
@@ -457,6 +500,7 @@ def run_region_vision_checks(
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
                         "stage_optimization_policy": basis_stage_optimization_policy,
+                        **stage_progress_fields(current_report),
                     },
                 )
             if not round_patches and not shape_reset_params:
@@ -508,6 +552,7 @@ def run_region_vision_checks(
                     plan,
                     patched_params,
                     font_style_reference,
+                    pipeline_profile=pipeline_profile,
                 )
                 patched_score = region_candidate_score(
                     original,
@@ -711,6 +756,7 @@ def run_region_vision_checks(
                         "acceptance_level": patched_acceptance.get("acceptance_level"),
                         "final_decision": patched_acceptance.get("final_decision"),
                         "blocking_stage": (patched_report.get("stage_gate") or {}).get("blocking_stage"),
+                        **stage_progress_fields(patched_report),
                     },
                 )
             round_record.update(
@@ -803,6 +849,7 @@ def run_region_vision_checks(
                 plan,
                 alt_params,
                 font_style_reference,
+                pipeline_profile=pipeline_profile,
             )
             alt_score = region_candidate_score(original, alt_image, plan, alt_report)
             alt_strict = report_strict_pass(alt_report)
@@ -973,6 +1020,7 @@ def candidate_trace_summary(report: dict[str, Any] | None) -> dict[str, Any]:
     background_metrics = report.get("background_texture_metrics")
     background_issues = stage_issues(report, "background_cleanup")
     return {
+        **stage_progress_fields(report),
         "blocking_stage": blocking_stage,
         "stage_pass": bool(stage_gate.get("pass")) if isinstance(stage_gate, dict) else None,
         "stage_severity": round(float(stage_issue_severity(report, blocking_stage)), 3),
@@ -1024,6 +1072,7 @@ def process_region(
     max_candidates: int = 120,
     vision_candidate_limit: int = 8,
     max_revision_rounds: int = 8,
+    pipeline_profile: str = "photo_scan",
     progress: ProgressCallback | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
     plan = build_region_plan(
@@ -1252,7 +1301,14 @@ def process_region(
         )
     for params in params_list:
         candidate = render_candidate(original, plan, params)
-        report = candidate_report(original, candidate, plan, params, font_style_reference)
+        report = candidate_report(
+            original,
+            candidate,
+            plan,
+            params,
+            font_style_reference,
+            pipeline_profile=pipeline_profile,
+        )
         score = region_candidate_score(original, candidate, plan, report)
         if not report_strict_pass(report):
             score += 10000.0
@@ -1269,6 +1325,7 @@ def process_region(
                 "region_id": region_id,
                 "rendered": len(rendered),
                 "best_score": round(float(rendered[0][3]), 3) if rendered else None,
+                **stage_progress_fields(rendered[0][2] if rendered else None),
             },
         )
     region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
@@ -1286,6 +1343,7 @@ def process_region(
         candidate_limit=vision_candidate_limit,
         font_style_reference=font_style_reference,
         max_revision_rounds=max_revision_rounds,
+        pipeline_profile=pipeline_profile,
         progress=vision_progress,
     )
     if chosen_params is not None:
@@ -1297,6 +1355,7 @@ def process_region(
             plan,
             best_params,
             font_style_reference,
+            pipeline_profile=pipeline_profile,
         )
         best_score = region_candidate_score(original, best_image, plan, best_report)
     else:
@@ -1398,6 +1457,8 @@ def process_region(
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
                 "draw_mode": plan.draw_mode,
+                "pipeline_profile": pipeline_profile,
+                "stage_status": (best_report.get("stage_gate") or {}).get("stage_status"),
                 "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
             },
             "params": asdict(best_params),
@@ -1433,6 +1494,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     progress_path = run_dir / "progress.jsonl"
+    pipeline_profile = stage_profile(str(payload.get("profile") or "photo_scan")).id
 
     def emit(event: str, fields: dict[str, Any] | None = None) -> None:
         record = {
@@ -1446,7 +1508,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             progress(event, record)
 
     write_json(run_dir / "request.json", request_audit_payload(payload))
-    emit("run_started", {"run_dir": str(run_dir)})
+    emit("run_started", {"run_dir": str(run_dir), "pipeline_profile": pipeline_profile})
     prompts = load_processing_prompts()
     vision_client = VisionClient(ENV_PATH)
     results: list[dict[str, Any]] = []
@@ -1466,6 +1528,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "filename": filename,
                     "source_text": source_text,
                     "target_text": target_text,
+                    "pipeline_profile": pipeline_profile,
                 },
             )
             image = image_from_data_url(str(image_item.get("dataUrl") or ""))
@@ -1520,6 +1583,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "roi": list(roi),
                         "source_text": region_source_text,
                         "target_text": region_target_text,
+                        "pipeline_profile": pipeline_profile,
                     },
                 )
 
@@ -1538,6 +1602,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     max_candidates=int(payload.get("maxCandidates") or 120),
                     vision_candidate_limit=int(payload.get("visionCandidateLimit") or 8),
                     max_revision_rounds=int(payload.get("maxRevisionRounds") or 8),
+                    pipeline_profile=pipeline_profile,
                     progress=region_progress,
                 )
                 display_image = image.copy() if accepted else region_display_image.copy()
@@ -1547,6 +1612,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "image_id": image_id,
                         "region_id": region_id,
                         "accepted": accepted,
+                        "pipeline_profile": pipeline_profile,
                         "revision_rounds": len((summary.get("vision") or {}).get("revision_rounds", [])),
                         "blocking_stage": (summary.get("trace") or {}).get("final_blocking_stage"),
                         "stage_severity": (summary.get("trace") or {}).get("final_stage_severity"),
