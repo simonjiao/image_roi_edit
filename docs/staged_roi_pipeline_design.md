@@ -94,7 +94,9 @@ class StageSpec:
 @dataclass(frozen=True)
 class StageResult:
     stage_id: str
+    display_name: str
     passed: bool
+    blocks_next: bool
     severity: str
     issues: list[dict[str, Any]]
     reason: str
@@ -108,18 +110,21 @@ class StageResult:
 {
   "pipeline_profile": "photo_scan",
   "stage_order": [
-    "slot_alignment",
-    "font_structure",
-    "pose_geometry",
-    "stroke_body",
-    "tone_gray",
-    "edge_quality",
-    "photo_texture"
+    "hard_boundary",
+    "text_shape",
+    "ink_gray_balance",
+    "photo_texture",
+    "background_cleanup"
   ],
   "stage_status": {
-    "slot_alignment": {"passed": true, "issues": []},
-    "stroke_body": {
-      "passed": false,
+    "hard_boundary": {
+      "pass": true,
+      "blocks_next": true,
+      "issues": []
+    },
+    "text_shape": {
+      "pass": false,
+      "blocks_next": true,
       "issues": [
         {
           "type": "changed_char_stroke_body_too_thin",
@@ -127,13 +132,46 @@ class StageResult:
           "neighbor_char": "reference_char"
         }
       ]
+    },
+    "ink_gray_balance": {
+      "pass": true,
+      "blocks_next": true,
+      "issues": []
+    },
+    "photo_texture": {
+      "pass": true,
+      "blocks_next": true,
+      "issues": []
+    },
+    "background_cleanup": {
+      "pass": true,
+      "blocks_next": true,
+      "issues": []
     }
   },
-  "blocking_stage": "stroke_body"
+  "blocking_stage": "text_shape",
+  "blocking_stage_blocks_next": true
 }
 ```
 
-### Stage 列表
+### 当前 gate 与旧 7 类关注点关系
+
+当前代码和 checklist 的阶段门禁只有 5 个：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+下面的 `slot_alignment`、`font_structure`、`pose_geometry`、`stroke_body`、`tone_gray`、`edge_quality`、`photo_texture`
+是旧设计中的 7 类关注点，不能再作为 `stage_id`、`blocking_stage` 或公开 gate 输出。
+它们必须映射到当前 5 stage 下的 Optimization Step 或局部 detector。
+
+| 旧 7 类关注点 | 当前 5 stage 中的归属 |
+| --- | --- |
+| `slot_alignment` | `hard_boundary` 的 ROI/slot 安全条件；`text_shape.slot_alignment_search` |
+| `font_structure` | `text_shape.font_style_search`、`text_shape.font_size_search` |
+| `pose_geometry` | `text_shape.pose_shear_search` |
+| `stroke_body` | `text_shape.stroke_body_search` |
+| `tone_gray` | `ink_gray_balance.core_black_search`、`ink_gray_balance.mid_gray_body_search`、`ink_gray_balance.opacity_search` |
+| `edge_quality` | `ink_gray_balance.outer_gray_control`、`photo_texture.edge_breakup_match` |
+| `photo_texture` | `photo_texture.blur_match`、`photo_texture.noise_texture_match`、`photo_texture.jpeg_texture_match` |
+
+### 旧 7 类关注点列表
 
 #### `slot_alignment`
 

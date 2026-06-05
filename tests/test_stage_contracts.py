@@ -60,6 +60,7 @@ class StageContractsTest(unittest.TestCase):
                 "stage_id",
                 "display_name",
                 "passed",
+                "blocks_next",
                 "severity",
                 "issues",
                 "reason",
@@ -70,8 +71,22 @@ class StageContractsTest(unittest.TestCase):
         gate = stage_gate_for_report({"pass": False, "issues": [{"type": "roi_outside"}]})
         self.assertFalse(gate["pass"])
         self.assertEqual(gate["blocking_stage"], "hard_boundary")
+        self.assertTrue(gate["blocking_stage_blocks_next"])
+        self.assertEqual(tuple(gate["stage_status"]), EXPECTED_STAGE_ORDER)
+        for stage_id in EXPECTED_STAGE_ORDER:
+            stage = gate["stage_status"][stage_id]
+            self.assertIn("pass", stage)
+            self.assertIn("blocks_next", stage)
+            self.assertIn("reason", stage)
+            self.assertIn("allowed_patch_keys", stage)
+            self.assertIn("blocked_patch_keys", stage)
+            self.assertIsInstance(stage["pass"], bool)
+            self.assertIsInstance(stage["blocks_next"], bool)
+            self.assertIsInstance(stage["allowed_patch_keys"], list)
+            self.assertIsInstance(stage["blocked_patch_keys"], list)
         hard_boundary = gate["stage_status"]["hard_boundary"]
         self.assertFalse(hard_boundary["pass"])
+        self.assertTrue(hard_boundary["blocks_next"])
         self.assertEqual(hard_boundary["reason"], "roi_outside")
         self.assertEqual(hard_boundary["allowed_patch_keys"], [])
         self.assertIn("font_size_delta", hard_boundary["blocked_patch_keys"])
@@ -79,6 +94,7 @@ class StageContractsTest(unittest.TestCase):
         context = prompt_stage_context({"pass": False, "issues": [{"type": "roi_outside"}]})
         self.assertEqual(context["stage_order"], list(EXPECTED_STAGE_ORDER))
         self.assertEqual(context["blocking_stage"], "hard_boundary")
+        self.assertTrue(context["blocking_stage_blocks_next"])
         self.assertEqual(context["allowed_patch_keys"], [])
         self.assertIn("font_size_delta", context["blocked_patch_keys"])
 

@@ -19,6 +19,7 @@ class StageResult:
     stage_id: str
     display_name: str
     passed: bool
+    blocks_next: bool
     severity: str
     issues: tuple[dict[str, Any], ...]
     reason: str
@@ -30,6 +31,7 @@ class StageResult:
             "id": self.stage_id,
             "label": self.display_name,
             "pass": self.passed,
+            "blocks_next": self.blocks_next,
             "severity": self.severity,
             "issues": list(self.issues),
             "reason": self.reason,
@@ -93,6 +95,7 @@ def _stage_result(
         stage_id=stage_id,
         display_name=STAGE_LABELS[stage_id],
         passed=not issue_items,
+        blocks_next=stage_spec(stage_id).blocks_next,
         severity=_severity_label(issue_items),
         issues=issue_items,
         reason="pass" if not issue_items else str(issue_items[0].get("type") or "stage_failed"),
@@ -246,6 +249,7 @@ def stage_gate_for_report(
         "profile_summary": profile_obj.as_report(),
         "order": [result.stage_id for result in results],
         "blocking_stage": blocking.stage_id if blocking else None,
+        "blocking_stage_blocks_next": blocking.blocks_next if blocking else False,
         "pass": blocking is None,
         "stage_status": stage_status,
         "stages": stages,
@@ -260,6 +264,7 @@ def prompt_stage_context(report: dict[str, Any], profile: StageProfile | str | N
         "pipeline_profile": gate.get("profile"),
         "stage_order": gate.get("order"),
         "blocking_stage": blocking_stage,
+        "blocking_stage_blocks_next": spec.blocks_next if spec else False,
         "stage_status": gate.get("stage_status"),
         "allowed_patch_keys": sorted(spec.allowed_patch_keys) if spec else [],
         "blocked_patch_keys": sorted(spec.blocked_patch_keys) if spec else [],

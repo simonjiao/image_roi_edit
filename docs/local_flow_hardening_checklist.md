@@ -38,7 +38,7 @@
 
 - [ ] 五个本地 stage 必须成为代码、prompt、报告和测试的唯一权威结构：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；验证方式是 stage order、prompt payload、result schema 和回归报告都只使用这五个 stage。
 - [x] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_spec_field_contract_and_reports`。
-- [x] `StageResult` 必须有稳定字段契约：`stage_id`、`display_name`、`passed`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
+- [x] `StageResult` 必须有稳定字段契约：`stage_id`、`display_name`、`passed`、`blocks_next`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
 - [x] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
 - [ ] 增加前置安全流程验收：`orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard` 必须在候选生成前完成；验证方式是失败样例 `candidate_count=0` 或 rejected，且 `progress.jsonl` 记录失败步骤。
 - [x] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_order_is_the_five_stage_contract`。
@@ -222,7 +222,7 @@
 ### S. 设计文档状态同步
 
 - [ ] `text_shape_joint_optimization_design.md` 的“现有流程差距”表必须同步当前状态：已实现项标记为已覆盖，未实现项链接到本 checklist 对应条目。
-- [ ] `staged_roi_pipeline_design.md` 的旧 7 阶段设计必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存。
+- [x] `staged_roi_pipeline_design.md` 的旧 7 阶段设计必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_design_alignment.py::DesignAlignmentTest.test_staged_design_declares_five_stage_gate_and_old_concern_mapping`。
 - [ ] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭。
 - [ ] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”。
 
