@@ -56,10 +56,13 @@ def filter_model_patch_records(
         patch = record.get("patch")
         if not isinstance(patch, dict) or not patch:
             policy_audit = optimization_policy_audit(local_stage, None)
+            conversion_reason = str(
+                record.get("conversion_reason") or "model suggestion did not contain a usable patch"
+            )
             record["optimization_policy"] = policy_audit
             record["accepted_for_candidate_generation"] = False
             record["local_filter_decision"] = "rejected"
-            record["local_filter_reason"] = "model suggestion did not contain a usable patch"
+            record["local_filter_reason"] = conversion_reason
             audited_records.append(record)
             rejected_records.append(record)
             continue

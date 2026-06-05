@@ -189,7 +189,7 @@
 - [x] prompt 不能建议当前阶段禁止参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_prompt_assets_require_stage_context_allowed_and_blocked_keys` 验证 prompt 明确携带 forbidden 参数边界，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_forbidden_model_suggestion_is_rejected_and_audited` 验证 mock response 中 `mask_threshold_delta` 和 `opacity_delta` 在 `text_shape` 阶段被拒绝。
 - [ ] 如果模型认为前置阶段已通过，必须说明依据；验证方式是 response schema 包含 `basis` 或等价字段。
 - [x] 如果模型建议 deliver 但本地 `blocking_stage` 不为空，本地必须改为 revise；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
-- [ ] 视觉模型建议必须转成本地候选或记录不可转化原因；验证方式是 attempt record。
+- [x] 视觉模型建议必须转成本地候选或记录不可转化原因；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_unconvertible_model_suggestion_is_recorded_with_reason` 验证 unsupported parameter、缺少 delta、非对象 suggestion 都不会静默丢弃，而是写入 `model_suggestion_filter.attempt_records[*].rejection_reason`。
 
 ### P. 进度、UI 和失败产物
 

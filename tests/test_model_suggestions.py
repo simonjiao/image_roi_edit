@@ -82,6 +82,33 @@ class ModelSuggestionsTest(unittest.TestCase):
             self.assertEqual(attempt["local_blocking_stage"], "text_shape")
             self.assertIn("optimization steps", attempt["rejection_reason"])
 
+    def test_unconvertible_model_suggestion_is_recorded_with_reason(self) -> None:
+        model_json = {
+            "blocking_stage": "ink_gray_balance",
+            "direction": "recover_core_black",
+            "parameter_suggestions": [
+                {"name": "unknown_knob", "delta": 0.1},
+                {"name": "opacity"},
+                "bad item",
+            ],
+        }
+        records = model_patch_records(self.params, model_json, source="final_acceptance")
+        self.assertEqual(len(records), 3)
+        self.assertEqual({record["conversion_status"] for record in records}, {"unconvertible"})
+        self.assertIn("unsupported parameter", records[0]["conversion_reason"])
+        self.assertIn("missing delta", records[1]["conversion_reason"])
+        self.assertIn("not an object", records[2]["conversion_reason"])
+
+        filtered = filter_model_patch_records(records, "ink_gray_balance")
+        report = model_suggestion_filter_report(filtered)
+        self.assertEqual(report["accepted_count"], 0)
+        self.assertEqual(report["rejected_count"], 3)
+        self.assertEqual(len(report["attempt_records"]), 3)
+        self.assertEqual(
+            [attempt["rejection_reason"] for attempt in report["attempt_records"]],
+            [record["conversion_reason"] for record in records],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

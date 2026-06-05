@@ -69,6 +69,8 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 `allowed_patch_keys` 约束；本地 `stage_filter` 会拒绝越过阶段边界的建议，并把冲突写入
 `revision_rounds.model_suggestion_filter.attempt_records` 和
 `revision_rounds.model_conflicts`。
+不能转成本地 patch 的视觉建议不能静默丢弃，必须在 attempt record 中记录
+`rejection_reason`。
 
 如果 `text_shape` 未通过，后续调参只能先处理字体、字号、描边/笔画身体、字槽偏移和姿态继承；不能先通过降黑、加模糊、加噪声或背景修补来掩盖形态问题。
 

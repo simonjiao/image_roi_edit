@@ -35,6 +35,33 @@ StagePatcherFn = Callable[
     list[dict[str, Any]],
 ]
 
+PARAMETER_PATCH_KEYS = {
+    "font_size": "font_size_delta",
+    "opacity": "opacity_delta",
+    "blur": "blur_delta",
+    "stroke_opacity": "stroke_opacity_delta",
+    "ink_gain": "ink_gain_delta",
+    "alpha_contrast": "alpha_contrast_delta",
+    "core_ink_gain": "core_ink_gain_delta",
+    "core_darken_strength": "core_darken_strength_delta",
+    "core_darken_threshold": "core_darken_threshold_delta",
+    "core_darken_target_gray": "core_darken_target_gray_delta",
+    "photo_warp": "photo_warp_delta",
+    "edge_breakup": "edge_breakup_delta",
+    "photo_noise": "photo_noise_delta",
+    "jpeg_quality": "jpeg_quality_delta",
+    "text_dx": "text_dx_delta",
+    "text_dy": "text_dy_delta",
+}
+INTEGER_DELTA_PARAMETERS = {
+    "font_size",
+    "core_darken_threshold",
+    "core_darken_target_gray",
+    "jpeg_quality",
+    "text_dx",
+    "text_dy",
+}
+
 
 @dataclass(frozen=True)
 class StagePatcherSpec:
@@ -268,30 +295,13 @@ def filter_patches_for_stage(
 
 
 def delta_patch_for_target(params: CandidateParams, name: str, target: float) -> dict[str, Any] | None:
-    mapping = {
-        "opacity": "opacity_delta",
-        "blur": "blur_delta",
-        "stroke_opacity": "stroke_opacity_delta",
-        "ink_gain": "ink_gain_delta",
-        "alpha_contrast": "alpha_contrast_delta",
-        "core_ink_gain": "core_ink_gain_delta",
-        "core_darken_strength": "core_darken_strength_delta",
-        "core_darken_threshold": "core_darken_threshold_delta",
-        "core_darken_target_gray": "core_darken_target_gray_delta",
-        "photo_warp": "photo_warp_delta",
-        "edge_breakup": "edge_breakup_delta",
-        "photo_noise": "photo_noise_delta",
-        "jpeg_quality": "jpeg_quality_delta",
-        "text_dx": "text_dx_delta",
-        "text_dy": "text_dy_delta",
-    }
     if name == "font_size":
         delta = int(round(target - float(params.font_size)))
         return {"font_size_delta": delta} if delta else None
     if name in {"text_dx", "text_dy"}:
         delta = int(round(target - float(getattr(params, name))))
-        return {mapping[name]: delta} if delta else None
-    if name not in mapping:
+        return {PARAMETER_PATCH_KEYS[name]: delta} if delta else None
+    if name not in PARAMETER_PATCH_KEYS:
         return None
     current = float(getattr(params, name))
     delta = float(target) - current
@@ -303,7 +313,38 @@ def delta_patch_for_target(params: CandidateParams, name: str, target: float) ->
             return None
     else:
         rounded_delta = round(delta, 4)
-    return {mapping[name]: rounded_delta}
+    return {PARAMETER_PATCH_KEYS[name]: rounded_delta}
+
+
+def parameter_suggestion_conversion_issue(
+    params: CandidateParams,
+    suggestion: dict[str, Any],
+) -> str | None:
+    name = str(suggestion.get("name") or suggestion.get("parameter") or "").strip()
+    if not name:
+        return "missing parameter name"
+    if name not in PARAMETER_PATCH_KEYS:
+        return f"unsupported parameter: {name}"
+    if "to" in suggestion:
+        try:
+            target = float(suggestion["to"])
+        except (TypeError, ValueError):
+            return f"invalid target value for {name}"
+        patch = delta_patch_for_target(params, name, target)
+        return None if patch else f"target value for {name} produces no local delta"
+    delta_key = f"{name}_delta"
+    delta = suggestion.get("delta", suggestion.get(delta_key))
+    if delta is None:
+        return f"missing delta or to value for {name}"
+    try:
+        value = float(delta)
+    except (TypeError, ValueError):
+        return f"invalid delta value for {name}"
+    if name in INTEGER_DELTA_PARAMETERS and not int(round(value)):
+        return f"delta for {name} rounds to zero"
+    if name not in INTEGER_DELTA_PARAMETERS and abs(value) < 0.0001:
+        return f"delta for {name} is zero"
+    return None
 
 
 def patch_from_parameter_suggestion(
@@ -323,29 +364,11 @@ def patch_from_parameter_suggestion(
     delta = suggestion.get("delta", suggestion.get(delta_key))
     if delta is None:
         return None
-    mapping = {
-        "font_size": "font_size_delta",
-        "opacity": "opacity_delta",
-        "blur": "blur_delta",
-        "stroke_opacity": "stroke_opacity_delta",
-        "ink_gain": "ink_gain_delta",
-        "alpha_contrast": "alpha_contrast_delta",
-        "core_ink_gain": "core_ink_gain_delta",
-        "core_darken_strength": "core_darken_strength_delta",
-        "core_darken_threshold": "core_darken_threshold_delta",
-        "core_darken_target_gray": "core_darken_target_gray_delta",
-        "photo_warp": "photo_warp_delta",
-        "edge_breakup": "edge_breakup_delta",
-        "photo_noise": "photo_noise_delta",
-        "jpeg_quality": "jpeg_quality_delta",
-        "text_dx": "text_dx_delta",
-        "text_dy": "text_dy_delta",
-    }
-    patch_key = mapping.get(name)
+    patch_key = PARAMETER_PATCH_KEYS.get(name)
     if not patch_key:
         return None
     try:
-        if name in {"font_size", "core_darken_threshold", "core_darken_target_gray", "jpeg_quality", "text_dx", "text_dy"}:
+        if name in INTEGER_DELTA_PARAMETERS:
             value: float | int = int(round(float(delta)))
         else:
             value = round(float(delta), 4)
@@ -372,6 +395,8 @@ def model_patch_records(
                 "direction": model_json.get("direction"),
                 "blocking_stage": model_json.get("blocking_stage"),
                 "patch": suggested_patch,
+                "conversion_status": "converted" if suggested_patch else "unconvertible",
+                "conversion_reason": None if suggested_patch else "suggested_patch is empty",
             }
         )
 
@@ -379,21 +404,34 @@ def model_patch_records(
     if isinstance(suggestions, list):
         for idx, suggestion in enumerate(suggestions, start=1):
             if not isinstance(suggestion, dict):
+                records.append(
+                    {
+                        "source": source,
+                        "kind": "parameter_suggestion",
+                        "index": idx,
+                        "direction": model_json.get("direction"),
+                        "blocking_stage": model_json.get("blocking_stage"),
+                        "suggestion": suggestion,
+                        "conversion_status": "unconvertible",
+                        "conversion_reason": "parameter suggestion is not an object",
+                    }
+                )
                 continue
             patch = patch_from_parameter_suggestion(params, suggestion)
-            if not patch:
-                continue
-            records.append(
-                {
-                    "source": source,
-                    "kind": "parameter_suggestion",
-                    "index": idx,
-                    "direction": model_json.get("direction"),
-                    "blocking_stage": model_json.get("blocking_stage"),
-                    "suggestion": suggestion,
-                    "patch": patch,
-                }
-            )
+            conversion_reason = parameter_suggestion_conversion_issue(params, suggestion) if not patch else None
+            record = {
+                "source": source,
+                "kind": "parameter_suggestion",
+                "index": idx,
+                "direction": model_json.get("direction"),
+                "blocking_stage": model_json.get("blocking_stage"),
+                "suggestion": suggestion,
+                "conversion_status": "converted" if patch else "unconvertible",
+                "conversion_reason": conversion_reason,
+            }
+            if patch:
+                record["patch"] = patch
+            records.append(record)
     return records
 
 
