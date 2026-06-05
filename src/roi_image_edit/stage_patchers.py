@@ -18,7 +18,6 @@ from roi_image_edit.local_validation import (
     report_has_outer_gray_halo,
     report_needs_thinner_strokes,
     report_needs_wider_gray_strokes,
-    stage_gate_for_report,
     stage_issues,
 )
 from roi_image_edit.stage_policy import (
@@ -28,6 +27,7 @@ from roi_image_edit.stage_policy import (
     optimization_steps_for_patch,
     patch_keys_for_steps,
 )
+from roi_image_edit.stages import stage_gate_for_report
 
 
 StagePatcherFn = Callable[

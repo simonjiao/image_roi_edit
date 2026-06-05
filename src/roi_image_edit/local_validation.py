@@ -36,7 +36,7 @@ from roi_image_edit.roi_locator import (
     text_chars,
     text_run_box,
 )
-from roi_image_edit.stages import stage_gate_for_report as ordered_stage_gate_for_report
+from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
 
 def text_complexity_ratio(plan: RenderPlan, params: CandidateParams) -> float:
@@ -1369,8 +1369,8 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
     return stages
 
 
-def stage_gate_for_report(report: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
-    return ordered_stage_gate_for_report(report, profile or str(report.get("pipeline_profile") or "photo_scan"))
+def _stage_gate_for_report(report: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
+    return canonical_stage_gate_for_report(report, profile or str(report.get("pipeline_profile") or "photo_scan"))
 
 
 def stage_issues(report: dict[str, Any] | None, stage_id: str) -> list[dict[str, Any]]:
@@ -1378,7 +1378,7 @@ def stage_issues(report: dict[str, Any] | None, stage_id: str) -> list[dict[str,
         return []
     stage_gate = report.get("stage_gate")
     if not isinstance(stage_gate, dict):
-        stage_gate = stage_gate_for_report(report)
+        stage_gate = _stage_gate_for_report(report)
     for stage in stage_gate.get("stages", []):
         if isinstance(stage, dict) and stage.get("id") == stage_id:
             return [issue for issue in stage.get("issues", []) if isinstance(issue, dict)]
@@ -1390,7 +1390,7 @@ def stage_selection_penalty(report: dict[str, Any] | None) -> float:
         return 0.0
     stage_gate = report.get("stage_gate")
     if not isinstance(stage_gate, dict):
-        stage_gate = stage_gate_for_report(report)
+        stage_gate = _stage_gate_for_report(report)
     blocking_stage = str(stage_gate.get("blocking_stage") or "")
     if not blocking_stage:
         return 0.0
@@ -1510,7 +1510,7 @@ def constraint_reason(
     report: dict[str, Any] | None,
     acceptance: dict[str, Any],
 ) -> str:
-    stage = (stage_gate_for_report(report).get("blocking_stage") if isinstance(report, dict) else None)
+    stage = (_stage_gate_for_report(report).get("blocking_stage") if isinstance(report, dict) else None)
     if stage == "text_shape":
         return "text_shape_stage_caps_ink_and_photo_side_effects"
     if report_has_excess_black_core(report):
@@ -1565,12 +1565,12 @@ def alignment_vertical_penalty(report: dict[str, Any] | None) -> float:
 def report_stage_pass(report: dict[str, Any]) -> bool:
     stage_gate = report.get("stage_gate")
     if not isinstance(stage_gate, dict):
-        stage_gate = stage_gate_for_report(report)
+        stage_gate = _stage_gate_for_report(report)
     return bool(stage_gate.get("pass"))
 
 
 def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
-    stage_gate = stage_gate_for_report(report)
+    stage_gate = _stage_gate_for_report(report)
     shape_stage_issues = stage_issues({"stage_gate": stage_gate}, "text_shape")
     ink_issues = local_ink_balance_issues(report)
     shape_blocking = stage_gate.get("blocking_stage") == "text_shape"
@@ -2085,7 +2085,7 @@ def candidate_report(
     report["local_pose_issues"] = local_pose_issues(report)
     report["local_photo_texture_issues"] = local_photo_texture_issues(report)
     report["local_background_texture_issues"] = local_background_texture_issues(report)
-    report["stage_gate"] = stage_gate_for_report(report, report["pipeline_profile"])
+    report["stage_gate"] = _stage_gate_for_report(report, report["pipeline_profile"])
     return report
 
 

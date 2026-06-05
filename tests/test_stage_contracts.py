@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import fields
+from pathlib import Path
 import unittest
 
 from roi_image_edit.stage_patchers import filter_patches_for_stage, patch_allowed_for_stage
@@ -97,6 +99,38 @@ class StageContractsTest(unittest.TestCase):
         self.assertTrue(context["blocking_stage_blocks_next"])
         self.assertEqual(context["allowed_patch_keys"], [])
         self.assertIn("font_size_delta", context["blocked_patch_keys"])
+
+    def test_stage_contract_entrypoints_are_only_defined_in_stages_module(self) -> None:
+        src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
+        definitions = {
+            "StageSpec": [],
+            "StageResult": [],
+            "STAGE_SPECS": [],
+            "stage_gate_for_report": [],
+            "prompt_stage_context": [],
+        }
+
+        for path in src_root.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+                    if node.name in definitions:
+                        definitions[node.name].append(path.name)
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id in definitions:
+                            definitions[target.id].append(path.name)
+
+        self.assertEqual(
+            definitions,
+            {
+                "StageSpec": ["stages.py"],
+                "StageResult": ["stages.py"],
+                "STAGE_SPECS": ["stages.py"],
+                "stage_gate_for_report": ["stages.py"],
+                "prompt_stage_context": ["stages.py"],
+            },
+        )
 
     def test_profile_contracts_cover_current_profiles(self) -> None:
         self.assertEqual(
