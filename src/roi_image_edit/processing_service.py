@@ -1019,11 +1019,19 @@ def candidate_trace_summary(report: dict[str, Any] | None) -> dict[str, Any]:
     blocking_stage = stage_gate.get("blocking_stage") if isinstance(stage_gate, dict) else None
     background_metrics = report.get("background_texture_metrics")
     background_issues = stage_issues(report, "background_cleanup")
+    shape_change = report.get("shape_change_report")
     return {
         **stage_progress_fields(report),
         "blocking_stage": blocking_stage,
         "stage_pass": bool(stage_gate.get("pass")) if isinstance(stage_gate, dict) else None,
         "stage_severity": round(float(stage_issue_severity(report, blocking_stage)), 3),
+        "placement_strategy": report.get("placement_strategy"),
+        "placement_strategy_reason": report.get("placement_strategy_reason"),
+        "shape_change_large": (
+            bool(shape_change.get("shape_change_large"))
+            if isinstance(shape_change, dict)
+            else None
+        ),
         "background": {
             "issues": [
                 str(issue.get("type") or "")
@@ -1075,19 +1083,97 @@ def process_region(
     pipeline_profile: str = "photo_scan",
     progress: ProgressCallback | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
+    region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
     plan = build_region_plan(
         original,
         roi,
         source_text=source_text,
         target_text=target_text,
     )
+    source_count = len(text_chars(source_text))
+    target_count = len(text_chars(target_text))
+    slot_report = plan.slot_quality_report or {}
+    if source_count and not slot_report.get("pass", False):
+        region_dir.mkdir(parents=True, exist_ok=True)
+        rejected_compare_path = region_dir / "slot_quality_rejected_compare.png"
+        compare_region_preview(original, original, roi).save(rejected_compare_path)
+        if progress:
+            progress(
+                "slot_quality_failed",
+                {
+                    "region_id": region_id,
+                    "pipeline_profile": pipeline_profile,
+                    "blocking_stage": "hard_boundary",
+                    "slot_quality_report": slot_report,
+                },
+            )
+        summary = {
+            "plan": {
+                "search_roi": list(plan.search_roi),
+                "target_roi": list(plan.target_roi),
+                "slot_boxes": [asdict(item) for item in plan.slot_boxes],
+                "protected_boxes": [list(item) for item in plan.protected_boxes],
+                "draw_mode": plan.draw_mode,
+                "pipeline_profile": pipeline_profile,
+                "placement_strategy": plan.placement_strategy,
+                "placement_strategy_reason": plan.placement_strategy_reason,
+                "slot_quality_report": slot_report,
+                "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
+            },
+            "score": None,
+            "hard_check": {
+                "pass": False,
+                "pipeline_profile": pipeline_profile,
+                "stage_gate": {
+                    "profile": pipeline_profile,
+                    "blocking_stage": "hard_boundary",
+                    "pass": False,
+                    "stage_status": {
+                        "hard_boundary": {
+                            "pass": False,
+                            "reason": "slot_quality_failed",
+                            "issues": slot_report.get("issues") or [],
+                        }
+                    },
+                },
+                "slot_quality_report": slot_report,
+            },
+            "vision": {
+                "enabled": False,
+                "accepted": False,
+                "reason": "slot_quality_failed_before_candidate_generation",
+            },
+            "trace": {
+                "accepted": False,
+                "final_is_rejected_candidate": True,
+                "final_candidate_id": None,
+                "final_blocking_stage": "hard_boundary",
+                "final_stage_severity": None,
+                "revision_round_count": 0,
+                "last_round_stop_reason": "slot_quality_failed",
+                "next_round_plan": {
+                    "blocking_stage": "hard_boundary",
+                    "stage_source": "slot_quality_gate",
+                    "actions": [
+                        "重新选择只覆盖旧值文字和必要空白的 ROI；不能包含字段标签或右侧未修改文字。"
+                    ],
+                },
+            },
+            "accepted": False,
+            "applied": False,
+            "artifacts": {
+                "selected_candidate": None,
+                "selected_compare": str(rejected_compare_path),
+                "display_image_is_candidate": True,
+            },
+            "rejected_fonts": [],
+        }
+        return original.copy(), original.copy(), [], summary, False
     font_candidates = find_font_candidates(font_source="recommended")
     font_candidates, rejected_fonts = filter_fonts_by_required_text(
         font_candidates,
         f"{source_text}{target_text}",
     )
-    source_count = len(text_chars(source_text))
-    target_count = len(text_chars(target_text))
     initial_size = initial_font_size(plan)
     max_font_size = max_font_size_for_plan(plan)
     style_plan = plan
@@ -1104,6 +1190,9 @@ def process_region(
             style_reference_text=plan.style_reference_text,
             draw_mode=plan.draw_mode,
             text_angle_degrees=plan.text_angle_degrees,
+            placement_strategy=plan.placement_strategy,
+            placement_strategy_reason=plan.placement_strategy_reason,
+            slot_quality_report=plan.slot_quality_report,
         )
     font_style_reference = build_font_style_reference(
         original,
@@ -1328,7 +1417,6 @@ def process_region(
                 **stage_progress_fields(rendered[0][2] if rendered else None),
             },
         )
-    region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
     def vision_progress(event: str, fields: dict[str, Any]) -> None:
         if progress:
             progress(event, {"region_id": region_id, **(fields or {})})

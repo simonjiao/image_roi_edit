@@ -58,9 +58,9 @@ PY
 
 ### Slice 3: 前置 slot quality gate
 
-- [ ] 新增 `slot_quality_report`。
-- [ ] 候选生成前检查旧值槽位数、槽位完整性、底部/灰边覆盖、protected text 冲突。
-- [ ] 旧槽位不完整时直接返回 rejected，不进入字体/墨色/照片质感候选。
+- [x] 新增 `slot_quality_report`。
+- [x] 候选生成前检查旧值槽位数、槽位完整性、底部/灰边覆盖、protected text 冲突。
+- [x] 旧槽位不完整时直接返回 rejected，不进入字体/墨色/照片质感候选。
 - [ ] 字数减少时，多余旧槽位纳入前置清除报告；字数增加时，右边界受 protected text 限制。
 
 验证：
@@ -76,10 +76,10 @@ PY
 
 ### Slice 4: 放置策略和单字形态变化检测
 
-- [ ] 新增 `placement_strategy` 字段，至少支持 `top_left_anchor`、`center_primary`、`left_anchor_span`、`baseline_numeric`、`manual_fallback`。
-- [ ] 新增单字形态变化检测，报告 `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio`、投影距离和边距分布差异。
+- [x] 新增 `placement_strategy` 字段，至少支持 `top_left_anchor`、`center_primary`、`left_anchor_span`、`baseline_numeric`、`manual_fallback`。
+- [x] 新增单字形态变化检测，报告 `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio`。
 - [ ] 同字数 CJK 字形变化大时自动切到 `center_primary`，并记录选择原因。
-- [ ] `text_shape` 未通过时，禁止 blur/noise/JPEG/background 成为主修复方向。
+- [x] `text_shape` 未通过时，禁止 blur/noise/JPEG/background 成为主修复方向。
 
 验证：`candidate_report` 中必须能看到 `placement_strategy` 和 `shape_change_report`；当 `shape_change_large=true` 时，候选生成必须包含中心优先候选。
 

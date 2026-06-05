@@ -206,6 +206,7 @@ def main() -> None:
                 "image_started",
                 "auto_roi_finished",
                 "region_started",
+                "slot_quality_failed",
                 "region_candidates_finished",
                 "region_initial_acceptance",
                 "finalist_revision_started",

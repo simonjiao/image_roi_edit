@@ -127,6 +127,11 @@ function candidateMetaLines(candidate) {
   const lines = [
     `${candidate.index}. ${candidate.kind || "candidate"} | ${candidate.label}`,
     `profile ${candidate.pipeline_profile || "photo_scan"} | stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
+    `placement ${candidate.placement_strategy || "-"} | shape_large ${
+      candidate.shape_change_large === null || candidate.shape_change_large === undefined
+        ? "-"
+        : String(candidate.shape_change_large)
+    }`,
     `lt55 ${formatNumber(metrics.lt55_delta)} | 55-70 ${formatNumber(metrics.band_55_70_delta)} | 70-90 ${formatNumber(metrics.band_70_90_delta)}`,
     `background ${issues || "ok"} | var ${formatNumber(background.patch_variance_ratio)} | residual ${formatNumber(background.residual_energy_ratio)}`,
   ];
@@ -221,6 +226,11 @@ function progressEventText(record) {
       }，方向分 ${formatNumber(record.direction_score)}`;
     case "region_started":
       return `开始处理区域：${record.source_text || "-"} -> ${record.target_text || "-"}`;
+    case "slot_quality_failed":
+      return `旧槽位门禁失败：${(record.slot_quality_report?.issues || [])
+        .slice(0, 1)
+        .map((issue) => issue.type)
+        .join(", ") || "slot_quality_failed"}`;
     case "region_candidates_started":
       return `生成候选图：${record.candidate_count ?? "-"} 个`;
     case "region_candidates_finished":

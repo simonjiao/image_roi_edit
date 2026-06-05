@@ -2248,6 +2248,139 @@ def slots_for_region(
     return synthesize_slots(roi, len(basis_chars))
 
 
+def slot_quality_report(
+    img: Image.Image,
+    roi: tuple[int, int, int, int],
+    slots: tuple[TextRun, ...],
+    *,
+    source_text: str,
+    target_text: str,
+    protected_boxes: tuple[tuple[int, int, int, int], ...],
+    threshold: int = 165,
+) -> dict[str, Any]:
+    source_chars = text_chars(source_text)
+    target_chars = text_chars(target_text)
+    expected_count = len(source_chars) or len(target_chars)
+    issues: list[dict[str, Any]] = []
+    if expected_count and len(slots) < expected_count:
+        issues.append(
+            {
+                "type": "slot_count_too_low",
+                "expected": expected_count,
+                "actual": len(slots),
+            }
+        )
+    if source_chars and len(slots) > len(source_chars) + 1:
+        issues.append(
+            {
+                "type": "slot_count_too_high",
+                "expected": len(source_chars),
+                "actual": len(slots),
+            }
+        )
+
+    arr = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape[:2]
+    per_slot: list[dict[str, Any]] = []
+    ordered_slots = tuple(sorted(slots, key=lambda item: item.x1))
+    for idx, slot in enumerate(ordered_slots):
+        x1, y1, x2, y2 = clamp_box((slot.x1, slot.y1, slot.x2, slot.y2), (w, h))
+        width = max(0, x2 - x1)
+        height = max(0, y2 - y1)
+        crop = gray[y1:y2, x1:x2] if width and height else np.zeros((0, 0), dtype=np.uint8)
+        dark_pixels = int(np.count_nonzero(crop < threshold))
+        slot_issues: list[dict[str, Any]] = []
+        if width < 3 or height < 3:
+            slot_issues.append({"type": "slot_too_small", "width": width, "height": height})
+        min_dark_pixels = max(4, int(round(width * height * 0.025)))
+        if dark_pixels < min_dark_pixels:
+            slot_issues.append(
+                {
+                    "type": "slot_has_too_few_dark_pixels",
+                    "dark_pixels": dark_pixels,
+                    "minimum": min_dark_pixels,
+                }
+            )
+        overflow_pad = max(2, int(round(height * 0.20)))
+        bottom_y2 = min(roi[3], y2 + overflow_pad)
+        if bottom_y2 > y2 and width > 0:
+            below = gray[y2:bottom_y2, x1:x2] < threshold
+            below_pixels = int(np.count_nonzero(below))
+            if below_pixels >= max(3, int(round(width * overflow_pad * 0.025))):
+                slot_issues.append(
+                    {
+                        "type": "slot_bottom_overflow",
+                        "dark_pixels_below": below_pixels,
+                        "checked_y": [y2, bottom_y2],
+                    }
+                )
+        slot_box = (x1, y1, x2, y2)
+        protected_conflicts = [
+            list(box)
+            for box in protected_boxes
+            if box_overlap_area(slot_box, box) > 0
+        ]
+        if protected_conflicts:
+            slot_issues.append(
+                {
+                    "type": "slot_overlaps_protected_text",
+                    "protected_boxes": protected_conflicts,
+                }
+            )
+        issues.extend({"index": idx, **issue} for issue in slot_issues)
+        per_slot.append(
+            {
+                "index": idx,
+                "box": [x1, y1, x2, y2],
+                "width": width,
+                "height": height,
+                "dark_pixels": dark_pixels,
+                "issues": slot_issues,
+            }
+        )
+
+    return {
+        "pass": not issues,
+        "expected_count": expected_count,
+        "actual_count": len(slots),
+        "source_text": source_text,
+        "target_text": target_text,
+        "roi": list(roi),
+        "per_slot": per_slot,
+        "issues": issues,
+    }
+
+
+def choose_placement_strategy(
+    *,
+    source_text: str,
+    target_text: str,
+    slots: tuple[TextRun, ...],
+    slot_report: dict[str, Any],
+    draw_mode: str,
+) -> tuple[str, str]:
+    source_count = len(text_chars(source_text))
+    target_count = len(text_chars(target_text))
+    if not source_count:
+        return "manual_fallback", "source_text_missing"
+    if draw_mode == "center" or target_count > source_count:
+        return "left_anchor_span", "target_text_longer_than_source"
+    if target_count < source_count:
+        return "left_anchor_span", "target_text_shorter_than_source"
+    if not is_mostly_cjk(source_text or target_text):
+        return "baseline_numeric", "non_cjk_value_uses_baseline_priority"
+    if not slot_report.get("pass"):
+        return "top_left_anchor", "slot_quality_failed_keeps_original_anchor_for_rejection"
+    heights = [max(1, slot.y2 - slot.y1) for slot in slots]
+    widths = [max(1, slot.x2 - slot.x1) for slot in slots]
+    if heights and max(heights) - min(heights) > max(2, float(np.median(heights)) * 0.18):
+        return "center_primary", "same_length_cjk_slot_height_variation"
+    if widths and max(widths) - min(widths) > max(3, float(np.median(widths)) * 0.22):
+        return "center_primary", "same_length_cjk_slot_width_variation"
+    return "top_left_anchor", "same_length_cjk_compact_slots"
+
+
 def build_region_plan(
     img: Image.Image,
     roi: tuple[int, int, int, int],
@@ -2285,6 +2418,15 @@ def build_region_plan(
         )
     source_reference_box = target_roi
     protected_boxes = protected_boxes_for_region(img, roi, slots)
+    slot_report = slot_quality_report(
+        img,
+        roi,
+        slots,
+        source_text=source_text,
+        target_text=target_text,
+        protected_boxes=protected_boxes,
+        threshold=threshold,
+    )
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
     if target_count and source_count and target_count > source_count:
@@ -2327,6 +2469,13 @@ def build_region_plan(
     text_angle_degrees = estimate_text_angle_degrees(slots)
     if draw_mode == "line_chars":
         text_angle_degrees = max(-1.5, min(1.5, text_angle_degrees))
+    placement_strategy, placement_reason = choose_placement_strategy(
+        source_text=source_text,
+        target_text=target_text,
+        slots=slots,
+        slot_report=slot_report,
+        draw_mode=draw_mode,
+    )
     return RenderPlan(
         target_text=target_text,
         source_text=source_text,
@@ -2339,6 +2488,9 @@ def build_region_plan(
         style_reference_text=None,
         draw_mode=draw_mode,
         text_angle_degrees=text_angle_degrees,
+        placement_strategy=placement_strategy,
+        placement_strategy_reason=placement_reason,
+        slot_quality_report=slot_report,
     )
 
 

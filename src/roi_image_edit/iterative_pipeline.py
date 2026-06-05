@@ -87,6 +87,9 @@ class RenderPlan:
     style_reference_text: str | None
     draw_mode: str
     text_angle_degrees: float = 0.0
+    placement_strategy: str = "top_left_anchor"
+    placement_strategy_reason: str = "default"
+    slot_quality_report: dict[str, Any] | None = None
 
 
 def intersect_boxes(
@@ -1450,14 +1453,21 @@ def char_text_position(
     offsets: tuple[tuple[int, int], ...],
     *,
     row_center_y: float | None = None,
+    center_in_slot: bool = False,
 ) -> tuple[float, float]:
     bbox = font_text_bbox(font, ch)
     cdx, cdy = offsets[idx] if idx < len(offsets) else (0, 0)
-    x = slot.x1 - bbox[0] + params.text_dx + cdx
-    if row_center_y is None:
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    if center_in_slot:
+        x = (slot.x1 + slot.x2) / 2.0 - text_w / 2.0 - bbox[0] + params.text_dx + cdx
+    else:
+        x = slot.x1 - bbox[0] + params.text_dx + cdx
+    if center_in_slot:
+        y = (slot.y1 + slot.y2) / 2.0 - text_h / 2.0 - bbox[1] + params.text_dy + cdy
+    elif row_center_y is None:
         y = slot.y1 - bbox[1] + params.text_dy + cdy
     else:
-        text_h = bbox[3] - bbox[1]
         y = row_center_y - text_h / 2.0 - bbox[1] + params.text_dy + cdy
     return x, y
 
@@ -1702,6 +1712,7 @@ def draw_replacement_layer(
         or (plan.draw_mode == "auto" and is_mostly_cjk(plan.target_text) and len(plan.slot_boxes) >= len(chars))
     )
     row_center_y = slot_row_center_y(plan, len(chars)) if plan.draw_mode == "line_chars" else None
+    center_in_slot = plan.placement_strategy == "center_primary"
 
     if use_slots and chars:
         ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
@@ -1719,6 +1730,7 @@ def draw_replacement_layer(
                 idx,
                 offsets,
                 row_center_y=row_center_y,
+                center_in_slot=center_in_slot,
             )
             draw.text((x, y), ch, font=font, fill=alpha)
             shear_x = reference_slot_shear(original, plan, idx, params)
@@ -2908,6 +2920,7 @@ def replacement_char_bboxes(
     boxes: list[tuple[int, int, int, int] | None] = []
     offsets = params.char_offsets or default_char_offsets(plan.target_text)
     row_center_y = slot_row_center_y(plan, len(chars)) if plan.draw_mode == "line_chars" else None
+    center_in_slot = plan.placement_strategy == "center_primary"
     ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
     changed_indices = changed_text_slot_indices(plan)
     for idx, ch in enumerate(chars):
@@ -2925,6 +2938,7 @@ def replacement_char_bboxes(
             idx,
             offsets,
             row_center_y=row_center_y,
+            center_in_slot=center_in_slot,
         )
         draw.text((x, y), ch, font=font, fill=int(max(0.0, min(1.0, params.opacity)) * 255))
         layer = apply_ink_gain(layer, params.ink_gain)

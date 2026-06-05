@@ -24,6 +24,7 @@ from roi_image_edit.iterative_pipeline import (
     is_mostly_cjk,
     local_score,
     params_label,
+    replacement_char_bboxes,
     render_candidate,
     strict_gate_issues,
     strict_visual_metrics,
@@ -1354,6 +1355,9 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
             issue_type.startswith("char_")
             or issue_type.startswith("replacement_")
             or issue_type.startswith("font_")
+            or issue_type.startswith("bbox_")
+            or issue_type.startswith("centroid_")
+            or issue_type.startswith("ink_area_ratio_")
             or "font_" in issue_type
         ):
             stages["text_shape"].append(issue)
@@ -1843,6 +1847,129 @@ def report_has_excess_black_core(report: dict[str, Any] | None) -> bool:
             return True
     return False
 
+
+def shape_change_report(
+    size: tuple[int, int],
+    plan: RenderPlan,
+    params: CandidateParams,
+) -> dict[str, Any]:
+    source_chars = text_chars(plan.source_text or "")
+    target_chars = text_chars(plan.target_text)
+    if not source_chars or not target_chars or len(source_chars) != len(target_chars):
+        return {"enabled": False, "reason": "requires_same_length_source_and_target"}
+    if not plan.slot_boxes or len(plan.slot_boxes) < len(target_chars):
+        return {"enabled": False, "reason": "missing_per_character_slots"}
+    candidate_boxes = replacement_char_bboxes(size, plan, params)
+    if not candidate_boxes:
+        return {"enabled": False, "reason": "missing_candidate_char_boxes"}
+
+    ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    per_char: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    for idx, (source_char, target_char) in enumerate(zip(source_chars, target_chars)):
+        slot = ordered_slots[idx]
+        candidate_box = candidate_boxes[idx] if idx < len(candidate_boxes) else None
+        slot_w = max(1.0, float(slot.x2 - slot.x1))
+        slot_h = max(1.0, float(slot.y2 - slot.y1))
+        slot_area = max(1.0, slot_w * slot_h)
+        if candidate_box is None:
+            issue = {"type": "candidate_char_missing", "index": idx, "target_char": target_char}
+            per_char.append(
+                {
+                    "index": idx,
+                    "source_char": source_char,
+                    "target_char": target_char,
+                    "slot_box": [slot.x1, slot.y1, slot.x2, slot.y2],
+                    "candidate_box": None,
+                    "issues": [issue],
+                }
+            )
+            issues.append(issue)
+            continue
+        x1, y1, x2, y2 = candidate_box
+        candidate_w = max(1.0, float(x2 - x1))
+        candidate_h = max(1.0, float(y2 - y1))
+        candidate_area = candidate_w * candidate_h
+        slot_cx = (slot.x1 + slot.x2) / 2.0
+        slot_cy = (slot.y1 + slot.y2) / 2.0
+        candidate_cx = (x1 + x2) / 2.0
+        candidate_cy = (y1 + y2) / 2.0
+        width_delta_ratio = (candidate_w - slot_w) / slot_w
+        height_delta_ratio = (candidate_h - slot_h) / slot_h
+        centroid_dx = candidate_cx - slot_cx
+        centroid_dy = candidate_cy - slot_cy
+        ink_area_ratio = candidate_area / slot_area
+        char_issues: list[dict[str, Any]] = []
+        if source_char != target_char:
+            if abs(width_delta_ratio) > 0.30:
+                char_issues.append(
+                    {
+                        "type": "bbox_width_delta_ratio_large",
+                        "actual": round(float(width_delta_ratio), 4),
+                        "limit": 0.30,
+                    }
+                )
+            if abs(height_delta_ratio) > 0.24:
+                char_issues.append(
+                    {
+                        "type": "bbox_height_delta_ratio_large",
+                        "actual": round(float(height_delta_ratio), 4),
+                        "limit": 0.24,
+                    }
+                )
+            if abs(centroid_dx) > max(2.0, slot_h * 0.16):
+                char_issues.append(
+                    {
+                        "type": "centroid_dx_large",
+                        "actual": round(float(centroid_dx), 3),
+                        "limit": round(float(max(2.0, slot_h * 0.16)), 3),
+                    }
+                )
+            if abs(centroid_dy) > max(2.0, slot_h * 0.16):
+                char_issues.append(
+                    {
+                        "type": "centroid_dy_large",
+                        "actual": round(float(centroid_dy), 3),
+                        "limit": round(float(max(2.0, slot_h * 0.16)), 3),
+                    }
+                )
+            if ink_area_ratio < 0.42 or ink_area_ratio > 1.95:
+                char_issues.append(
+                    {
+                        "type": "ink_area_ratio_outside_range",
+                        "actual": round(float(ink_area_ratio), 4),
+                        "range": [0.42, 1.95],
+                    }
+                )
+        per_char.append(
+            {
+                "index": idx,
+                "source_char": source_char,
+                "target_char": target_char,
+                "slot_box": [slot.x1, slot.y1, slot.x2, slot.y2],
+                "candidate_box": [int(x1), int(y1), int(x2), int(y2)],
+                "bbox_width_delta_ratio": round(float(width_delta_ratio), 4),
+                "bbox_height_delta_ratio": round(float(height_delta_ratio), 4),
+                "centroid_dx": round(float(centroid_dx), 3),
+                "centroid_dy": round(float(centroid_dy), 3),
+                "ink_area_ratio": round(float(ink_area_ratio), 4),
+                "issues": char_issues,
+            }
+        )
+        issues.extend(
+            {"index": idx, "target_char": target_char, **issue}
+            for issue in char_issues
+        )
+    return {
+        "enabled": True,
+        "placement_strategy": plan.placement_strategy,
+        "placement_strategy_reason": plan.placement_strategy_reason,
+        "shape_change_large": bool(issues),
+        "per_char": per_char,
+        "issues": issues,
+    }
+
+
 def candidate_report(
     original: Image.Image,
     candidate: Image.Image,
@@ -1906,8 +2033,17 @@ def candidate_report(
         font_style_reference,
         max_score_ratio=1.25,
     )
+    shape_report = shape_change_report(original.size, plan, params)
+    shape_issues = (
+        shape_report.get("issues")
+        if isinstance(shape_report, dict) and isinstance(shape_report.get("issues"), list)
+        else []
+    )
     report["params"] = asdict(params)
     report["pipeline_profile"] = pipeline_profile or "photo_scan"
+    report["placement_strategy"] = plan.placement_strategy
+    report["placement_strategy_reason"] = plan.placement_strategy_reason
+    report["slot_quality_report"] = plan.slot_quality_report
     report["reference_profile"] = reference_profile
     report["strict_visual_metrics"] = strict_metrics
     report["char_gray_band_metrics"] = char_gray_band_metrics(original, candidate, plan)
@@ -1916,6 +2052,7 @@ def candidate_report(
     report["background_texture_metrics"] = background_texture_metrics(original, candidate, plan, params)
     report["extra_source_slot_cleanup_metrics"] = cleanup_metrics
     report["char_alignment_metrics"] = alignment_metrics
+    report["shape_change_report"] = shape_report
     report["font_style_gate"] = font_style
     report["strict_gate"] = {
         "max_dark_pixel_ratio": max_dark_pixel_ratio,
@@ -1933,10 +2070,12 @@ def candidate_report(
         "pass": not strict_issues
         and not cleanup_issues
         and not alignment_issues
+        and not shape_issues
         and bool(font_style.get("pass", True)),
         "issues": strict_issues
         + cleanup_issues
         + alignment_issues
+        + list(shape_issues)
         + list(font_style.get("issues", [])),
     }
     report["local_ink_balance_issues"] = local_ink_balance_issues(report)
