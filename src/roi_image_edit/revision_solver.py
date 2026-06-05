@@ -68,9 +68,48 @@ TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
 TEXT_SHAPE_GRID_TOP_LIMIT = 48
 TEXT_SHAPE_GRID_BUDGET_RANGE = (300, 1500)
 
+INK_GRAY_GRID_ALLOWED_DELTA_KEYS = frozenset(
+    {
+        "opacity",
+        "stroke_opacity",
+        "ink_gain",
+        "alpha_contrast",
+        "core_ink_gain",
+        "core_darken_strength",
+        "core_darken_threshold",
+        "core_darken_target_gray",
+    }
+)
+INK_GRAY_GRID_BLOCKED_DELTA_KEYS = frozenset(
+    {
+        "font_name",
+        "font_path",
+        "font_size",
+        "blur",
+        "text_dx",
+        "text_dy",
+        "char_offsets",
+        "mask_threshold",
+        "mask_dilate_iterations",
+        "inpaint_radius",
+        "photo_warp",
+        "edge_breakup",
+        "photo_noise",
+        "jpeg_quality",
+    }
+)
+INK_GRAY_GRID_TOP_LIMIT = 16
+INK_GRAY_GRID_BUDGET_RANGE = (100, 800)
+
 
 @dataclass(frozen=True)
 class ShapeCandidateGrid:
+    candidates: list[CandidateParams]
+    report: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class InkGrayCandidateGrid:
     candidates: list[CandidateParams]
     report: dict[str, Any]
 
@@ -733,6 +772,244 @@ def text_shape_reset_candidates(
         report,
         limit=limit,
     ).candidates
+
+
+def report_blocks_ink_gray(report: dict[str, Any] | None) -> bool:
+    if not isinstance(report, dict):
+        return False
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    return stage_gate.get("blocking_stage") == "ink_gray_balance"
+
+
+def _float_axis(
+    base: float,
+    deltas: tuple[float, ...],
+    *,
+    low: float,
+    high: float,
+    target_len: int,
+) -> tuple[float, ...]:
+    values: list[float] = []
+
+    def add(value: float) -> None:
+        bounded = round(max(low, min(high, float(value))), 3)
+        if bounded not in values:
+            values.append(bounded)
+
+    for delta in deltas:
+        add(base + delta)
+    step = 0.01
+    probe = 1
+    while len(values) < target_len and probe <= 80:
+        add(base + probe * step)
+        if len(values) >= target_len:
+            break
+        add(base - probe * step)
+        probe += 1
+    return tuple(values[:target_len])
+
+
+def _int_axis(
+    base: int,
+    deltas: tuple[int, ...],
+    *,
+    low: int,
+    high: int,
+    target_len: int,
+) -> tuple[int, ...]:
+    values: list[int] = []
+
+    def add(value: int) -> None:
+        bounded = max(low, min(high, int(value)))
+        if bounded not in values:
+            values.append(bounded)
+
+    for delta in deltas:
+        add(base + delta)
+    probe = 1
+    while len(values) < target_len and probe <= 80:
+        add(base + probe)
+        if len(values) >= target_len:
+            break
+        add(base - probe)
+        probe += 1
+    return tuple(values[:target_len])
+
+
+def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in stage_issues(report, "ink_gray_balance")
+        if isinstance(issue, dict)
+    }
+    return {
+        "excess_black_core": report_has_excess_black_core(report),
+        "outer_gray_halo": report_has_outer_gray_halo(report),
+        "needs_wider_gray_strokes": report_needs_wider_gray_strokes(report),
+        "needs_thinner_strokes": report_needs_thinner_strokes(report),
+        "fine_strokes_too_soft": report_has_fine_strokes_too_soft(report),
+        "core_too_light": bool(
+            issue_types
+            & {
+                "core_mean_gray_too_light",
+                "core_lighten_too_high",
+                "changed_char_core_too_light",
+                "ink_too_light",
+            }
+        ),
+    }
+
+
+def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
+    flags = ink_gray_issue_flags(report)
+    if flags["excess_black_core"] or flags["needs_thinner_strokes"]:
+        opacity_deltas = (0.0, -0.02, -0.04, -0.06)
+        stroke_deltas = (0.0, -0.02, -0.04, 0.01)
+        ink_deltas = (0.0, -0.02)
+        alpha_deltas = (0.0, -0.04)
+        core_deltas = ((0.0, 0.0, 0, 0), (-0.04, -0.04, -6, 4), (-0.08, -0.06, -10, 8), (-0.02, -0.08, -4, 10))
+    elif flags["outer_gray_halo"]:
+        opacity_deltas = (0.0, 0.01, -0.02, 0.02)
+        stroke_deltas = (0.0, -0.01, -0.03, 0.01)
+        ink_deltas = (0.0, 0.01)
+        alpha_deltas = (0.0, -0.04)
+        core_deltas = ((0.0, 0.0, 0, 0), (0.02, 0.02, 3, -2), (-0.02, -0.02, -4, 4), (0.04, 0.01, 6, -4))
+    else:
+        opacity_deltas = (0.0, 0.02, 0.04, -0.02)
+        stroke_deltas = (0.0, 0.02, 0.04, -0.01)
+        ink_deltas = (0.0, 0.02)
+        alpha_deltas = (0.0, 0.04)
+        core_deltas = ((0.0, 0.0, 0, 0), (0.04, 0.04, 6, -4), (0.08, 0.06, 10, -8), (0.02, 0.08, 4, -10))
+
+    core_axis = tuple(
+        (
+            _float_axis(params.core_ink_gain, (core_delta,), low=0.0, high=1.0, target_len=1)[0],
+            _float_axis(params.core_darken_strength, (darken_delta,), low=0.0, high=1.0, target_len=1)[0],
+            _int_axis(params.core_darken_threshold, (threshold_delta,), low=0, high=254, target_len=1)[0],
+            _int_axis(params.core_darken_target_gray, (target_delta,), low=0, high=120, target_len=1)[0],
+        )
+        for core_delta, darken_delta, threshold_delta, target_delta in core_deltas
+    )
+    return {
+        "opacity": _float_axis(params.opacity, opacity_deltas, low=0.2, high=1.0, target_len=4),
+        "stroke_opacity": _float_axis(params.stroke_opacity, stroke_deltas, low=0.0, high=1.0, target_len=4),
+        "ink_gain": _float_axis(params.ink_gain, ink_deltas, low=0.0, high=1.0, target_len=2),
+        "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=2),
+        "core_tone": core_axis,
+    }
+
+
+def ink_gray_candidate_grid(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+    *,
+    limit: int = INK_GRAY_GRID_TOP_LIMIT,
+) -> InkGrayCandidateGrid:
+    if not report_blocks_ink_gray(report):
+        return InkGrayCandidateGrid(
+            candidates=[],
+            report={
+                "enabled": False,
+                "reason": "ink_gray_balance_not_blocking",
+                "stage_id": "ink_gray_balance",
+                "candidate_count": 0,
+            },
+        )
+
+    axes = ink_gray_axes(params, report)
+    opacity_values = axes["opacity"]
+    stroke_values = axes["stroke_opacity"]
+    ink_values = axes["ink_gain"]
+    alpha_values = axes["alpha_contrast"]
+    core_values = axes["core_tone"]
+    raw_budget = (
+        len(opacity_values)
+        * len(stroke_values)
+        * len(ink_values)
+        * len(alpha_values)
+        * len(core_values)
+    )
+
+    variants: list[CandidateParams] = []
+    for opacity in opacity_values:
+        for stroke_opacity in stroke_values:
+            for ink_gain in ink_values:
+                for alpha_contrast in alpha_values:
+                    for (
+                        core_ink_gain,
+                        core_darken_strength,
+                        core_darken_threshold,
+                        core_darken_target_gray,
+                    ) in core_values:
+                        variants.append(
+                            mutate_params(
+                                params,
+                                opacity=opacity,
+                                stroke_opacity=stroke_opacity,
+                                ink_gain=ink_gain,
+                                alpha_contrast=alpha_contrast,
+                                core_ink_gain=core_ink_gain,
+                                core_darken_strength=core_darken_strength,
+                                core_darken_threshold=core_darken_threshold,
+                                core_darken_target_gray=core_darken_target_gray,
+                            )
+                        )
+    retained_limit = min(limit, INK_GRAY_GRID_TOP_LIMIT)
+    candidates = dedupe_params(variants, retained_limit)
+    candidate_records: list[dict[str, Any]] = []
+    violations: list[dict[str, Any]] = []
+    for candidate in candidates:
+        delta_keys = params_delta_keys(params, candidate)
+        blocked_delta_keys = sorted(delta_keys & INK_GRAY_GRID_BLOCKED_DELTA_KEYS)
+        undeclared_delta_keys = sorted(delta_keys - INK_GRAY_GRID_ALLOWED_DELTA_KEYS)
+        record = {
+            "candidate_id": candidate.candidate_id,
+            "parent_candidate_id": params.candidate_id,
+            "delta_keys": sorted(delta_keys),
+            "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
+            "blocked_delta_keys": blocked_delta_keys,
+            "undeclared_delta_keys": undeclared_delta_keys,
+        }
+        candidate_records.append(record)
+        if blocked_delta_keys or undeclared_delta_keys:
+            violations.append(record)
+
+    budget_min, budget_max = INK_GRAY_GRID_BUDGET_RANGE
+    return InkGrayCandidateGrid(
+        candidates=candidates,
+        report={
+            "enabled": True,
+            "stage_id": "ink_gray_balance",
+            "optimization_step": "ink_gray_balance",
+            "parent_candidate_id": params.candidate_id,
+            "parent_shape_candidate_id": params.candidate_id,
+            "budget": {
+                "raw_candidate_budget": raw_budget,
+                "budget_min": budget_min,
+                "budget_max": budget_max,
+                "within_budget": budget_min <= raw_budget <= budget_max,
+                "retained_top_limit": retained_limit,
+                "retained_count": len(candidates),
+                "pruned_count": max(0, raw_budget - len(candidates)),
+            },
+            "axes": {
+                "opacity_count": len(opacity_values),
+                "stroke_opacity_count": len(stroke_values),
+                "ink_gain_count": len(ink_values),
+                "alpha_contrast_count": len(alpha_values),
+                "core_tone_count": len(core_values),
+                "ranking_method": "local_issue_ordered_axis_priority",
+            },
+            "issue_flags": ink_gray_issue_flags(report),
+            "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
+            "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
+            "candidate_count": len(candidates),
+            "candidate_delta_audit": candidate_records,
+            "violations": violations,
+        },
+    )
 
 
 

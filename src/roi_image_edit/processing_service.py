@@ -64,6 +64,7 @@ from roi_image_edit.revision_solver import (
     constrained_revision_params,
     final_acceptance_delivers,
     final_font_revision_candidates,
+    ink_gray_candidate_grid,
     report_blocks_text_shape,
     revision_selection_score,
     text_shape_reset_candidate_grid,
@@ -486,6 +487,12 @@ def run_region_vision_checks(
                 limit=48,
             )
             shape_reset_params = shape_candidate_grid.candidates
+            ink_candidate_grid = ink_gray_candidate_grid(
+                current_params,
+                current_report,
+                limit=16,
+            )
+            ink_gray_params = ink_candidate_grid.candidates
             round_record: dict[str, Any] = {
                 "round": round_idx,
                 "basis_candidate_id": current_params.candidate_id,
@@ -493,6 +500,7 @@ def run_region_vision_checks(
                 "basis_final_decision": current_acceptance.get("final_decision"),
                 "patch_count": len(round_patches),
                 "shape_reset_count": len(shape_reset_params),
+                "ink_gray_count": len(ink_gray_params),
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -504,6 +512,7 @@ def run_region_vision_checks(
                     if key not in {"patches", "stage_filter_report"}
                 },
                 "shape_candidate_grid": shape_candidate_grid.report,
+                "ink_gray_candidate_grid": ink_candidate_grid.report,
                 "stage_filter_report": local_stage_filter_report,
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
@@ -519,6 +528,7 @@ def run_region_vision_checks(
                         "round": round_idx,
                         "patch_count": len(round_patches),
                         "shape_reset_count": len(shape_reset_params),
+                        "ink_gray_count": len(ink_gray_params),
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -527,7 +537,7 @@ def run_region_vision_checks(
                         **stage_progress_fields(current_report),
                     },
                 )
-            if not round_patches and not shape_reset_params:
+            if not round_patches and not shape_reset_params and not ink_gray_params:
                 round_record["stop_reason"] = "no_revision_candidates"
                 revision_rounds.append(round_record)
                 break
@@ -539,6 +549,21 @@ def run_region_vision_checks(
             candidate_jobs: list[tuple[str, int, dict[str, Any] | None, CandidateParams, dict[str, Any]]] = []
             for shape_idx, shape_params in enumerate(shape_reset_params, start=1):
                 candidate_jobs.append(("shape_reset", shape_idx, None, shape_params, {"applied": False, "reason": "none", "changes": {}}))
+            for ink_idx, ink_params in enumerate(ink_gray_params, start=1):
+                candidate_jobs.append(
+                    (
+                        "ink_gray_grid",
+                        ink_idx,
+                        None,
+                        ink_params,
+                        {
+                            "applied": False,
+                            "reason": "ink_gray_grid",
+                            "changes": {},
+                            "parent_candidate_id": current_params.candidate_id,
+                        },
+                    )
+                )
             for patch_idx, patch in enumerate(round_patches, start=1):
                 raw_patched_params = apply_suggested_patch(current_params, patch)
                 patched_params = constrained_revision_params(
@@ -557,13 +582,14 @@ def run_region_vision_checks(
                 candidate_jobs.append(("patch", patch_idx, patch, patched_params, audit))
 
             for candidate_origin, candidate_idx, patch, patched_params, patch_constraint_audit in candidate_jobs:
+                suffix = "i"
+                if candidate_origin == "shape_reset":
+                    suffix = "s"
+                elif candidate_origin == "ink_gray_grid":
+                    suffix = "g"
                 patched_params = mutate_params(
                     patched_params,
-                    candidate_id=(
-                        f"{current_params.candidate_id}_s{round_idx:02d}_{candidate_idx:02d}"
-                        if candidate_origin == "shape_reset"
-                        else f"{current_params.candidate_id}_i{round_idx:02d}_{candidate_idx:02d}"
-                    ),
+                    candidate_id=f"{current_params.candidate_id}_{suffix}{round_idx:02d}_{candidate_idx:02d}",
                 )
                 signature = params_signature(patched_params)
                 if signature in seen_params:
@@ -656,7 +682,7 @@ def run_region_vision_checks(
                     if patch_constraint_audit.get("applied"):
                         patch_constraint_audit["alternative_candidate_id"] = patched_params.candidate_id
                     attempt_record["constraint"] = patch_constraint_audit
-                else:
+                elif candidate_origin == "shape_reset":
                     optimization_policy = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
                         "optimization_steps": ["shape_reset"],
@@ -668,6 +694,23 @@ def run_region_vision_checks(
                     attempt_record["optimization_policy"] = optimization_policy
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "shape_reset"
+                else:
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": ["ink_gray_balance"],
+                        "primary_optimization_steps": ["ink_gray_balance"],
+                        "optimization_step": "ink_gray_balance",
+                        "allowed": current_blocking_stage == "ink_gray_balance",
+                        "rejection_reason": (
+                            None
+                            if current_blocking_stage == "ink_gray_balance"
+                            else "ink-gray grid is only generated for ink_gray_balance"
+                        ),
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "ink_gray_balance"
+                    attempt_record["parent_shape_candidate_id"] = current_params.candidate_id
                 if not patched_strict:
                     attempt_record["strict_gate"] = patched_report.get("strict_gate")
                 if not report_stage_pass(patched_report):

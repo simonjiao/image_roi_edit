@@ -153,7 +153,7 @@
 
 - [ ] 禁止全量笛卡尔积搜索；验证方式是候选生成报告记录分层阶段和剪枝数量，而不是单个全组合总数。
 - [x] Stage A shape search 本地候选预算为 300-1500，剪枝后保留 top 20-50；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_candidate_grid.py::ShapeCandidateGridTest.test_text_shape_grid_reports_budget_and_allowed_delta_keys` 验证 `shape_candidate_grid.budget.raw_candidate_budget` 在 300-1500 内、`retained_count=48`、`pruned_count>0`。
-- [ ] Stage B ink-gray search 本地候选预算为 100-800，剪枝后保留 top 8-20；验证方式是候选统计字段。
+- [x] Stage B ink-gray search 本地候选预算为 100-800，剪枝后保留 top 8-20；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_ink_gray_candidate_grid.py::InkGrayCandidateGridTest.test_ink_gray_grid_reports_budget_parent_and_allowed_delta_keys` 验证 `ink_gray_candidate_grid.budget.raw_candidate_budget` 在 100-800 内、`retained_count` 在 8-20 内、`pruned_count>0`，且候选只改变 `ink_gray_balance` 允许参数；`test_processing_service_preserves_ink_gray_grid_report_in_revision_rounds` 验证 revision round 写入 `ink_gray_candidate_grid`。
 - [ ] Stage C photo texture search 本地候选预算为 30-200，剪枝后保留 top 3-8；验证方式是候选统计字段。
 - [x] Stage D vision final check 只看 top 3-8；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_run_artifacts.py::RunArtifactsTest.test_vision_candidate_request_records_limit_and_stage_context` 验证请求值低于 3 会提升到 `vision_candidate_limit=3`、高于 8 会收口到 `vision_candidate_limit=8`，`tests/test_vision_candidate_boundary.py::VisionCandidateBoundaryTest.test_region_vision_request_uses_top_candidates_with_stage_context` 验证视觉 prompt 实际只收到规范化后的 top candidates。
 - [ ] 形态剪枝必须覆盖字高、中心、基线、字距、protected distance、字体风格、笔画体量、姿态继承；验证方式是 prune reason 枚举测试。
