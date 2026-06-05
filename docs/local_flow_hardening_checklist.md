@@ -183,10 +183,10 @@
 
 ### O. 视觉模型 prompt 和本地仲裁
 
-- [ ] prompt 输入 stage context、输出建议不能越过本地 stage filter 必须有 mock 或 fixture 验证；验证方式是 forbidden suggestion 被本地拒绝并写入 attempt record。
+- [x] prompt 输入 stage context、输出建议不能越过本地 stage filter 必须有 mock 或 fixture 验证；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_prompt_assets_require_stage_context_allowed_and_blocked_keys` 验证 prompt 资产包含 `stage_context`/`blocking_stage`/`blocked_patch_keys`，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_forbidden_model_suggestion_is_rejected_and_audited` 验证 forbidden suggestion 被本地拒绝并写入 `model_suggestion_filter.attempt_records`。
 - [ ] prompt 必须先判断当前 `blocking_stage` 是否真实存在；验证方式是 prompt payload 和 JSON response schema。
 - [ ] prompt 只能针对当前 `blocking_stage` 给建议；验证方式是建议 patch 经过 stage filter 并记录 rejected suggestion。
-- [ ] prompt 不能建议当前阶段禁止参数；验证方式是 forbidden suggestion fixture 或 mock response。
+- [x] prompt 不能建议当前阶段禁止参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_prompt_assets_require_stage_context_allowed_and_blocked_keys` 验证 prompt 明确携带 forbidden 参数边界，`tests/test_model_suggestions.py::ModelSuggestionsTest.test_forbidden_model_suggestion_is_rejected_and_audited` 验证 mock response 中 `mask_threshold_delta` 和 `opacity_delta` 在 `text_shape` 阶段被拒绝。
 - [ ] 如果模型认为前置阶段已通过，必须说明依据；验证方式是 response schema 包含 `basis` 或等价字段。
 - [x] 如果模型建议 deliver 但本地 `blocking_stage` 不为空，本地必须改为 revise；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
 - [ ] 视觉模型建议必须转成本地候选或记录不可转化原因；验证方式是 attempt record。

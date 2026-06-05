@@ -67,6 +67,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 视觉 prompt 的输入必须包含当前候选或候选集合的 `stage_context`。模型可以指出其它阶段
 的视觉问题，但 `suggested_patch` 和 `parameter_suggestions` 必须受当前
 `allowed_patch_keys` 约束；本地 `stage_filter` 会拒绝越过阶段边界的建议，并把冲突写入
+`revision_rounds.model_suggestion_filter.attempt_records` 和
 `revision_rounds.model_conflicts`。
 
 如果 `text_shape` 未通过，后续调参只能先处理字体、字号、描边/笔画身体、字槽偏移和姿态继承；不能先通过降黑、加模糊、加噪声或背景修补来掩盖形态问题。
@@ -217,6 +218,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 | 运行产物结构 | `request_audit_payload`, `result_audit_payload`, `stage_progress_fields`, `model_stage_context`, `attach_stage_context_to_rank_report` in `run_artifacts.py` | `request.json`, `result.json`, `progress.jsonl`, `stage_context_by_candidate` |
 | 形态重搜 | `text_shape_reset_candidates`, `shape_font_items`, `normalized_offset_candidates` | `revision_attempts[].origin=shape_reset`, `revision_rounds[].shape_reset_count` |
 | 迭代补丁 | `STAGE_PATCHER_SPECS`, `select_stage_patcher`, `dispatch_revision_patches`, `stage_patcher_registry_report`, `stage_patch_filter_report`, `revision_patches_for_round`, `black_core_reduction_patches`, `gray_stroke_recovery_patches` | `revision_rounds`, `revision_attempts`, `stage_optimization_policy`, `stage_patcher_dispatch`, `stage_filter_report`, `rejected_local_patches` |
+| 视觉建议仲裁 | `filter_model_patch_records`, `model_suggestion_filter_report` in `model_suggestions.py` | `revision_rounds[].model_suggestion_filter`, `revision_rounds[].model_suggestion_attempts`, `revision_rounds[].model_conflicts` |
 | 最终验收 | `evaluate_final`, `apply_local_acceptance_gate` | `final_acceptance` |
 
 ## 回归检查建议

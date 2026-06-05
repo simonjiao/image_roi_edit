@@ -52,6 +52,10 @@ from roi_image_edit.local_validation import (
     stage_issues,
 )
 
+from roi_image_edit.model_suggestions import (
+    filter_model_patch_records,
+    model_suggestion_filter_report,
+)
 
 from roi_image_edit.revision_solver import (
     constrained_revision_params,
@@ -404,23 +408,33 @@ def run_region_vision_checks(
                     source=f"final_acceptance_basis_round_{round_idx - 1}",
                 )
             )
-            model_conflicts: list[dict[str, Any]] = []
-            allowed_model_patches: list[dict[str, Any]] = []
-            patch_source_lookup: dict[str, list[dict[str, Any]]] = {}
-            for record in model_records:
-                patch = record.get("patch")
-                if not isinstance(patch, dict):
-                    continue
-                policy_audit = optimization_policy_audit(
-                    str(basis_blocking_stage) if basis_blocking_stage else None,
-                    patch,
-                )
-                record["optimization_policy"] = policy_audit
-                patch_source_lookup.setdefault(patch_signature(patch), []).append(record)
-                if policy_audit["allowed"]:
-                    allowed_model_patches.append(patch)
-                else:
-                    model_conflicts.append(record)
+            model_filter = filter_model_patch_records(
+                model_records,
+                str(basis_blocking_stage) if basis_blocking_stage else None,
+            )
+            model_records = [
+                record
+                for record in model_filter.get("records", [])
+                if isinstance(record, dict)
+            ]
+            model_conflicts = [
+                record
+                for record in model_filter.get("rejected_records", [])
+                if isinstance(record, dict)
+            ]
+            allowed_model_patches = [
+                patch
+                for patch in model_filter.get("allowed_patches", [])
+                if isinstance(patch, dict)
+            ]
+            patch_source_lookup = {
+                str(signature): [
+                    record
+                    for record in records
+                    if isinstance(record, dict)
+                ]
+                for signature, records in (model_filter.get("patch_source_lookup") or {}).items()
+            }
             patch_dispatch_report = dispatch_revision_patches(
                 current_params,
                 current_acceptance,
@@ -465,6 +479,8 @@ def run_region_vision_checks(
                 },
                 "stage_filter_report": local_stage_filter_report,
                 "model_suggestions": model_records,
+                "model_suggestion_filter": model_suggestion_filter_report(model_filter),
+                "model_suggestion_attempts": model_filter.get("attempt_records") or [],
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
             }
