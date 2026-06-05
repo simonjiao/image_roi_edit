@@ -25,7 +25,7 @@
 
 ### 2. 阶段门禁
 
-阶段门禁只有以下五个，顺序必须和代码中的 `STAGE_ORDER` 保持一致：
+阶段门禁只有以下五个，顺序必须和 `src/roi_image_edit/stage_policy.py` 中的 `STAGE_ORDER` 保持一致：
 
 ```text
 hard_boundary
