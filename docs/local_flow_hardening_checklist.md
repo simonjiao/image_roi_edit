@@ -103,30 +103,209 @@ PY
 
 ## 设计目标转换情况
 
-本节只记录设计目标是否已经被转换成可验证 checklist。`[x]` 表示已经有明确实施项和验证方式；
-`[ ]` 表示目标仍未完整 checklist 化，不能据此宣称本地流程完善完成。
+本节把 `staged_roi_pipeline_design.md` 和
+`text_shape_joint_optimization_design.md` 中的目标拆成可实施、可验证的 checklist 项。
+`[x]` 表示当前已有实施项或已经完成；`[ ]` 表示还需要代码、测试、报告或文档同步。
+每个 `[ ]` 都必须能用测试、CLI/Web 输出、`progress.jsonl`、`result.json`、stage evidence
+或 fixture 回归关闭，不能只靠文字说明关闭。
 
-### 已转换
+### A. 三层流程边界
 
-- [x] 五个本地阶段的顺序和职责已写入本 checklist：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
-- [x] stage/profile 结构、stage patcher 调度、prompt stage context、stage evidence 已形成实施项。
-- [x] 视觉模型不能覆盖本地硬门禁和 stage filter 已形成实施项。
-- [x] 失败也必须保留 rejected candidate、progress、result、stage evidence 已形成实施项。
+- [x] 五个本地 stage 已写入本 checklist：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+- [ ] 增加前置安全流程验收：`orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard` 必须在候选生成前完成；验证方式是失败样例 `candidate_count=0` 或 rejected，且 `progress.jsonl` 记录失败步骤。
+- [ ] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；验证方式是单测读取常量并断言顺序。
+- [ ] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；验证方式是 `result.json` 中同时存在两类字段。
+- [ ] 增加视觉终检边界验收：视觉模型只能看本地 top candidates；验证方式是视觉请求记录中 `candidate_count <= vision_candidate_limit` 且包含本地 `stage_context`。
 
-### 待补齐
+### B. 旧 7 类阶段术语映射到当前 5 个 stage
 
-- [ ] 将 `staged_roi_pipeline_design.md` 里的旧 7 类阶段术语映射到当前 5 个 stage 和阶段内 Optimization Step，避免 `slot_alignment`、`font_structure`、`pose_geometry`、`stroke_body`、`tone_gray`、`edge_quality` 等旧名继续造成状态歧义。
-- [ ] 为每个 stage patcher 增加独立测试项：声明 allowed/blocked keys、输出不能包含未声明参数、跨 stage patch 必须被拒绝。
-- [ ] 将回归 Case A-D 转成可执行 checklist，必须包含 fixture 路径、运行命令、预期 `blocking_stage`、预期报告字段和通过条件。
-- [ ] 将方向、字段、旧值 ROI 联合选择转成统一 checklist：记录 `field_confidence`、`old_value_confidence`、`orientation_reason`、`search_roi`、`edit_roi`、`protected_text` 和失败原因。
-- [ ] 将 search ROI 与 edit ROI 分离扩展成所有字段通用路径，不只覆盖近期失败场景。
-- [ ] 将旧槽位完整性门禁拆成逐项 checklist：字符数匹配、核心笔画覆盖、灰边覆盖、底部覆盖、倾斜外溢覆盖、未混入 label、未混入后续文本、最后一个旧字未误判成 protected text、字数变化清理和右边界限制。
-- [ ] 将放置策略场景拆成逐项 checklist：同字数 CJK 小变化、同字数 CJK 大变化、字数减少、字数增加、数字/日期/编号、手动 ROI fallback；每项都必须记录策略、理由和验收指标。
-- [ ] 将单字形态变化检测补全为 checklist：除 bbox、质心、墨迹面积外，还要包含 row/col projection distance、margin distribution delta 和动态阈值来源。
-- [ ] 将分层联合优化预算转成 checklist：shape 本地 top 20-50、ink-gray top 8-20、photo texture top 3-8、vision top 3-8；视觉模型不得参与大规模搜索。
-- [ ] 将背景处理拆成两个独立 checklist：前置旧槽位清除和后置背景融合；前置清除失败必须阻塞候选生成或最终验收，不能拖到后置融合掩盖。
-- [ ] 为每个 profile 增加独立回归 checklist：`photo_scan`、`clean_digital`、`low_res_thumbnail`、`manual_roi_quick`，并验证同图不同 profile 的 stage 差异。
-- [ ] 对设计文档中的“现有流程差距”表做状态同步：已经实现的目标必须更新为已覆盖，未实现的目标必须在本 checklist 中保留未完成项。
+- [ ] `slot_alignment` 必须映射到 `hard_boundary` 的 ROI/slot 安全条件和 `text_shape.slot_alignment_search`；验证方式是 stage evidence 记录旧名、当前 stage、Optimization Step 和报告字段。
+- [ ] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；验证方式是字体失败样例不会进入 `ink_gray_balance` 主调参。
+- [ ] `pose_geometry` 必须映射到 `text_shape.pose_shear_search`，且不能固化某张图的左倾/右倾；验证方式是姿态报告来自旧槽位、邻字或局部投影指标。
+- [ ] `stroke_body` 必须映射到 `text_shape.stroke_body_search`，且在真实笔画体量未过时不能被 `edge_quality` 或 `photo_texture` 抢先处理；验证方式是粗细失败样例的 `blocking_stage=text_shape`。
+- [ ] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；验证方式是黑芯过量和核心不足分别生成相反方向候选。
+- [ ] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；验证方式是灰边过量不会先破坏已通过的 stroke body。
+- [ ] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；验证方式是 `photo_texture` 只在形态和黑灰通过后成为 blocking stage。
+- [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类阶段当成本地 gate。
+
+### C. 全局硬约束
+
+- [x] 输出尺寸与原图一致。
+- [x] ROI 外像素不变。
+- [x] 图片边缘像素不变。
+- [x] protected text 不变。
+- [ ] 增加“目标 ROI 覆盖完整旧字”独立验收：旧字核心、灰边、底部和倾斜外溢都必须在 source slot 或 cleanup mask 内；验证方式是 `slot_quality_report` 的逐项字段全部通过。
+- [ ] 增加“新字不能覆盖后续未修改内容”独立验收：字数增加和 ROI 扩展时必须记录 `right_boundary`、protected box 距离和最小安全间距；验证方式是字数增加 fixture。
+
+### D. 方向、字段和旧值 ROI
+
+- [ ] 指令解析必须输出 `field`、`old_value`、`new_value`、解析置信和失败原因；验证方式是 CLI JSON 对姓名、日期、年龄、手动 ROI 四类输入都有字段。
+- [ ] 自动方向选择不能只看整页方向；必须同时记录目标字段质量、旧值定位质量和最终方向理由；验证方式是旋转图片 fixture。
+- [ ] 每个自动 ROI 任务必须同时记录 `search_roi` 和 `edit_roi`，并输出标注图；验证方式是 `stage_evidence` 中存在两个 ROI 的坐标和图片。
+- [ ] `search_roi` 可以覆盖字段锚点和后续保护文本，`edit_roi` 必须收缩到旧值槽位和必要空白；验证方式是同一任务中 `search_roi` 面积大于等于 `edit_roi`，且 edit ROI 不含 label。
+- [ ] 找不到字段或旧值时必须立即失败并保留 rejected 产物；验证方式是无目标字段 fixture 不能输出 `applied=true`。
+- [ ] 自动 ROI 通用路径必须覆盖姓名、日期、年龄、数字编号和手动 ROI fallback；验证方式是每类至少一个 fixture 或 smoke command。
+
+### E. 旧槽位完整性门禁
+
+- [x] 输出 `slot_quality_report`。
+- [ ] 逐字检查旧值字符数与槽位数匹配；验证方式是字数减少和字数增加 fixture 都记录 `source_count`、`target_count`。
+- [ ] 逐槽检查核心笔画覆盖；验证方式是每个 slot 有 `core_coverage` 或等价字段。
+- [ ] 逐槽检查灰边覆盖；验证方式是每个 slot 有 `gray_edge_coverage` 或等价字段。
+- [ ] 逐槽检查底部覆盖；验证方式是底部裁切 fixture 不进入候选生成。
+- [ ] 逐槽检查倾斜外溢覆盖；验证方式是倾斜旧字 fixture 的外溢像素纳入 source slot 或 cleanup mask。
+- [ ] 检查槽位未混入字段标签、冒号或前置文本；验证方式是 label overlap 字段为 0 或低于动态阈值。
+- [ ] 检查槽位未混入后续未修改文本；验证方式是 protected overlap 字段为 0 或低于动态阈值。
+- [ ] 检查最后一个旧字不会被误判成 protected text；验证方式是最后字右下角外溢 fixture 能进入 cleanup mask。
+- [ ] 字数减少时，多余旧槽位必须进入前置清除区域；验证方式是 `extra_source_slots_for_cleanup` 非空且有 mask 证据图。
+- [ ] 字数增加时，右边界必须受后续 protected text 限制；验证方式是 `right_boundary`、`available_width`、`protected_gap` 写入报告。
+- [ ] 旧槽位门禁失败必须阻塞候选生成或最终验收；验证方式是失败样例不能生成 accepted candidate。
+
+### F. 放置策略选择
+
+- [x] 报告包含 `placement_strategy` 和选择原因。
+- [ ] 同字数 CJK 且字形变化小：必须验证 `top_left_anchor` 或等价策略，约束中心误差、字距、基线；验证方式是同字数小变化 fixture。
+- [ ] 同字数 CJK 且字形变化大：必须验证 `center_primary`，约束左边界、基线、字距；验证方式是同字数大变化 fixture。
+- [ ] 字数减少：目标字按旧值整体跨度排布，并清理多余旧槽位；验证方式是 3 字变 2 字 fixture。
+- [ ] 字数增加：左边界锚定、向右扩展，且不覆盖 protected text；验证方式是 2 字变 3 字 fixture。
+- [ ] 数字、日期、编号：左对齐和基线优先，保持数字节奏和字段宽度；验证方式是日期和年龄 fixture。
+- [ ] 手动 ROI 且无旧值：使用保守居中或左对齐 fallback，并降低自动验收置信；验证方式是手动画框无旧值 fixture。
+- [ ] 每个放置策略必须在 `result.json` 写入使用条件、关键约束、实际误差和是否通过；验证方式是 schema 或单测。
+
+### G. 单字形态变化检测
+
+- [x] 当前报告包含 `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio`。
+- [ ] 每个 changed char 都必须生成旧槽位画像和新字候选画像；验证方式是 `shape_change_report.changed_chars[*]` 含 source/target image metrics。
+- [ ] 增加 `row_projection_distance`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
+- [ ] 增加 `col_projection_distance`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
+- [ ] 增加 `margin_distribution_delta`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
+- [ ] 动态阈值必须来自旧槽位高度、邻字稳定性和字体候选分布；验证方式是报告写入每个阈值来源。
+- [ ] 固定数字阈值只能作为第一版保守起点，并必须写入报告；验证方式是任何固定默认都有 `threshold_source=default`。
+- [ ] 禁止用语义字表判断“单字变化大”；验证方式是形态检测代码没有目标字 hardcode，且测试覆盖不同字符。
+
+### H. 字体形态联合搜索
+
+- [ ] `text_shape` 阻塞时生成 shape candidate grid，且 grid 只包含字体、字号、放置、`text_dx/text_dy`、`char_offsets`、stroke body、shear；验证方式是 candidate 参数集合。
+- [ ] 形态排序必须包含字高、字宽、字距、基线；验证方式是 shape score 明细字段。
+- [ ] 形态排序必须包含单字中心与旧槽位中心误差；验证方式是 score 明细字段。
+- [ ] 形态排序必须包含左边界和右边界误差；验证方式是 score 明细字段。
+- [ ] 形态排序必须包含笔画面积和复杂度修正后的体量；验证方式是 score 明细字段。
+- [ ] 形态排序必须包含姿态继承误差；验证方式是 shear/pose score 明细字段。
+- [ ] 形态排序必须包含 protected text 距离；验证方式是 score 明细字段。
+- [ ] 形态排序必须包含字体风格分数和可渲染字符检查；验证方式是 font report 字段。
+- [ ] 形态没通过时，`blur`、`noise`、`jpeg_quality`、背景融合不能成为主修复方向；验证方式是 stage filter 单测。
+
+### I. 黑灰比例搜索
+
+- [ ] `ink_gray_balance` 只在形态 top candidates 上执行；验证方式是 ink candidate 的 parent shape candidate id 可追溯。
+- [ ] 黑灰报告必须分开记录 `<55`、`<70`、`70-120`、`120-165`；验证方式是 hard report 字段。
+- [ ] 核心太黑时，必须生成降低 `opacity`、`core_ink_gain` 或 `core_darken_strength` 的候选；验证方式是黑芯过量 fixture。
+- [ ] 核心不足但灰边多时，不能继续加 blur 或扩大灰边，必须恢复核心密度并收紧外灰；验证方式是核心不足+灰边多 fixture。
+- [ ] 旧字和邻字指标冲突时，必须记录仲裁，并优先同一行邻字作为风格上限；验证方式是 conflict report 字段。
+- [ ] 黑灰阶段不能改变已经通过的字体、槽位和基线，除非重新回到 `text_shape`；验证方式是 candidate parent/rollback 记录。
+
+### J. 照片质感搜索
+
+- [ ] `photo_texture` 只能在 `text_shape` 和 `ink_gray_balance` 通过后执行；验证方式是 stage order 单测或失败 fixture。
+- [ ] 可调参数必须限定为小幅 blur、edge breakup、局部噪声、压缩质感、轻微 alpha 退化、局部残差回填；验证方式是 stage patcher allowed keys。
+- [ ] 目标必须是匹配原图拍照/扫描质感，不是把字弄糊；验证方式是报告同时记录 sharpness、breakup、noise、compression 指标。
+- [ ] 照片质感不能破坏已通过的黑灰和形态指标；验证方式是 photo candidate 记录前后 stage severity。
+- [ ] 文字过清晰、过干净、过糊、边缘无断裂必须进入 `photo_texture` 问题报告；验证方式是 issue type 枚举测试。
+
+### K. 背景处理拆分
+
+- [ ] 前置清除必须删除旧值槽位内旧字核心和灰边；验证方式是 source slot cleanup mask 和 residual metrics。
+- [ ] 字数减少时，前置清除必须覆盖多余旧槽位；验证方式是 extra slot cleanup crop。
+- [ ] 前置清除失败必须阻塞候选生成或最终验收；验证方式是旧残留 fixture 不能 deliver。
+- [ ] 后置融合只围绕最终文字形态做局部融合；验证方式是 final candidate 的 background patch 范围不越过 target ROI 和保护文本。
+- [ ] 后置融合必须分别报告补丁感、发白、发暗、平滑涂抹、纹理断裂和 ROI 边缘接缝；验证方式是 background metrics 字段。
+- [ ] 后置融合不能掩盖旧槽位没清干净；验证方式是 cleanup failure 优先级高于 background naturalness。
+
+### L. 分层联合优化和搜索预算
+
+- [ ] 禁止全量笛卡尔积搜索；验证方式是候选生成报告记录分层阶段和剪枝数量，而不是单个全组合总数。
+- [ ] Stage A shape search 本地候选预算为 300-1500，剪枝后保留 top 20-50；验证方式是候选统计字段。
+- [ ] Stage B ink-gray search 本地候选预算为 100-800，剪枝后保留 top 8-20；验证方式是候选统计字段。
+- [ ] Stage C photo texture search 本地候选预算为 30-200，剪枝后保留 top 3-8；验证方式是候选统计字段。
+- [ ] Stage D vision final check 只看 top 3-8；验证方式是视觉请求候选数。
+- [ ] 形态剪枝必须覆盖字高、中心、基线、字距、protected distance、字体风格、笔画体量、姿态继承；验证方式是 prune reason 枚举测试。
+- [ ] 黑灰剪枝必须覆盖真黑核心、深色核心、外灰边、中灰笔画、复杂度修正；验证方式是 prune reason 枚举测试。
+- [ ] 照片质感剪枝必须覆盖过锐、过糊、无断裂、背景平滑、白影/暗影/旧残留、ROI 梯度断裂；验证方式是 prune reason 枚举测试。
+
+### M. Stage patcher 迁移边界
+
+- [ ] 每个 stage patcher 必须声明 primary stage、allowed keys、blocked keys；验证方式是单测遍历 patcher registry。
+- [ ] patcher 输出不能包含未声明参数；验证方式是单测。
+- [ ] 跨 stage patch 必须被拒绝或声明主阶段、次级影响和不破坏前置阶段的依据；验证方式是 filter report 单测。
+- [ ] 新增 patch 必须进入某个 stage patcher，不能散落在全局候选生成函数；验证方式是代码搜索和单测。
+- [ ] 旧入口只能调用 stage dispatcher，stage dispatcher 不能反向调用旧全局混合补丁；验证方式是依赖方向检查或代码搜索。
+- [ ] 临时双轨只允许用于同输入新旧结果差异验证，不能作为长期交付路径；验证方式是没有 runtime fallback 开关指向旧混合路径。
+- [ ] 每个阶段迁移必须包含 detector、patcher、allowed/blocked 参数、失败用例、通过用例和 stage evidence；验证方式是测试目录和 fixture 记录。
+
+### N. Profile 验收
+
+- [ ] `photo_scan` 必须启用姿态和照片质感，且视觉模型不能在 stroke/shape 失败时 deliver；验证方式是 photo fixture。
+- [ ] `clean_digital` 不启用 `photo_texture`，不鼓励 `photo_warp`，边缘应更干净；验证方式是 clean digital fixture。
+- [ ] `low_res_thumbnail` 更重视字体结构和笔画体量，并要求视觉验收看放大图；验证方式是 low-res fixture 和 prompt payload。
+- [ ] `manual_roi_quick` 只做最少阶段，未通过时保留 rejected candidate，不自动做复杂照片质感；验证方式是 manual ROI fixture。
+- [ ] 同一张图可以用不同 profile 运行，并在 `result.json` 记录不同 stage order 或启用阶段差异；验证方式是 profile matrix smoke。
+
+### O. 视觉模型 prompt 和本地仲裁
+
+- [x] prompt 输入 stage context，输出建议不能越过本地 stage filter。
+- [ ] prompt 必须先判断当前 `blocking_stage` 是否真实存在；验证方式是 prompt payload 和 JSON response schema。
+- [ ] prompt 只能针对当前 `blocking_stage` 给建议；验证方式是建议 patch 经过 stage filter 并记录 rejected suggestion。
+- [ ] prompt 不能建议当前阶段禁止参数；验证方式是 forbidden suggestion fixture 或 mock response。
+- [ ] 如果模型认为前置阶段已通过，必须说明依据；验证方式是 response schema 包含 `basis` 或等价字段。
+- [ ] 如果模型建议 deliver 但本地 `blocking_stage` 不为空，本地必须改为 revise；验证方式是 mock acceptance 单测。
+- [ ] 视觉模型建议必须转成本地候选或记录不可转化原因；验证方式是 attempt record。
+
+### P. 进度、UI 和失败产物
+
+- [x] 失败也必须保留 rejected candidate、progress、result、stage evidence。
+- [ ] CLI 每轮必须显示或输出 `round`、`profile`、`blocking_stage`、`reason`、`allowed_params`、`blocked_params`、`selected_optimization_step`；验证方式是 CLI JSON/文本 smoke。
+- [ ] Web 每轮必须展示 `blocking_stage`、当前阶段失败原因、本轮候选图、因前置阶段失败被拒绝的候选、最终 `accepted` 状态；验证方式是浏览器截图或 DOM 测试。
+- [ ] 失败任务必须保留自动方向选择报告、search/edit ROI 标注图、slot quality report、shape top candidates、ink-gray top candidates、photo texture top candidates、final visual candidates、rejected final candidate；验证方式是 run directory 文件存在性测试。
+
+### Q. 回归 Case A-D
+
+- [ ] Case A 字段旧文字修改为新文字：fixture、命令、预期 `blocking_stage`、核心密度阈值、外灰阈值和视觉不能覆盖本地失败条件必须写入本 checklist 或测试数据。
+- [ ] Case A 必须验证 `stroke_body`/笔画体量在 edge cleanup 前通过；验证方式是粗细不足样例不能 deliver。
+- [ ] Case B 字数减少：fixture、命令、多余旧槽位清理、后续文字不移动、旧残留阶段归因必须写入测试。
+- [ ] Case C 字数增加：fixture、命令、不覆盖后续字段、ROI 扩展受 protected text 限制、先过字体字距再调颜色必须写入测试。
+- [ ] Case D 干净数字图：fixture、命令、`clean_digital` profile、无照片噪声、干净边缘必须写入测试。
+- [ ] 每个回归 case 必须保存 expected report fields，而不是只比较最终图片是否存在；验证方式是 JSON assertion。
+
+### R. 反模式门禁
+
+- [ ] 一个问题失败后不能把所有补丁族混合评分；验证方式是候选生成报告只显示当前 blocking stage 主导 patch。
+- [ ] 视觉模型说 `ok` 不能覆盖本地阶段失败；验证方式是 mock response 单测。
+- [ ] 字体没过时不能调 blur；验证方式是 stage filter 单测。
+- [ ] 粗细没过时不能先清灰边；验证方式是粗细失败 fixture。
+- [ ] 灰边过多时不能继续加 photo_noise 制造灰雾；验证方式是 edge/gray fixture。
+- [ ] 不能把某张图的左倾/右倾写成通用规则；验证方式是代码搜索禁止具体图片/文字特例。
+- [ ] 不能为单个字写特殊规则；验证方式是代码和 prompt 中无具体人名、具体目标字调参规则。
+- [ ] 不能用更多迭代次数替代阶段判定；验证方式是 max rounds 增加前必须有 stage-specific new candidate direction。
+- [ ] 不允许“先交付，再靠用户肉眼指出问题”作为成功标准；验证方式是 deliver 需要全部本地 stage 和最终视觉验收通过。
+
+### S. 设计文档状态同步
+
+- [ ] `text_shape_joint_optimization_design.md` 的“现有流程差距”表必须同步当前状态：已实现项标记为已覆盖，未实现项链接到本 checklist 对应条目。
+- [ ] `staged_roi_pipeline_design.md` 的旧 7 阶段设计必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存。
+- [ ] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭。
+- [ ] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”。
+
+### T. 代码落点和模块边界
+
+- [x] 存在 `src/roi_image_edit/stages.py`，承载 `StageSpec`、`StageResult` 和 detector mapping。
+- [x] 存在 `src/roi_image_edit/stage_profiles.py`，承载 profile 定义和加载。
+- [x] 存在 `src/roi_image_edit/stage_patchers.py`，承载 stage patcher 调度入口。
+- [ ] `local_validation.py` 中的 `local_*_issues` 必须继续收敛为 detector 底层函数，不能直接承担 stage policy；验证方式是 stage policy 单测只通过 `stages.py` 调用 detector。
+- [ ] `revision_solver.py` 中的旧评分和候选选择逻辑必须继续收敛为 dispatcher/selector，不能重新生成跨阶段混合 patch；验证方式是代码搜索和 stage filter 单测。
+- [ ] `processing_service.py` 不能继续承载 ROI 定位、候选生成、验收评分、修订求解器的长期核心逻辑；验证方式是这些能力迁移到 `roi_locator.py`、stage modules、solver modules 或等价 core 模块。
+- [ ] `iterative_pipeline.py` 的视觉 prompt 上下文必须只通过 stage context 结构传递阶段信息，不能手写散落的 prompt 拼接逻辑；验证方式是 prompt payload 单测。
+- [ ] `web_app.py` 必须只保留 HTTP/API/job 状态和本地 Web 服务启动，不承载阶段策略或图像处理逻辑；验证方式是代码搜索不出现 detector、patcher、candidate generation 逻辑。
+- [ ] `result.json` 和 `progress.jsonl` 必须是所有阶段证据的稳定外部接口；验证方式是 schema 测试覆盖 stage、profile、candidate、patch、vision suggestion 和 rejection reason。
 
 ## Current Implementation Status
 
@@ -474,7 +653,7 @@ PY
 - [x] 视觉模型建议被转成本地候选。
 - [x] 模型和本地指标冲突被记录。
 - [x] 失败时保留 rejected candidate、对比图、报告和下一轮计划。
-- [ ] “设计目标转换情况”中的待补齐项全部关闭。
+- [ ] “设计目标转换情况”中的所有 `[ ]` 项全部关闭。
 - [ ] 回归 Case A-D 已转成可执行用例并通过。
 - [ ] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过。
 
