@@ -58,10 +58,10 @@
 
 ### C. 全局硬约束
 
-- [ ] 输出尺寸与原图一致必须有 fixture 或 hard report 断言；验证方式是所有回归任务记录 `output.size == original.size`。
-- [ ] ROI 外像素不变必须有 fixture 或 hard report 断言；验证方式是所有回归任务记录 ROI 外变化像素数。
-- [ ] 图片边缘像素不变必须有 fixture 或 hard report 断言；验证方式是所有回归任务记录边缘变化像素数。
-- [ ] protected text 不变必须有 fixture 或 hard report 断言；验证方式是所有自动 ROI 和手动 ROI 回归任务记录 protected box diff。
+- [x] 输出尺寸与原图一致必须有 fixture 或 hard report 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_hard_boundary.py::HardBoundaryTest.test_size_mismatch_fails_and_records_sizes` 验证 hard report 记录 `original_size`、`candidate_size`、`size_match=false` 并失败。
+- [x] ROI 外像素不变必须有 fixture 或 hard report 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_hard_boundary.py::HardBoundaryTest.test_inside_roi_change_passes_with_zero_outside_and_border_diff` 和 `test_outside_roi_change_fails_and_records_pixel_count` 验证 hard report 记录 `outside_roi_changed_pixels`，ROI 外变化会失败。
+- [x] 图片边缘像素不变必须有 fixture 或 hard report 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_hard_boundary.py::HardBoundaryTest.test_border_change_fails_and_records_pixel_count` 验证 hard report 记录 `border_changed_pixels`，边缘变化会失败。
+- [x] protected text 不变必须有 fixture 或 hard report 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_hard_boundary.py::HardBoundaryTest.test_protected_text_change_fails_and_records_diff_for_manual_and_auto_regions` 验证 hard report 记录 `protected_changed_pixels`，manual/auto 类 protected box 变化都会失败。
 - [ ] 增加“目标 ROI 覆盖完整旧字”独立验收：旧字核心、灰边、底部和倾斜外溢都必须在 source slot 或 cleanup mask 内；验证方式是 `slot_quality_report` 的逐项字段全部通过。
 - [ ] 增加“新字不能覆盖后续未修改内容”独立验收：字数增加和 ROI 扩展时必须记录 `right_boundary`、protected box 距离和最小安全间距；验证方式是字数增加 fixture。
 
