@@ -152,6 +152,67 @@ function candidateMetaLines(candidate) {
   return lines;
 }
 
+function progressRecordBlockingStage(record) {
+  return (
+    record?.blocking_stage ||
+    record?.current_blocking_stage ||
+    record?.basis_blocking_stage ||
+    record?.stage_id ||
+    record?.failed_gate ||
+    ""
+  );
+}
+
+function progressRecordReason(record) {
+  const slotIssue = Array.isArray(record?.slot_quality_report?.issues)
+    ? record.slot_quality_report.issues[0]?.type
+    : "";
+  return (
+    record?.blocking_stage_reason ||
+    record?.selected_reason ||
+    record?.stop_reason ||
+    record?.missing_direction_reason ||
+    record?.rejection_reason ||
+    record?.error ||
+    slotIssue ||
+    ""
+  );
+}
+
+function progressRecordCandidateCount(record) {
+  const values = [
+    record?.candidate_count,
+    record?.rendered,
+    record?.patch_count,
+    record?.shape_reset_count,
+  ];
+  const value = values.find((item) => item !== null && item !== undefined && item !== "");
+  return value === undefined ? "" : String(value);
+}
+
+function progressEventDetailLines(record) {
+  const lines = [];
+  const stage = progressRecordBlockingStage(record);
+  const reason = progressRecordReason(record);
+  const candidateCount = progressRecordCandidateCount(record);
+  if (stage) {
+    lines.push(`blocking_stage=${stage}`);
+  }
+  if (reason) {
+    lines.push(`reason=${reason}`);
+  }
+  if (candidateCount) {
+    lines.push(`candidates=${candidateCount}`);
+  }
+  if (record?.accepted !== undefined) {
+    lines.push(`accepted=${String(record.accepted)}`);
+  }
+  if (record?.final_decision) {
+    lines.push(`final_decision=${record.final_decision}`);
+  }
+  return lines;
+}
+
 function renderCandidates(item, candidates) {
   const list = item.elements.candidateList;
   list.innerHTML = "";
@@ -242,6 +303,10 @@ function progressEventText(record) {
         .slice(0, 1)
         .map((issue) => issue.type)
         .join(", ") || "slot_quality_failed"}`;
+    case "pre_candidate_gate_failed":
+      return `前置门禁失败：${record.failed_gate || "pre_candidate_gate"}，候选 ${
+        record.candidate_count ?? 0
+      } 个`;
     case "region_candidates_started":
       return `生成候选图：${record.candidate_count ?? "-"} 个`;
     case "region_candidates_finished":
@@ -304,21 +369,68 @@ function renderProgress(item, events) {
   current.className = "progress-current";
   current.textContent = progressEventText(latest);
 
+  const detail = document.createElement("div");
+  detail.className = "progress-detail";
+  detail.textContent = progressEventDetailLines(latest).join(" | ");
+
   const list = document.createElement("div");
   list.className = "progress-list";
   visibleEvents.slice(-6).forEach((record, index, sliced) => {
     const row = document.createElement("div");
     row.className = index === sliced.length - 1 ? "progress-line active" : "progress-line";
-    row.textContent = progressEventText(record);
+    row.dataset.event = record?.event || "";
+    const stage = progressRecordBlockingStage(record);
+    if (stage) {
+      row.dataset.blockingStage = stage;
+    }
+    if (record?.accepted !== undefined) {
+      row.dataset.accepted = String(record.accepted);
+    }
+    const rowText = document.createElement("div");
+    rowText.className = "progress-line-main";
+    rowText.textContent = progressEventText(record);
+    row.appendChild(rowText);
+    const rowDetails = progressEventDetailLines(record);
+    if (rowDetails.length) {
+      const detailLine = document.createElement("div");
+      detailLine.className = "progress-line-detail";
+      detailLine.textContent = rowDetails.join(" | ");
+      row.appendChild(detailLine);
+    }
     list.appendChild(row);
   });
 
-  panel.append(title, current, list);
+  panel.append(title, current, detail, list);
   item.elements.emptyResult.replaceChildren(panel);
   item.elements.emptyResult.style.display = "flex";
   item.elements.resultImage.style.display = "none";
   item.elements.visionStatus.style.display = "none";
   item.elements.tracePanel.style.display = "none";
+}
+
+function renderFailureTrace(item, entry) {
+  const panel = item.elements.tracePanel;
+  panel.innerHTML = "";
+  const failure = entry.stage_evidence?.failure || {};
+  const preGate = failure.pre_candidate_gate_report || {};
+  const lines = [
+    `image | failed | accepted=false | stage ${
+      preGate.failed_gate || failure.failure_stage || "pre_candidate_generation"
+    }`,
+  ];
+  if (entry.error) {
+    lines.push(`reason: ${entry.error}`);
+  }
+  if (preGate.failed_gate) {
+    lines.push(`pre-candidate: ${preGate.failed_gate} | candidates ${preGate.candidate_count ?? 0}`);
+  }
+  lines.forEach((line) => {
+    const row = document.createElement("div");
+    row.className = "trace-line";
+    row.textContent = line;
+    panel.appendChild(row);
+  });
+  panel.style.display = "block";
 }
 
 function renderProgressSnapshot(events, processable) {
@@ -365,12 +477,20 @@ async function renderProcessResult(result) {
     item.elements.instruction.disabled = false;
     if (!entry.ok) {
       item.node.classList.add("error");
-      renderCandidates(item, []);
-      item.elements.emptyResult.style.display = "block";
-      item.elements.emptyResult.textContent = entry.error || "处理失败";
-      item.elements.resultImage.style.display = "none";
-      item.elements.visionStatus.style.display = "none";
-      item.elements.tracePanel.style.display = "none";
+      renderCandidates(item, entry.candidates || []);
+      if (entry.resultDataUrl || entry.sourceDataUrl) {
+        item.elements.resultImage.src = entry.resultDataUrl || entry.sourceDataUrl;
+        item.elements.resultImage.style.display = "block";
+        item.elements.emptyResult.style.display = "none";
+      } else {
+        item.elements.emptyResult.style.display = "block";
+        item.elements.emptyResult.textContent = entry.error || "处理失败";
+        item.elements.resultImage.style.display = "none";
+      }
+      item.elements.visionStatus.textContent = `处理失败，accepted=false，显示 rejected input`;
+      item.elements.visionStatus.className = "vision-status fail";
+      item.elements.visionStatus.style.display = "block";
+      renderFailureTrace(item, entry);
       continue;
     }
     if (entry.sourceDataUrl && entry.sourceDataUrl !== item.dataUrl) {

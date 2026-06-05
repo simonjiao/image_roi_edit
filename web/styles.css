@@ -255,6 +255,13 @@ select {
   overflow-wrap: anywhere;
 }
 
+.progress-detail {
+  margin-top: 4px;
+  color: #40505d;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .progress-list {
   margin-top: 10px;
   display: flex;
@@ -284,6 +291,18 @@ select {
 .progress-line.active {
   color: #27313b;
   font-weight: 650;
+}
+
+.progress-line-main,
+.progress-line-detail {
+  overflow-wrap: anywhere;
+}
+
+.progress-line-detail {
+  margin-top: 2px;
+  color: #73808a;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .progress-line.active::before {

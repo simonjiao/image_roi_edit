@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,15 @@ from roi_image_edit.iterative_pipeline import write_json
 
 def safe_image_stem(filename: str, image_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(filename).stem)[:80] or image_id or "image"
+
+
+def rejected_image_data_url(image: Image.Image | None) -> str | None:
+    if image is None:
+        return None
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def failed_image_result(
@@ -29,6 +40,7 @@ def failed_image_result(
     if image is not None:
         rejected_input_path = run_dir / f"{safe_stem}_rejected_input.png"
         image.save(rejected_input_path)
+    image_data_url = rejected_image_data_url(image)
     orientation_report_path: Path | None = None
     if orientation_summary is not None:
         orientation_report_path = run_dir / f"{safe_stem}_auto_orientation_report.json"
@@ -55,6 +67,8 @@ def failed_image_result(
         "applied": False,
         "filename": filename,
         "error": error,
+        "sourceDataUrl": image_data_url,
+        "resultDataUrl": image_data_url,
         "instructionDetails": instruction_details,
         "candidates": [],
         "regions": [],
