@@ -27,7 +27,7 @@
 - 已把背景 retexture 和 ROI 扫描残差强度接入本地参数，`background_cleanup` 不再只能靠视觉模型描述补丁感。
 - 对日期/数字这类旧值更长、新值更短的任务，不允许用整块矩形补丁清理尾部；旧尾部只能通过旧字符笔画 mask、灰边扩展和 ghost/shadow 指标处理。
 - 已修复 severity 正向但低于显著阈值时 `near_best` 为空导致的迭代崩溃；小幅正向改善会继续迭代并写入 `selected_reason`。
-- 已新增 stage patch policy：每轮记录当前 blocking stage、允许/禁止 patch family、被拒绝的本地 patch、模型建议和本地指标冲突。
+- 已新增 stage optimization policy：每轮记录当前 blocking stage、允许/禁止 Optimization Step、被拒绝的本地 patch、模型建议和本地指标冲突。
 - 已把视觉模型的 `parameter_suggestions` 转为本地 patch，并在 attempt record 里记录是否被本地约束截断及替代候选。
 - 已在 Web 结果区显示 accepted/rejected、blocking stage、迭代轮次、停止原因和下一轮计划；候选抽屉显示最多 5 个代表性候选及背景摘要。
 - 已给视觉 API 临时 502/503/504/连接错误增加短重试，避免完整流程被单次上游波动中断。
@@ -161,7 +161,7 @@
 - [x] `ink_gray_balance` 未通过时，禁止形态重搜或照片质感覆盖墨色问题，除非当前候选形态又失败。
 - [x] `photo_texture` 未通过前，确认前两个阶段已通过。
 - [x] `background_cleanup` 未通过时，优先修 mask、inpaint 和纹理恢复，不用新字遮盖旧残留。
-- [x] 每轮只允许当前 blocking stage 的 patch family 主导候选。
+- [x] 每轮只允许当前 blocking stage 的 Optimization Step 主导候选。
 
 ### Done Definition
 
@@ -169,7 +169,7 @@
 
 - 当前 blocking stage
 - 该 stage 的 severity
-- 允许 patch family
+- 允许 Optimization Step
 - 被禁止的 patch
 - 选中候选为什么没有违反阶段顺序
 
@@ -309,7 +309,7 @@
 
 ### C. Stage Solvers
 
-- [x] 给每个 stage 定义 patch family。
+- [x] 给每个 stage 定义 Optimization Step。
 - [x] 禁止跨 stage 参数抢先主导。
 - [x] 每轮只让当前 blocking stage 的求解器主导。
 - [x] 形态阶段失败时触发字体、字号、字槽、姿态重搜。

@@ -39,7 +39,7 @@ hard_boundary
 
 ### 3. 阶段内优化
 
-阶段内优化不是新 stage，而是某个阻塞阶段内部允许执行的 solver/search/patch family。
+阶段内优化不是新 stage，而是某个阻塞阶段内部允许执行的 Optimization Step，即 solver/search/patch step。
 
 ```text
 text_shape 内部：
@@ -60,6 +60,18 @@ background_cleanup 内部：
 视觉模型终检也不是本地 stage。它只能评估本地 top candidates、返回 JSON 建议，并且不能覆盖本地阶段门禁。
 
 这个结构的核心约束是：不能用颜色、模糊、噪声、压缩或背景修补掩盖字体形态、位置、粗细、基线和姿态问题。
+
+## 阶段表
+
+| Stage | 目的 | 作用 | 阶段内 Optimization Steps | 视觉模型参与和 prompt |
+| --- | --- | --- | --- | --- |
+| `hard_boundary` | 保证这是在原图 ROI 内修改，而不是改坏整图或无关文字。 | 检查尺寸、ROI 外像素、边缘、protected text；方向/字段/旧槽位不可靠时阻塞候选生成。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check`。 | 不依赖视觉模型裁决。`candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt` 会看到 hard report，但不能覆盖该阶段失败。 |
+| `text_shape` | 先把文字形态放对、放像、放稳。 | 阻塞字体、字号、槽位、基线、字距、笔画身体、局部姿态错误；禁止黑灰、模糊、背景补丁抢先掩盖形态问题。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`stroke_body_search`、`pose_shear_search`、`shape_reset`。 | `candidate_rank_prompt.txt` 可在本地 top candidates 中比较字体和形态；CLI 的 `tuning_prompt.txt` 可输出 JSON 调参建议；`final_acceptance_prompt.txt` 最终验收必须尊重本地 `text_shape` gate。 |
+| `ink_gray_balance` | 让新字黑灰比例接近旧字和邻字。 | 分开控制真黑核心、中灰笔画身体、外灰边，避免“太黑/太淡/太硬/太灰”混成一个方向。 | `core_black_search`、`mid_gray_body_search`、`outer_gray_control`、`opacity_search`、`core_gain_search`、`alpha_contrast_search`。 | `candidate_rank_prompt.txt` 可比较候选黑灰观感；`tuning_prompt.txt` 可建议 opacity/core/contrast 小步变化；`final_acceptance_prompt.txt` 不能接受本地黑灰 gate 失败的候选。 |
+| `photo_texture` | 匹配照片/扫描件的模糊、断裂、噪声和压缩质感。 | 在形态和黑灰过关后，修复过清晰、过干净、过糊、边缘无断裂等照片质感问题。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`、`alpha_degradation_search`。 | `candidate_rank_prompt.txt` 可比较 top candidates 的照片感；`tuning_prompt.txt` 可建议 blur/noise/compression；`final_acceptance_prompt.txt` 做最终自然度验收。 |
+| `background_cleanup` | 让最终候选周围背景自然，且没有旧字残留。 | 验收旧字残影、白影、暗影、平滑涂抹、背景纹理断裂和 ROI 边缘接缝。前置旧槽位清除失败不能拖到此阶段补救。 | `old_slot_cleanup_check`、`ghost_residual_repair`、`shadow_residual_repair`、`background_texture_repair`、`seam_gradient_repair`、`final_blend_check`。 | `candidate_rank_prompt.txt` 可指出候选补丁感；`final_acceptance_prompt.txt` 必须检查背景自然度和残影。视觉模型建议只能生成 JSON patch，不能放过本地 background gate。 |
+
+所有视觉 prompt 都以 `master_prompt.txt` 作为 system prompt。Web 路径当前加载 `candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt`；CLI 迭代路径还会加载 `tuning_prompt.txt`。`font_size_prompt.txt` 和 `darkness_blur_prompt.txt` 是保留的专项诊断 prompt 资产，不能替代阶段门禁。
 
 ## 实施策略
 

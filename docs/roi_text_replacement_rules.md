@@ -49,6 +49,20 @@
 
 旧槽位清除不是最后才开始的 stage。完整旧槽位、旧字核心/灰边覆盖、多余旧槽位清理属于候选生成前的安全前提；`background_cleanup` 主要负责最终候选周围的背景融合、残影、涂抹和纹理断裂验收。
 
+## 阶段和优化步骤
+
+阶段是本地 gate，优化步骤是阶段内部的候选生成、搜索或参数补丁。二者不能混用。
+
+| Stage | 目的和作用 | 主要 Optimization Steps | 视觉 prompt |
+| --- | --- | --- | --- |
+| `hard_boundary` | 保证尺寸、ROI 外、边缘和 protected text 不变；方向、字段 ROI、旧槽位不可靠时阻塞。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check` | 视觉模型只能读取 hard report；不能覆盖失败。 |
+| `text_shape` | 先修字体、字号、槽位、基线、字距、笔画身体和局部姿态。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`stroke_body_search`、`pose_shear_search`、`shape_reset` | `candidate_rank_prompt.txt` 排序 top candidates；`tuning_prompt.txt` 给 JSON 建议；`final_acceptance_prompt.txt` 终检。 |
+| `ink_gray_balance` | 分开控制真黑核心、中灰笔画身体和外灰边。 | `core_black_search`、`mid_gray_body_search`、`outer_gray_control`、`opacity_search`、`core_gain_search`、`alpha_contrast_search` | 同上，但建议必须限制在黑灰相关参数。 |
+| `photo_texture` | 匹配照片/扫描的模糊、断裂、噪声和压缩质感。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture` | 同上，但只能在形态和黑灰通过后主导。 |
+| `background_cleanup` | 验收旧字残影、涂抹、发白、发暗、背景纹理断裂和接缝。 | `old_slot_cleanup_check`、`ghost_residual_repair`、`shadow_residual_repair`、`background_texture_repair`、`seam_gradient_repair` | `candidate_rank_prompt.txt` 可指出补丁感；`final_acceptance_prompt.txt` 终检自然度。 |
+
+所有视觉 prompt 使用 `master_prompt.txt` 作为 system prompt。Web 路径当前使用 `candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt`；CLI 迭代路径还会使用 `tuning_prompt.txt`。
+
 如果 `text_shape` 未通过，后续调参只能先处理字体、字号、描边/笔画身体、字槽偏移和姿态继承；不能先通过降黑、加模糊、加噪声或背景修补来掩盖形态问题。
 
 `text_shape` 的判断不能因为同时存在黑芯过量而被隐藏。若一个候选既偏黑又存在笔画身体偏窄、邻字核心密度不一致或姿态继承不足，应先把阻塞阶段记为 `text_shape`，然后再进入 `ink_gray_balance`。

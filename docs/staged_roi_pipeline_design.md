@@ -83,7 +83,7 @@ class StageSpec:
     display_name: str
     blocks_next: bool
     detect: Callable[[Report], StageResult]
-    patch_family: str
+    optimization_steps: tuple[str, ...]
     allowed_patch_keys: frozenset[str]
     blocked_patch_keys: frozenset[str]
 ```
@@ -538,7 +538,7 @@ blocking_stage: stroke_body
 reason: changed char core density below same-row neighbor
 allowed_params: stroke_opacity, font_size, core_ink_gain, core_darken_strength
 blocked_params: blur, photo_noise, jpeg_quality
-selected_patch_family: stroke_body_patches
+selected_optimization_step: stroke_body_search
 ```
 
 Web 候选 drawer 应展示：

@@ -89,9 +89,9 @@ STAGE_LABELS = {
     "background_cleanup": "inpaint texture and removed old slots",
 }
 
-# These are not stages. They are within-stage optimization families used to
+# These are not stages. They are within-stage optimization steps used to
 # classify model patches and locally generated candidate mutations.
-OPTIMIZATION_FAMILY_KEYS = {
+OPTIMIZATION_STEP_KEYS = {
     "text_shape": {
         "font_size_delta",
         "text_dx_delta",
@@ -132,11 +132,11 @@ OPTIMIZATION_FAMILY_KEYS = {
 }
 
 # Stage gates define ordering and blocking. Optimization policy defines which
-# candidate mutation families may run while a given stage is blocking.
+# candidate mutation steps may run while a given stage is blocking.
 STAGE_OPTIMIZATION_POLICY = {
     "hard_boundary": {
-        "allowed_families": [],
-        "forbidden_families": [
+        "allowed_steps": [],
+        "forbidden_steps": [
             "text_shape",
             "stroke_body_shape",
             "ink_gray_balance",
@@ -146,36 +146,36 @@ STAGE_OPTIMIZATION_POLICY = {
         "reason": "Hard boundary failures must stop before visual or revision tuning.",
     },
     "text_shape": {
-        "allowed_families": ["text_shape", "stroke_body_shape"],
-        "forbidden_families": ["background_cleanup"],
-        "secondary_only_families": ["photo_texture"],
+        "allowed_steps": ["text_shape", "stroke_body_shape"],
+        "forbidden_steps": ["background_cleanup"],
+        "secondary_only_steps": ["photo_texture"],
         "reason": "Shape must be solved by font, slot, baseline, pose, and stroke body before texture becomes dominant.",
     },
     "ink_gray_balance": {
-        "allowed_families": ["ink_gray_balance"],
-        "forbidden_families": ["text_shape", "background_cleanup"],
-        "secondary_only_families": ["photo_texture"],
+        "allowed_steps": ["ink_gray_balance"],
+        "forbidden_steps": ["text_shape", "background_cleanup"],
+        "secondary_only_steps": ["photo_texture"],
         "reason": "Ink balance must solve true-black core, mid-gray body, and gray edge before photo texture dominates.",
     },
     "photo_texture": {
-        "allowed_families": ["photo_texture"],
-        "forbidden_families": ["text_shape", "stroke_body_shape", "ink_gray_balance", "background_cleanup"],
+        "allowed_steps": ["photo_texture"],
+        "forbidden_steps": ["text_shape", "stroke_body_shape", "ink_gray_balance", "background_cleanup"],
         "reason": "Photo texture is only allowed after shape and ink stages pass.",
     },
     "background_cleanup": {
-        "allowed_families": ["background_cleanup", "photo_texture"],
-        "forbidden_families": ["text_shape", "stroke_body_shape", "ink_gray_balance"],
+        "allowed_steps": ["background_cleanup", "photo_texture"],
+        "forbidden_steps": ["text_shape", "stroke_body_shape", "ink_gray_balance"],
         "reason": "Background cleanup must repair mask, inpaint, texture, ghosting, and seams without using new text to hide residue.",
     },
     "none": {
-        "allowed_families": [
+        "allowed_steps": [
             "text_shape",
             "stroke_body_shape",
             "ink_gray_balance",
             "photo_texture",
             "background_cleanup",
         ],
-        "forbidden_families": [],
+        "forbidden_steps": [],
         "reason": "No local blocking stage remains.",
     },
 }
@@ -4102,15 +4102,15 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
     return float(len(stage_issues(report, stage_id))) * 100.0
 
 
-def optimization_families_for_patch(patch: dict[str, Any] | None) -> list[str]:
+def optimization_steps_for_patch(patch: dict[str, Any] | None) -> list[str]:
     if not isinstance(patch, dict):
         return []
     keys = {str(key) for key, value in patch.items() if value is not None}
-    families: list[str] = []
-    for family, family_keys in OPTIMIZATION_FAMILY_KEYS.items():
-        if keys & family_keys:
-            families.append(family)
-    return families
+    steps: list[str] = []
+    for step, step_keys in OPTIMIZATION_STEP_KEYS.items():
+        if keys & step_keys:
+            steps.append(step)
+    return steps
 
 
 def optimization_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
@@ -4118,55 +4118,55 @@ def optimization_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
     return {
         "stage_id": stage_id or None,
         "stage_label": STAGE_LABELS.get(str(stage_id or "")),
-        "allowed_families": list(policy.get("allowed_families") or []),
-        "forbidden_families": list(policy.get("forbidden_families") or []),
-        "secondary_only_families": list(policy.get("secondary_only_families") or []),
+        "allowed_steps": list(policy.get("allowed_steps") or []),
+        "forbidden_steps": list(policy.get("forbidden_steps") or []),
+        "secondary_only_steps": list(policy.get("secondary_only_steps") or []),
         "reason": policy.get("reason"),
     }
 
 
 def optimization_policy_audit(stage_id: str | None, patch: dict[str, Any] | None) -> dict[str, Any]:
     policy = optimization_policy_for_stage(stage_id)
-    families = optimization_families_for_patch(patch)
-    allowed = set(policy["allowed_families"])
-    forbidden = set(policy["forbidden_families"])
-    secondary_only = set(policy.get("secondary_only_families") or [])
-    effective_families = list(families)
-    if stage_id == "text_shape" and "stroke_body_shape" in effective_families:
-        effective_families = [
-            family
-            for family in effective_families
-            if family != "ink_gray_balance"
+    steps = optimization_steps_for_patch(patch)
+    allowed = set(policy["allowed_steps"])
+    forbidden = set(policy["forbidden_steps"])
+    secondary_only = set(policy.get("secondary_only_steps") or [])
+    effective_steps = list(steps)
+    if stage_id == "text_shape" and "stroke_body_shape" in effective_steps:
+        effective_steps = [
+            step
+            for step in effective_steps
+            if step != "ink_gray_balance"
         ]
-    if stage_id == "ink_gray_balance" and "ink_gray_balance" in effective_families:
-        effective_families = [
-            family
-            for family in effective_families
-            if family != "stroke_body_shape"
+    if stage_id == "ink_gray_balance" and "ink_gray_balance" in effective_steps:
+        effective_steps = [
+            step
+            for step in effective_steps
+            if step != "stroke_body_shape"
         ]
-    primary_families = [family for family in effective_families if family not in secondary_only]
-    forbidden_hits = [family for family in families if family in forbidden]
+    primary_steps = [step for step in effective_steps if step not in secondary_only]
+    forbidden_hits = [step for step in steps if step in forbidden]
     disallowed_primary = [
-        family
-        for family in primary_families
-        if family not in allowed and family not in secondary_only
+        step
+        for step in primary_steps
+        if step not in allowed and step not in secondary_only
     ]
-    secondary_only_without_primary = bool(families and not primary_families and secondary_only.intersection(families))
+    secondary_only_without_primary = bool(steps and not primary_steps and secondary_only.intersection(steps))
     is_allowed = not forbidden_hits and not disallowed_primary and not secondary_only_without_primary
-    if not families:
+    if not steps:
         is_allowed = True
     reason = "allowed"
     if forbidden_hits:
-        reason = f"forbidden families for current stage: {', '.join(forbidden_hits)}"
+        reason = f"forbidden optimization steps for current stage: {', '.join(forbidden_hits)}"
     elif disallowed_primary:
-        reason = f"primary families outside current stage: {', '.join(disallowed_primary)}"
+        reason = f"primary optimization steps outside current stage: {', '.join(disallowed_primary)}"
     elif secondary_only_without_primary:
         reason = "secondary-only photo texture patch cannot be the main adjustment for this stage"
     return {
         **policy,
-        "optimization_families": families,
-        "effective_optimization_families": effective_families,
-        "primary_optimization_families": primary_families,
+        "optimization_steps": steps,
+        "effective_optimization_steps": effective_steps,
+        "primary_optimization_steps": primary_steps,
         "allowed": is_allowed,
         "rejection_reason": None if is_allowed else reason,
     }
@@ -7086,8 +7086,8 @@ def run_region_vision_checks(
                 else:
                     attempt_record["optimization_policy"] = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
-                        "optimization_families": ["shape_reset"],
-                        "primary_optimization_families": ["shape_reset"],
+                        "optimization_steps": ["shape_reset"],
+                        "primary_optimization_steps": ["shape_reset"],
                         "allowed": current_blocking_stage == "text_shape",
                         "rejection_reason": None if current_blocking_stage == "text_shape" else "shape reset is only generated for text_shape",
                     }
