@@ -61,7 +61,7 @@ PY
 - [x] 新增 `slot_quality_report`。
 - [x] 候选生成前检查旧值槽位数、槽位完整性、底部/灰边覆盖、protected text 冲突。
 - [x] 旧槽位不完整时直接返回 rejected，不进入字体/墨色/照片质感候选。
-- [ ] 字数减少时，多余旧槽位纳入前置清除报告；字数增加时，右边界受 protected text 限制。
+- [x] 字数减少时，多余旧槽位纳入前置清除报告；字数增加时，右边界受 protected text 限制。
 
 验证：
 
@@ -72,7 +72,10 @@ PY
   --json
 ```
 
-输出必须包含 `summary.plan.slot_quality_report`。失败时必须有 rejected candidate 和明确 `slot_quality_failed` 原因。
+输出必须包含 `summary.plan.slot_quality_report`。报告中的
+`length_change_report.extra_source_slots_for_cleanup` 记录字数减少时必须清理的旧槽位；
+`length_change_report.right_boundary` 记录字数增加时右侧 protected text 对可用空间的限制。
+失败时必须有 rejected candidate 和明确 `slot_quality_failed` 原因。
 
 ### Slice 4: 放置策略和单字形态变化检测
 
@@ -87,11 +90,15 @@ PY
 
 - [x] `progress.jsonl` 每轮写入 `pipeline_profile`、`stage_status`、`blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`。
 - [x] `result.json` 写入最终候选的完整 stage evidence。
-- [ ] 保存 shape、ink-gray、photo texture、background cleanup 的 top candidate 或 rejected candidate 证据。
+- [x] 保存 shape、ink-gray、photo texture、background cleanup 的 top candidate 或 rejected candidate 证据。
 - [x] Web 候选抽屉展示 profile、stage、stage severity。
-- [ ] 视觉 prompt 输入当前 stage context，输出建议不能越过本地 stage filter。
+- [x] Web 候选抽屉展示候选来源、Optimization Step、模型建议和 patcher filter 信息。
+- [x] 视觉 prompt 输入当前 stage context，输出建议不能越过本地 stage filter。
 
-验证：一次失败任务也必须能从 `output/web/<run>/progress.jsonl` 和 `result.json` 解释“卡在哪个阶段、为什么没有继续、下一轮应该调什么”。
+验证：一次失败任务也必须能从 `output/web/<run>/progress.jsonl`、`result.json`
+和 `output/web/<run>/regions/<region>/stage_evidence/summary.json`
+解释“卡在哪个阶段、为什么没有继续、下一轮应该调什么”。视觉排序输入必须在
+`visual_eval_candidate_rank.json.local_stage_context` 中保留 `stage_context_by_candidate`。
 
 ## Current Implementation Status
 

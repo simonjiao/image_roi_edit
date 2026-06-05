@@ -9,6 +9,12 @@
 代码硬校验报告：
 {hard_check_report}
 
+代码硬校验报告中还包含：
+1. `pipeline_profile`；
+2. `stage_context_by_candidate`；
+3. 每个候选当前的 `blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`；
+4. `stage_filter_contract`。
+
 如果硬校验报告显示任一候选存在以下问题，直接淘汰：
 1. 输出尺寸与原图不一致；
 2. ROI 外像素发生变化；
@@ -31,6 +37,7 @@
 要选择最像原图低分辨率扫描/拍照效果的版本。
 `char_offsets_delta` 中每个元素按 target_text 的非空白字符顺序对应一个目标字符，只给需要微调的字符填非零 dx/dy。
 必须按阶段给出判断：`text_shape` 未通过时，不要把主要建议写成加模糊、加噪声或压缩；`ink_gray_balance` 未通过时，不要用字体重搜或照片质感掩盖黑度/灰边问题；`photo_texture` 只在形态和墨色都通过后作为主要方向；`background_cleanup` 必须先处理旧字残留、发白、过平滑、接缝。
+如果候选的 `stage_context_by_candidate` 中存在 `blocking_stage`，你的 `suggested_patch` 和 `parameter_suggestions` 只能使用该候选 `allowed_patch_keys` 对应的参数。可以描述其它问题，但不能把 blocked 参数作为当前轮主建议。
 必须区分：
 - `too_dark`：真黑核心或整体黑度超过原字/邻字；
 - `too_bold`：笔画身体面积或外扩明显过重；

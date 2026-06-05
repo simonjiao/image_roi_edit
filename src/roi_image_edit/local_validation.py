@@ -16,6 +16,7 @@ from roi_image_edit.iterative_pipeline import (
     char_gray_band_metrics,
     char_pose_metrics,
     clamp_box,
+    draw_replacement_layer,
     extra_source_slot_cleanup_issues,
     extra_source_slot_cleanup_metrics,
     font_style_gate,

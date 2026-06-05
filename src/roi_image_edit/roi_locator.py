@@ -2260,6 +2260,8 @@ def slot_quality_report(
 ) -> dict[str, Any]:
     source_chars = text_chars(source_text)
     target_chars = text_chars(target_text)
+    source_count = len(source_chars)
+    target_count = len(target_chars)
     expected_count = len(source_chars) or len(target_chars)
     issues: list[dict[str, Any]] = []
     if expected_count and len(slots) < expected_count:
@@ -2277,6 +2279,16 @@ def slot_quality_report(
                 "expected": len(source_chars),
                 "actual": len(slots),
             }
+        )
+
+    def union_boxes(boxes: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int] | None:
+        if not boxes:
+            return None
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
         )
 
     arr = np.array(img.convert("RGB"))
@@ -2340,13 +2352,87 @@ def slot_quality_report(
             }
         )
 
+    source_slot_limit = source_count if source_count else len(ordered_slots)
+    source_slot_boxes = [
+        text_run_box(slot)
+        for slot in ordered_slots[: min(source_slot_limit, len(ordered_slots))]
+    ]
+    source_span_box = union_boxes(source_slot_boxes)
+    if source_count and target_count > source_count:
+        length_change = "longer"
+    elif source_count and target_count < source_count:
+        length_change = "shorter"
+    elif source_count and target_count:
+        length_change = "same"
+    else:
+        length_change = "unknown"
+
+    extra_source_slots = (
+        ordered_slots[target_count: min(source_count, len(ordered_slots))]
+        if length_change == "shorter"
+        else ()
+    )
+    extra_source_boxes = [text_run_box(slot) for slot in extra_source_slots]
+    cleanup_span = union_boxes(extra_source_boxes)
+    if length_change == "shorter" and source_count and target_count and len(extra_source_slots) < source_count - target_count:
+        issues.append(
+            {
+                "type": "missing_extra_source_slots_for_cleanup",
+                "expected_extra_slots": source_count - target_count,
+                "actual_extra_slots": len(extra_source_slots),
+            }
+        )
+
+    right_boundary: dict[str, Any] = {
+        "enabled": bool(length_change == "longer" and source_span_box),
+    }
+    if length_change == "longer" and source_span_box is not None:
+        row_box = source_span_box
+        margin = 3
+        right_protected_boxes = [
+            box
+            for box in protected_boxes
+            if protected_box_overlaps_row(box, row_box) and box[0] >= row_box[2]
+        ]
+        right_limit = min([roi[2], *(box[0] - margin for box in right_protected_boxes)])
+        slot_widths = [max(1, slot.x2 - slot.x1) for slot in ordered_slots]
+        slot_gaps = [
+            max(0, ordered_slots[idx + 1].x1 - ordered_slots[idx].x2)
+            for idx in range(len(ordered_slots) - 1)
+        ]
+        median_width = float(np.median(slot_widths)) if slot_widths else max(1.0, (row_box[2] - row_box[0]) / source_count)
+        median_gap = float(np.median(slot_gaps)) if slot_gaps else max(2.0, median_width * 0.14)
+        estimated_extra_width = max(0.0, (target_count - source_count) * (median_width + median_gap))
+        available_right_px = max(0, right_limit - row_box[2])
+        right_boundary = {
+            "enabled": True,
+            "source_span_box": list(row_box),
+            "right_limit": int(right_limit),
+            "available_right_px": int(available_right_px),
+            "estimated_extra_width": round(float(estimated_extra_width), 3),
+            "limited_by_protected_text": bool(right_limit < roi[2]),
+            "protected_right_boxes": [list(box) for box in right_protected_boxes],
+        }
+
     return {
         "pass": not issues,
         "expected_count": expected_count,
         "actual_count": len(slots),
+        "source_count": source_count,
+        "target_count": target_count,
+        "length_change": length_change,
         "source_text": source_text,
         "target_text": target_text,
         "roi": list(roi),
+        "source_span_box": list(source_span_box) if source_span_box else None,
+        "length_change_report": {
+            "length_change": length_change,
+            "source_count": source_count,
+            "target_count": target_count,
+            "extra_source_slots_for_cleanup": [list(box) for box in extra_source_boxes],
+            "extra_source_cleanup_span": list(cleanup_span) if cleanup_span else None,
+            "right_boundary": right_boundary,
+        },
         "per_slot": per_slot,
         "issues": issues,
     }
@@ -2461,6 +2547,17 @@ def build_region_plan(
         )
         target_roi = clamp_box_to_container(target_roi, roi)
         source_reference_box = target_roi
+    slot_report = {
+        **slot_report,
+        "target_roi_after_length_policy": list(target_roi),
+        "source_reference_box_after_length_policy": list(source_reference_box),
+        "protected_boxes": [list(box) for box in protected_boxes],
+    }
+    length_report = dict(slot_report.get("length_change_report") or {})
+    if length_report:
+        length_report["target_roi_after_length_policy"] = list(target_roi)
+        length_report["source_reference_box_after_length_policy"] = list(source_reference_box)
+        slot_report["length_change_report"] = length_report
     draw_mode = "auto"
     if target_count and (source_count and target_count > source_count):
         draw_mode = "center"

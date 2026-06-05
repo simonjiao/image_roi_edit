@@ -22,8 +22,8 @@ gates remain authoritative.
 | Prompt | Role |
 | --- | --- |
 | `master_prompt.txt` | System prompt shared by visual ranking, tuning, and final acceptance calls. |
-| `candidate_rank_prompt.txt` | Ranks locally generated top candidates across the current stage context. |
+| `candidate_rank_prompt.txt` | Ranks locally generated top candidates with `stage_context_by_candidate`; suggestions must stay within each candidate's allowed patch keys. |
 | `tuning_prompt.txt` | CLI iterative path diagnosis prompt; returns small JSON parameter suggestions for the current blocking stage. |
-| `final_acceptance_prompt.txt` | Final visual acceptance prompt; must respect local hard check, strict gate, and stage gate reports. |
+| `final_acceptance_prompt.txt` | Final visual acceptance prompt; must respect local hard check, strict gate, stage context, and local stage filter. |
 | `font_size_prompt.txt` | Packaged specialist prompt asset for font and size diagnosis. |
 | `darkness_blur_prompt.txt` | Packaged specialist prompt asset for darkness and blur diagnosis. |

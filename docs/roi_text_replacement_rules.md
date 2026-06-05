@@ -64,6 +64,10 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 | `background_cleanup` | 验收旧字残影、涂抹、发白、发暗、背景纹理断裂和接缝。 | `old_slot_cleanup_check`、`ghost_residual_repair`、`shadow_residual_repair`、`background_texture_repair`、`seam_gradient_repair` | `candidate_rank_prompt.txt` 可指出补丁感；`final_acceptance_prompt.txt` 终检自然度。 |
 
 所有视觉 prompt 使用 `master_prompt.txt` 作为 system prompt。Web 路径当前使用 `candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt`；CLI 迭代路径还会使用 `tuning_prompt.txt`。
+视觉 prompt 的输入必须包含当前候选或候选集合的 `stage_context`。模型可以指出其它阶段
+的视觉问题，但 `suggested_patch` 和 `parameter_suggestions` 必须受当前
+`allowed_patch_keys` 约束；本地 `stage_filter` 会拒绝越过阶段边界的建议，并把冲突写入
+`revision_rounds.model_conflicts`。
 
 如果 `text_shape` 未通过，后续调参只能先处理字体、字号、描边/笔画身体、字槽偏移和姿态继承；不能先通过降黑、加模糊、加噪声或背景修补来掩盖形态问题。
 

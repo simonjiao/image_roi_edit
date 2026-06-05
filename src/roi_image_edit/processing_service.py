@@ -72,6 +72,7 @@ from roi_image_edit.stage_patchers import (
     revision_patches_for_round,
 )
 from roi_image_edit.stage_profiles import stage_profile
+from roi_image_edit.stages import prompt_stage_context
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
     build_region_plan,
@@ -82,6 +83,7 @@ from roi_image_edit.roi_locator import (
     text_chars,
 )
 from roi_image_edit.stage_policy import (
+    STAGE_ORDER,
     optimization_policy_audit,
     stage_optimization_summary,
 )
@@ -145,8 +147,14 @@ def load_processing_prompts() -> tuple[str, str, str]:
     )
 
 
-def processing_prompt_context(plan: RenderPlan) -> str:
+def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | None = None) -> str:
     target_chars = [ch for ch in plan.target_text if not ch.isspace()]
+    stage_context_text = (
+        "\n当前阶段上下文 JSON：\n"
+        f"{json.dumps(stage_context, ensure_ascii=False, indent=2)}\n"
+        if stage_context
+        else ""
+    )
     return (
         "\n\n动态任务补充：\n"
         f"- 旧文字 source_text: {plan.source_text or ''}\n"
@@ -165,6 +173,8 @@ def processing_prompt_context(plan: RenderPlan) -> str:
         "- 如果旧文字没有被完整清除、仍有任何旧字残留，必须 pass=false。\n"
         "- 如果新文字不在旧文字原位置，而是偏到标签、冒号或其他字段位置，必须 pass=false。\n"
         "- 如果 hard_check_report 中 font_style_gate.pass=false 或 strict_gate.pass=false，必须 pass=false。\n"
+        "- 如果 hard_check_report 或当前阶段上下文给出 blocking_stage，视觉建议必须只围绕该阶段允许的参数族；禁止建议 blocked_patch_keys。\n"
+        f"{stage_context_text}"
     )
 
 
@@ -201,6 +211,50 @@ def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:
             else []
         ),
     }
+
+
+def model_stage_context(report: dict[str, Any] | None, pipeline_profile: str) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {
+            "pipeline_profile": pipeline_profile,
+            "stage_order": list(STAGE_ORDER),
+            "blocking_stage": None,
+            "stage_status": {},
+            "allowed_patch_keys": [],
+            "blocked_patch_keys": [],
+        }
+    context = prompt_stage_context(report, pipeline_profile)
+    blocking_stage = context.get("blocking_stage")
+    context["optimization_policy"] = stage_optimization_summary(
+        str(blocking_stage) if blocking_stage else None
+    )
+    return context
+
+
+def attach_stage_context_to_rank_report(
+    hard_reports: dict[str, Any],
+    *,
+    pipeline_profile: str,
+) -> dict[str, Any]:
+    enriched = dict(hard_reports)
+    candidates = hard_reports.get("candidates")
+    stage_context_by_candidate: dict[str, Any] = {}
+    if isinstance(candidates, dict):
+        for candidate_id, candidate in candidates.items():
+            if not isinstance(candidate, dict):
+                continue
+            report = candidate.get("hard_check")
+            stage_context_by_candidate[str(candidate_id)] = model_stage_context(
+                report if isinstance(report, dict) else None,
+                pipeline_profile,
+            )
+    enriched["pipeline_profile"] = pipeline_profile
+    enriched["stage_context_by_candidate"] = stage_context_by_candidate
+    enriched["stage_filter_contract"] = {
+        "authoritative": "local_stage_filter",
+        "rule": "Vision suggestions may diagnose any issue, but executable patches must stay within the current blocking stage allowed_patch_keys.",
+    }
+    return enriched
 
 
 def image_to_data_url(img: Image.Image) -> str:
@@ -254,18 +308,32 @@ def run_region_vision_checks(
     ]
     make_contact_sheet(sheet_items, vision_sheet_path, scale=1, cols=1)
 
-    hard_reports = compact_hard_reports(vision_rendered, plan)
+    hard_reports = attach_stage_context_to_rank_report(
+        compact_hard_reports(vision_rendered, plan),
+        pipeline_profile=pipeline_profile,
+    )
     prompt = candidate_prompt_template.replace(
         "{hard_check_report}",
         json.dumps(hard_reports, ensure_ascii=False, indent=2),
     )
-    prompt += processing_prompt_context(plan)
+    prompt += processing_prompt_context(
+        plan,
+        {
+            "pipeline_profile": pipeline_profile,
+            "stage_context_by_candidate": hard_reports.get("stage_context_by_candidate"),
+        },
+    )
     prompt += STRICT_ACCEPTANCE_APPENDIX
     candidate_rank_json = vision_client.call_json(
         system_prompt=master_prompt,
         user_prompt=prompt,
         image_paths=[original_context_path, vision_sheet_path],
     )
+    candidate_rank_json["local_stage_context"] = {
+        "pipeline_profile": pipeline_profile,
+        "stage_context_by_candidate": hard_reports.get("stage_context_by_candidate"),
+        "stage_filter_contract": hard_reports.get("stage_filter_contract"),
+    }
     write_json(region_dir / "visual_eval_candidate_rank.json", candidate_rank_json)
 
     model_best = find_best_candidate_from_model(
@@ -320,7 +388,7 @@ def run_region_vision_checks(
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
                 "pipeline_profile": pipeline_profile,
-                "stage_context": stage_progress_fields(report),
+                "stage_context": model_stage_context(report, pipeline_profile),
             },
             "final_score": round(float(score), 3),
             "hard_check": report,
@@ -334,7 +402,10 @@ def run_region_vision_checks(
                 json.dumps(hard_payload, ensure_ascii=False, indent=2),
             )
         )
-        final_prompt += processing_prompt_context(plan)
+        final_prompt += processing_prompt_context(
+            plan,
+            model_stage_context(report, pipeline_profile),
+        )
         final_prompt += STRICT_ACCEPTANCE_APPENDIX
         final_json = vision_client.call_json(
             system_prompt=master_prompt,
@@ -786,6 +857,11 @@ def run_region_vision_checks(
                     "score": round(float(patched_score), 3),
                     "path": str(patched_compare_path),
                     "selected_reason": selected_reason,
+                    "patcher_source": attempt_record.get("origin"),
+                    "round_candidate": attempt_record.get("round_candidate"),
+                    "optimization_policy": attempt_record.get("optimization_policy"),
+                    "model_suggestions": attempt_record.get("model_suggestions"),
+                    "patch": attempt_record.get("patch"),
                     **candidate_trace_summary(patched_report),
                     "metrics": (patched_report.get("strict_visual_metrics") or {}).get("bands", {}),
                 }
@@ -1064,6 +1140,68 @@ def candidate_trace_summary(report: dict[str, Any] | None) -> dict[str, Any]:
                 else None
             ),
         },
+    }
+
+
+def save_stage_candidate_evidence(
+    original: Image.Image,
+    rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
+    plan: RenderPlan,
+    region_dir: Path,
+    *,
+    pipeline_profile: str,
+) -> dict[str, Any]:
+    evidence_dir = region_dir / "stage_evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    stage_records: dict[str, Any] = {}
+    tracked_stages = ("text_shape", "ink_gray_balance", "photo_texture", "background_cleanup")
+    for stage_id in tracked_stages:
+        stage_candidates = [
+            item
+            for item in rendered
+            if ((item[2].get("stage_gate") or {}).get("blocking_stage") == stage_id)
+        ]
+        if not stage_candidates:
+            stage_records[stage_id] = {
+                "available": False,
+                "reason": "no_candidate_blocked_at_stage",
+            }
+            continue
+        params, candidate, report, score = min(stage_candidates, key=lambda item: item[3])
+        compare_path = evidence_dir / f"{stage_id}_top_compare.png"
+        report_path = evidence_dir / f"{stage_id}_top_report.json"
+        compare_region_preview(original, candidate, plan.search_roi, scale=4).save(compare_path)
+        record = {
+            "available": True,
+            "stage_id": stage_id,
+            "candidate_id": params.candidate_id,
+            "label": params_label(params),
+            "score": round(float(score), 3),
+            "compare_path": str(compare_path),
+            "report_path": str(report_path),
+            "stage_context": model_stage_context(report, pipeline_profile),
+            "trace": candidate_trace_summary(report),
+            "params": asdict(params),
+            "strict_gate": report.get("strict_gate"),
+            "shape_change_report": report.get("shape_change_report"),
+            "ink_gray_metrics": report.get("char_gray_band_metrics"),
+            "photo_texture_metrics": report.get("photo_texture_metrics"),
+            "background_texture_metrics": report.get("background_texture_metrics"),
+            "extra_source_slot_cleanup_metrics": report.get("extra_source_slot_cleanup_metrics"),
+        }
+        write_json(report_path, record)
+        stage_records[stage_id] = record
+    summary_path = evidence_dir / "summary.json"
+    summary = {
+        "pipeline_profile": pipeline_profile,
+        "stage_order": list(STAGE_ORDER),
+        "stages": stage_records,
+    }
+    write_json(summary_path, summary)
+    return {
+        "directory": str(evidence_dir),
+        "summary": str(summary_path),
+        "stages": stage_records,
     }
 
 
@@ -1407,6 +1545,13 @@ def process_region(
         raise RuntimeError("no candidate could be rendered")
 
     rendered.sort(key=lambda item: item[3])
+    stage_evidence = save_stage_candidate_evidence(
+        original,
+        rendered,
+        plan,
+        region_dir,
+        pipeline_profile=pipeline_profile,
+    )
     if progress:
         progress(
             "region_candidates_finished",
@@ -1414,6 +1559,14 @@ def process_region(
                 "region_id": region_id,
                 "rendered": len(rendered),
                 "best_score": round(float(rendered[0][3]), 3) if rendered else None,
+                "stage_evidence": {
+                    "summary": stage_evidence.get("summary"),
+                    "available_stages": [
+                        stage_id
+                        for stage_id, record in (stage_evidence.get("stages") or {}).items()
+                        if isinstance(record, dict) and record.get("available")
+                    ],
+                },
                 **stage_progress_fields(rendered[0][2] if rendered else None),
             },
         )
@@ -1473,6 +1626,14 @@ def process_region(
                 "blocking_stage": preview.get("blocking_stage"),
                 "stage_severity": preview.get("stage_severity"),
                 "selection_reason": preview.get("selected_reason"),
+                "patcher_source": preview.get("patcher_source"),
+                "optimization_policy": preview.get("optimization_policy")
+                if isinstance(preview.get("optimization_policy"), dict)
+                else {},
+                "model_suggestions": preview.get("model_suggestions")
+                if isinstance(preview.get("model_suggestions"), list)
+                else [],
+                "patch": preview.get("patch") if isinstance(preview.get("patch"), dict) else {},
                 "background": preview.get("background") if isinstance(preview.get("background"), dict) else {},
                 "dataUrl": image_to_data_url(preview_image),
                 "metrics": {
@@ -1502,6 +1663,13 @@ def process_region(
                     f"dark {params.core_darken_strength:.2f}"
                 ),
                 "score": round(float(score), 3),
+                "patcher_source": "initial_local_rank",
+                "optimization_policy": stage_optimization_summary(
+                    str((report.get("stage_gate") or {}).get("blocking_stage") or "")
+                    or None
+                ),
+                "model_suggestions": [],
+                "patch": {},
                 **candidate_trace_summary(report),
                 "dataUrl": image_to_data_url(preview),
                 "metrics": {
@@ -1547,6 +1715,9 @@ def process_region(
                 "draw_mode": plan.draw_mode,
                 "pipeline_profile": pipeline_profile,
                 "stage_status": (best_report.get("stage_gate") or {}).get("stage_status"),
+                "placement_strategy": plan.placement_strategy,
+                "placement_strategy_reason": plan.placement_strategy_reason,
+                "slot_quality_report": plan.slot_quality_report,
                 "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
             },
             "params": asdict(best_params),
@@ -1569,6 +1740,7 @@ def process_region(
             "artifacts": {
                 "selected_candidate": str(selected_candidate_path),
                 "selected_compare": str(selected_compare_path),
+                "stage_evidence": stage_evidence,
                 "display_image_is_candidate": not accepted,
             },
             "rejected_fonts": rejected_fonts,

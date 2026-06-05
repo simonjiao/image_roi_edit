@@ -121,12 +121,23 @@ function formatNumber(value) {
 function candidateMetaLines(candidate) {
   const metrics = candidate.metrics || {};
   const background = candidate.background || {};
+  const policy = candidate.optimization_policy || {};
+  const steps = Array.isArray(policy.optimization_steps)
+    ? policy.optimization_steps.join(", ")
+    : Array.isArray(policy.primary_optimization_steps)
+      ? policy.primary_optimization_steps.join(", ")
+      : "";
+  const patchKeys = candidate.patch ? Object.keys(candidate.patch).slice(0, 4).join(", ") : "";
+  const modelSuggestionCount = Array.isArray(candidate.model_suggestions)
+    ? candidate.model_suggestions.length
+    : 0;
   const issues = Array.isArray(background.issues)
     ? background.issues.filter(Boolean).slice(0, 2).join(", ")
     : "";
   const lines = [
     `${candidate.index}. ${candidate.kind || "candidate"} | ${candidate.label}`,
     `profile ${candidate.pipeline_profile || "photo_scan"} | stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
+    `origin ${candidate.patcher_source || "-"} | steps ${steps || "-"} | patch ${patchKeys || "-"} | model ${modelSuggestionCount}`,
     `placement ${candidate.placement_strategy || "-"} | shape_large ${
       candidate.shape_change_large === null || candidate.shape_change_large === undefined
         ? "-"
