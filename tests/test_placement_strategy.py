@@ -4,6 +4,7 @@ import unittest
 
 from roi_image_edit.iterative_pipeline import RenderPlan, TextRun
 from roi_image_edit.local_validation import placement_strategy_report
+from roi_image_edit.run_artifacts import result_audit_payload
 from roi_image_edit.roi_locator import choose_placement_strategy
 
 
@@ -118,6 +119,49 @@ class PlacementStrategyTest(unittest.TestCase):
         self.assertEqual(report["constraints"]["max_char_center_dx"], 2.0)
         self.assertEqual(report["actual_errors"]["max_abs_center_dx"], 0.75)
         self.assertEqual(report["actual_errors"]["center_distance_delta"], 0.5)
+
+    def test_result_audit_preserves_placement_strategy_report(self) -> None:
+        placement_report = {
+            "strategy": "center_primary",
+            "reason": "same_length_cjk_changed_chars_use_slot_center",
+            "pass": True,
+            "conditions": {"length_change": "same", "slot_count": 2},
+            "constraints": {"max_char_center_dx": 2.0},
+            "actual_errors": {"max_abs_center_dx": 0.75},
+            "issues": [],
+        }
+        audit = result_audit_payload(
+            {
+                "ok": True,
+                "runDir": "output/web/run1",
+                "profile": "photo_scan",
+                "profileResolution": {"id": "photo_scan"},
+                "images": [
+                    {
+                        "id": "img1",
+                        "ok": True,
+                        "regions": [
+                            {
+                                "id": "region_1",
+                                "summary": {
+                                    "hard_check": {
+                                        "placement_strategy_report": placement_report,
+                                    }
+                                },
+                            }
+                        ],
+                        "candidates": [],
+                    }
+                ],
+            }
+        )
+        saved = audit["images"][0]["regions"][0]["summary"]["hard_check"]["placement_strategy_report"]
+        self.assertEqual(saved["strategy"], "center_primary")
+        self.assertEqual(saved["reason"], "same_length_cjk_changed_chars_use_slot_center")
+        self.assertTrue(saved["pass"])
+        self.assertEqual(saved["conditions"]["length_change"], "same")
+        self.assertEqual(saved["constraints"]["max_char_center_dx"], 2.0)
+        self.assertEqual(saved["actual_errors"]["max_abs_center_dx"], 0.75)
 
 
 if __name__ == "__main__":

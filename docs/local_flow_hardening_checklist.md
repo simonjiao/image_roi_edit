@@ -98,7 +98,7 @@
 - [ ] 字数增加：左边界锚定、向右扩展，且不覆盖 protected text；验证方式是 2 字变 3 字 fixture。
 - [ ] 数字、日期、编号：左对齐和基线优先，保持数字节奏和字段宽度；验证方式是日期和年龄 fixture。
 - [ ] 手动 ROI 且无旧值：使用保守居中或左对齐 fallback，并降低自动验收置信；验证方式是手动画框无旧值 fixture。
-- [ ] 每个放置策略必须在 `result.json` 写入使用条件、关键约束、实际误差和是否通过；验证方式是 schema 或单测。
+- [x] 每个放置策略必须在 `result.json` 写入使用条件、关键约束、实际误差和是否通过；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_placement_report_schema_records_conditions_constraints_errors_and_pass` 验证 `placement_strategy_report` schema，`test_result_audit_preserves_placement_strategy_report` 验证 result audit 保留 strategy、reason、conditions、constraints、actual_errors 和 pass。
 
 ### G. 单字形态变化检测
 
