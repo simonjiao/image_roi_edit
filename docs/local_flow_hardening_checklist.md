@@ -40,11 +40,11 @@ PY
 
 ### Slice 2: Stage patcher 调度
 
-- [ ] 新增 `src/roi_image_edit/stage_patchers.py`。
-- [ ] `revision_patches_for_round()` 缩成 stage dispatcher。
-- [ ] 每个 patcher 只生成当前 stage 允许的参数族。
-- [ ] 模型 JSON patch、rank patch、本地 patch 都经过同一个 stage filter。
-- [ ] patcher 输出必须记录 `stage_id`、`optimization_steps`、`allowed` / `rejection_reason`。
+- [x] 新增 `src/roi_image_edit/stage_patchers.py`。
+- [x] `revision_patches_for_round()` 缩成 stage dispatcher。
+- [x] 每个 patcher 只生成当前 stage 允许的参数族。
+- [x] 模型 JSON patch、rank patch、本地 patch 都经过同一个 stage filter。
+- [x] patcher filter 输出 `stage_id`、`optimization_steps`、`allowed` / `rejection_reason`。
 
 验证：
 

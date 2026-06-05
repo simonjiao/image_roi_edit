@@ -55,19 +55,21 @@ from roi_image_edit.local_validation import (
 
 
 from roi_image_edit.revision_solver import (
-    acceptance_blocking_stage,
     constrained_revision_params,
-    dedupe_patches,
-    effective_blocking_stage,
     final_acceptance_delivers,
     final_font_revision_candidates,
+    report_blocks_text_shape,
+    revision_selection_score,
+    text_shape_reset_candidates,
+)
+from roi_image_edit.stage_patchers import (
+    acceptance_blocking_stage,
+    dedupe_patches,
+    effective_blocking_stage,
     model_patch_records,
     params_signature,
     patch_signature,
-    report_blocks_text_shape,
     revision_patches_for_round,
-    revision_selection_score,
-    text_shape_reset_candidates,
 )
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,

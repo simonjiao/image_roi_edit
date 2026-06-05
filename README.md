@@ -46,14 +46,19 @@ environment checks load prompts from that package resource directory only.
   orientation scoring, field ROI selection, source-text slot detection, and
   `RenderPlan` construction.
 - `src/roi_image_edit/local_validation.py`: reference profiles, hard/local
-  validation reports, ordered stage gates, background/photo metrics, and local
-  candidate scoring.
+  validation reports, background/photo metrics, and local candidate scoring.
 - `src/roi_image_edit/revision_solver.py`: visual feedback parsing,
-  stage-constrained parameter patches, shape-reset candidates, and final font
-  revision candidates.
+  constrained revision scoring, shape-reset candidates, and final font revision
+  candidates.
 - `src/roi_image_edit/stage_policy.py`: stage order and Optimization Step
   policy. Web code imports it indirectly through the processing service and
   must not redefine stage policy.
+- `src/roi_image_edit/stages.py`: executable stage definitions, `StageSpec`,
+  `StageResult`, detector mapping, and stage report generation.
+- `src/roi_image_edit/stage_profiles.py`: stage profiles for photo scans,
+  clean digital images, low-resolution thumbnails, and manual ROI quick runs.
+- `src/roi_image_edit/stage_patchers.py`: per-stage patchers, model patch
+  parsing, stage patch filtering, and revision patch dispatch.
 - `src/roi_image_edit/iterative_pipeline.py`: lower-level rendering, metric,
   font, hard-check, and OpenAI-compatible vision-client primitives.
 
