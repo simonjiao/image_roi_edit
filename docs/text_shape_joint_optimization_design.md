@@ -8,23 +8,58 @@
 
 本文档不是单张图片的调参记录。任何具体图片、具体文字或具体字体结论都不能直接固化为通用规则；通用规则必须来自旧槽位、邻字、背景和本地指标。
 
-## 目标顺序
+## 三层结构
 
-目标流程必须按以下顺序执行，失败阶段必须阻塞后续阶段：
+必须严格区分三层概念，不能把它们混成同一条 stage 链：
+
+### 1. 前置安全流程
+
+这些步骤发生在阶段门禁之前或属于 `hard_boundary` 的输入条件。失败时不能进入候选生成。
 
 ```text
 方向校正
 -> 字段和旧值 ROI 定位
 -> 旧槽位完整性门禁
--> 放置策略选择
--> 字体形态联合搜索
--> 黑灰比例搜索
--> 照片质感搜索
--> 最终背景融合
--> 视觉模型终检
+-> protected text 边界确认
 ```
 
-这个顺序的核心约束是：不能用颜色、模糊、噪声、压缩或背景修补掩盖字体形态、位置、粗细、基线和姿态问题。
+### 2. 阶段门禁
+
+阶段门禁只有以下五个，顺序必须和代码中的 `STAGE_ORDER` 保持一致：
+
+```text
+hard_boundary
+-> text_shape
+-> ink_gray_balance
+-> photo_texture
+-> background_cleanup
+```
+
+这些是本地 gate。它们负责判断当前候选是否通过、哪个阶段阻塞、后续能否继续。
+
+### 3. 阶段内优化
+
+阶段内优化不是新 stage，而是某个阻塞阶段内部允许执行的 solver/search/patch family。
+
+```text
+text_shape 内部：
+  放置策略选择
+  字体形态联合搜索
+  字号、字槽、基线、stroke body、局部 shear 搜索
+
+ink_gray_balance 内部：
+  opacity、core gain、core darken、alpha contrast、outer gray 搜索
+
+photo_texture 内部：
+  blur、edge breakup、noise、compression、residual 搜索
+
+background_cleanup 内部：
+  最终背景融合、ghost/shadow、补丁纹理修复
+```
+
+视觉模型终检也不是本地 stage。它只能评估本地 top candidates、返回 JSON 建议，并且不能覆盖本地阶段门禁。
+
+这个结构的核心约束是：不能用颜色、模糊、噪声、压缩或背景修补掩盖字体形态、位置、粗细、基线和姿态问题。
 
 ## 实施策略
 
@@ -342,4 +377,3 @@ ROI 很小时，本地渲染和 NumPy 指标可以承受几百到一两千候选
 - `text_shape` 未通过时，流程不会先调照片质感或背景融合。
 - 视觉模型只评估本地 top candidates，不能覆盖本地硬门禁。
 - 失败也有足够中间产物供用户检查。
-

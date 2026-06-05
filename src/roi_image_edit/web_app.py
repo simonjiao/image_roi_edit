@@ -73,7 +73,25 @@ WEB_JOB_LOCK = threading.Lock()
 WEB_JOBS: dict[str, dict[str, Any]] = {}
 
 
-PATCH_FAMILY_KEYS = {
+STAGE_ORDER = (
+    "hard_boundary",
+    "text_shape",
+    "ink_gray_balance",
+    "photo_texture",
+    "background_cleanup",
+)
+
+STAGE_LABELS = {
+    "hard_boundary": "ROI boundary and protected text",
+    "text_shape": "font, size, slot, baseline, stroke body, local pose",
+    "ink_gray_balance": "true-black core, mid-gray body, outer gray edge",
+    "photo_texture": "scan blur, edge breakup, compression/noise texture",
+    "background_cleanup": "inpaint texture and removed old slots",
+}
+
+# These are not stages. They are within-stage optimization families used to
+# classify model patches and locally generated candidate mutations.
+OPTIMIZATION_FAMILY_KEYS = {
     "text_shape": {
         "font_size_delta",
         "text_dx_delta",
@@ -113,7 +131,9 @@ PATCH_FAMILY_KEYS = {
     },
 }
 
-STAGE_PATCH_POLICY = {
+# Stage gates define ordering and blocking. Optimization policy defines which
+# candidate mutation families may run while a given stage is blocking.
+STAGE_OPTIMIZATION_POLICY = {
     "hard_boundary": {
         "allowed_families": [],
         "forbidden_families": [
@@ -3938,37 +3958,21 @@ def stage_gate_for_report(report: dict[str, Any]) -> dict[str, Any]:
         report.get("local_background_texture_issues") or []
     )
 
+    stage_issue_map = {
+        "hard_boundary": [] if report.get("pass") else [{"type": "hard_check_failed"}],
+        "text_shape": text_shape_issues,
+        "ink_gray_balance": ink_issues,
+        "photo_texture": photo_issues,
+        "background_cleanup": background_issues,
+    }
     stages = [
         {
-            "id": "hard_boundary",
-            "label": "ROI boundary and protected text",
-            "pass": bool(report.get("pass")),
-            "issues": [] if report.get("pass") else [{"type": "hard_check_failed"}],
-        },
-        {
-            "id": "text_shape",
-            "label": "font, size, slot, baseline, stroke body, local pose",
-            "pass": not text_shape_issues,
-            "issues": text_shape_issues,
-        },
-        {
-            "id": "ink_gray_balance",
-            "label": "true-black core, mid-gray body, outer gray edge",
-            "pass": not ink_issues,
-            "issues": ink_issues,
-        },
-        {
-            "id": "photo_texture",
-            "label": "scan blur, edge breakup, compression/noise texture",
-            "pass": not photo_issues,
-            "issues": photo_issues,
-        },
-        {
-            "id": "background_cleanup",
-            "label": "inpaint texture and removed old slots",
-            "pass": not background_issues,
-            "issues": background_issues,
-        },
+            "id": stage_id,
+            "label": STAGE_LABELS[stage_id],
+            "pass": not stage_issue_map[stage_id],
+            "issues": stage_issue_map[stage_id],
+        }
+        for stage_id in STAGE_ORDER
     ]
 
     blocking_stage = None
@@ -4098,21 +4102,22 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
     return float(len(stage_issues(report, stage_id))) * 100.0
 
 
-def patch_families(patch: dict[str, Any] | None) -> list[str]:
+def optimization_families_for_patch(patch: dict[str, Any] | None) -> list[str]:
     if not isinstance(patch, dict):
         return []
     keys = {str(key) for key, value in patch.items() if value is not None}
     families: list[str] = []
-    for family, family_keys in PATCH_FAMILY_KEYS.items():
+    for family, family_keys in OPTIMIZATION_FAMILY_KEYS.items():
         if keys & family_keys:
             families.append(family)
     return families
 
 
-def patch_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
-    policy = STAGE_PATCH_POLICY.get(stage_id or "none") or STAGE_PATCH_POLICY["none"]
+def optimization_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
+    policy = STAGE_OPTIMIZATION_POLICY.get(stage_id or "none") or STAGE_OPTIMIZATION_POLICY["none"]
     return {
-        "stage": stage_id or None,
+        "stage_id": stage_id or None,
+        "stage_label": STAGE_LABELS.get(str(stage_id or "")),
         "allowed_families": list(policy.get("allowed_families") or []),
         "forbidden_families": list(policy.get("forbidden_families") or []),
         "secondary_only_families": list(policy.get("secondary_only_families") or []),
@@ -4120,9 +4125,9 @@ def patch_policy_for_stage(stage_id: str | None) -> dict[str, Any]:
     }
 
 
-def patch_policy_audit(stage_id: str | None, patch: dict[str, Any] | None) -> dict[str, Any]:
-    policy = patch_policy_for_stage(stage_id)
-    families = patch_families(patch)
+def optimization_policy_audit(stage_id: str | None, patch: dict[str, Any] | None) -> dict[str, Any]:
+    policy = optimization_policy_for_stage(stage_id)
+    families = optimization_families_for_patch(patch)
     allowed = set(policy["allowed_families"])
     forbidden = set(policy["forbidden_families"])
     secondary_only = set(policy.get("secondary_only_families") or [])
@@ -4159,16 +4164,16 @@ def patch_policy_audit(stage_id: str | None, patch: dict[str, Any] | None) -> di
         reason = "secondary-only photo texture patch cannot be the main adjustment for this stage"
     return {
         **policy,
-        "families": families,
-        "effective_families": effective_families,
-        "primary_families": primary_families,
+        "optimization_families": families,
+        "effective_optimization_families": effective_families,
+        "primary_optimization_families": primary_families,
         "allowed": is_allowed,
         "rejection_reason": None if is_allowed else reason,
     }
 
 
-def stage_policy_summary(stage_id: str | None) -> dict[str, Any]:
-    return patch_policy_for_stage(stage_id)
+def stage_optimization_summary(stage_id: str | None) -> dict[str, Any]:
+    return optimization_policy_for_stage(stage_id)
 
 
 def params_delta(before: CandidateParams, after: CandidateParams) -> dict[str, Any]:
@@ -4680,7 +4685,7 @@ def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
     if not isinstance(acceptance, dict):
         return None
     stage = str(acceptance.get("blocking_stage") or "").strip()
-    if stage in STAGE_PATCH_POLICY and stage != "none":
+    if stage in STAGE_ORDER:
         return stage
     findings = acceptance.get("visual_findings")
     if isinstance(findings, dict):
@@ -6850,7 +6855,9 @@ def run_region_vision_checks(
                 else "none"
             )
             basis_stage_severity = stage_issue_severity(current_report, basis_blocking_stage)
-            basis_stage_policy = stage_policy_summary(str(basis_blocking_stage) if basis_blocking_stage else None)
+            basis_stage_optimization_policy = stage_optimization_summary(
+                str(basis_blocking_stage) if basis_blocking_stage else None
+            )
             if progress:
                 progress(
                     "revision_round_started",
@@ -6889,11 +6896,11 @@ def run_region_vision_checks(
                 patch = record.get("patch")
                 if not isinstance(patch, dict):
                     continue
-                policy_audit = patch_policy_audit(
+                policy_audit = optimization_policy_audit(
                     str(basis_blocking_stage) if basis_blocking_stage else None,
                     patch,
                 )
-                record["patch_policy"] = policy_audit
+                record["optimization_policy"] = policy_audit
                 patch_source_lookup.setdefault(patch_signature(patch), []).append(record)
                 if policy_audit["allowed"]:
                     allowed_model_patches.append(patch)
@@ -6903,7 +6910,7 @@ def run_region_vision_checks(
             filtered_patches: list[dict[str, Any]] = []
             rejected_local_patches: list[dict[str, Any]] = []
             for patch in dedupe_patches(round_patches, 24):
-                policy_audit = patch_policy_audit(
+                policy_audit = optimization_policy_audit(
                     str(basis_blocking_stage) if basis_blocking_stage else None,
                     patch,
                 )
@@ -6913,7 +6920,7 @@ def run_region_vision_checks(
                     rejected_local_patches.append(
                         {
                             "patch": patch,
-                            "patch_policy": policy_audit,
+                            "optimization_policy": policy_audit,
                         }
                     )
             round_patches = dedupe_patches(filtered_patches, 12)
@@ -6934,7 +6941,7 @@ def run_region_vision_checks(
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
-                "stage_policy": basis_stage_policy,
+                "stage_optimization_policy": basis_stage_optimization_policy,
                 "model_suggestions": model_records,
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
@@ -6949,7 +6956,7 @@ def run_region_vision_checks(
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
-                        "stage_policy": basis_stage_policy,
+                        "stage_optimization_policy": basis_stage_optimization_policy,
                     },
                 )
             if not round_patches and not shape_reset_params:
@@ -7066,7 +7073,7 @@ def run_region_vision_checks(
                 }
                 if patch is not None:
                     attempt_record["patch"] = patch
-                    attempt_record["patch_policy"] = patch_policy_audit(
+                    attempt_record["optimization_policy"] = optimization_policy_audit(
                         str(current_blocking_stage) if current_blocking_stage else None,
                         patch,
                     )
@@ -7077,10 +7084,10 @@ def run_region_vision_checks(
                         patch_constraint_audit["alternative_candidate_id"] = patched_params.candidate_id
                     attempt_record["constraint"] = patch_constraint_audit
                 else:
-                    attempt_record["patch_policy"] = {
-                        **stage_policy_summary(str(current_blocking_stage) if current_blocking_stage else None),
-                        "families": ["shape_reset"],
-                        "primary_families": ["shape_reset"],
+                    attempt_record["optimization_policy"] = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_families": ["shape_reset"],
+                        "primary_optimization_families": ["shape_reset"],
                         "allowed": current_blocking_stage == "text_shape",
                         "rejection_reason": None if current_blocking_stage == "text_shape" else "shape reset is only generated for text_shape",
                     }
