@@ -97,13 +97,21 @@ def _build_stage_patcher_spec(stage_id: str, patcher: StagePatcherFn) -> StagePa
         # side effects; stage_policy still rejects ink-only patches.
         secondary_steps.append("ink_gray_balance")
     forbidden_steps = tuple(str(step) for step in policy.get("forbidden_steps") or [])
+    allowed_patch_keys = patch_keys_for_steps(allowed_steps)
+    secondary_patch_keys = patch_keys_for_steps(tuple(secondary_steps))
+    blocked_patch_keys = patch_keys_for_steps(forbidden_steps)
+    blocked_patch_keys = frozenset(
+        key
+        for key in blocked_patch_keys
+        if key not in allowed_patch_keys and key not in secondary_patch_keys
+    )
     return StagePatcherSpec(
         stage_id=stage_id,
         primary_stage=stage_id,
         patcher=patcher,
-        allowed_patch_keys=patch_keys_for_steps(allowed_steps),
-        secondary_patch_keys=patch_keys_for_steps(tuple(secondary_steps)),
-        blocked_patch_keys=patch_keys_for_steps(forbidden_steps),
+        allowed_patch_keys=allowed_patch_keys,
+        secondary_patch_keys=secondary_patch_keys,
+        blocked_patch_keys=blocked_patch_keys,
     )
 
 
@@ -116,6 +124,7 @@ def patch_keys_declared_for_stage(stage_id: str, patch: dict[str, Any] | None) -
     forbidden_steps = list(str(step) for step in policy.get("forbidden_steps") or [])
     declared = patch_keys_for_steps(tuple(allowed_steps + secondary_steps))
     blocked = patch_keys_for_steps(tuple(forbidden_steps))
+    blocked = frozenset(key for key in blocked if key not in declared)
     patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
     return bool(patch_keys) and not (patch_keys - declared) and not (patch_keys & blocked)
 

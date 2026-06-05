@@ -151,6 +151,27 @@ class StagePatcherRegistryTest(unittest.TestCase):
             audit = patch_key_audit_for_stage_patcher("photo_texture", patch)
             self.assertTrue(audit["declared"], audit)
 
+    def test_photo_texture_patcher_declares_only_small_texture_parameter_family(self) -> None:
+        report = stage_patcher_registry_report()["photo_texture"]
+        self.assertEqual(
+            set(report["allowed_patch_keys"]),
+            {
+                "blur_delta",
+                "alpha_contrast_delta",
+                "photo_warp_delta",
+                "edge_breakup_delta",
+                "photo_noise_delta",
+                "jpeg_quality_delta",
+            },
+        )
+        self.assertFalse(set(report["allowed_patch_keys"]) & {"opacity_delta", "stroke_opacity_delta", "font_size_delta"})
+        self.assertNotIn("alpha_contrast_delta", report["blocked_patch_keys"])
+        audit = patch_key_audit_for_stage_patcher(
+            "photo_texture",
+            {"blur_delta": 0.04, "alpha_contrast_delta": -0.02, "photo_noise_delta": 0.012},
+        )
+        self.assertTrue(audit["declared"], audit)
+
     def test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core(self) -> None:
         too_black = dispatch_revision_patches(
             self.params,

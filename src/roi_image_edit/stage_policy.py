@@ -49,6 +49,7 @@ OPTIMIZATION_STEP_KEYS = {
     },
     "photo_texture": {
         "blur_delta",
+        "alpha_contrast_delta",
         "photo_warp_delta",
         "edge_breakup_delta",
         "photo_noise_delta",
@@ -161,8 +162,16 @@ def optimization_policy_audit(stage_id: str | None, patch: dict[str, Any] | None
             for step in effective_steps
             if step != "stroke_body_shape"
         ]
+    if "photo_texture" in allowed and "photo_texture" in effective_steps:
+        patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
+        if patch_keys and patch_keys <= OPTIMIZATION_STEP_KEYS["photo_texture"]:
+            effective_steps = [
+                step
+                for step in effective_steps
+                if step not in {"stroke_body_shape", "ink_gray_balance"}
+            ]
     primary_steps = [step for step in effective_steps if step not in secondary_only]
-    forbidden_hits = [step for step in steps if step in forbidden]
+    forbidden_hits = [step for step in effective_steps if step in forbidden]
     disallowed_primary = [
         step
         for step in primary_steps

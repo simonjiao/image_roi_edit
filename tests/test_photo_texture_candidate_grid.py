@@ -71,6 +71,11 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
         self.assertGreater(grid.report["budget"]["pruned_count"], 0)
         self.assertEqual(set(grid.report["allowed_delta_keys"]), PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS)
         self.assertEqual(set(grid.report["blocked_delta_keys"]), PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS)
+        self.assertEqual(grid.report["axes"]["alpha_adjustment_scope"], "small_alpha_degradation_or_recovery_only")
+        self.assertEqual(
+            grid.report["axes"]["residual_retexture_keys"],
+            ["edge_breakup", "photo_noise", "jpeg_quality"],
+        )
         self.assertEqual(grid.report["violations"], [])
 
         for candidate, audit in zip(grid.candidates, grid.report["candidate_delta_audit"]):
@@ -78,13 +83,18 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
             self.assertFalse(audit["blocked_delta_keys"], audit)
             self.assertFalse(audit["undeclared_delta_keys"], audit)
             self.assertEqual(audit["parent_candidate_id"], base.candidate_id)
+            self.assertLessEqual(abs(candidate.blur - base.blur), 0.08)
+            self.assertLessEqual(abs(candidate.alpha_contrast - base.alpha_contrast), 0.02)
+            self.assertLessEqual(abs(candidate.photo_warp - base.photo_warp), 0.02)
+            self.assertLessEqual(abs(candidate.edge_breakup - base.edge_breakup), 0.018)
+            self.assertLessEqual(abs(candidate.photo_noise - base.photo_noise), 0.030)
+            self.assertLessEqual(abs(candidate.jpeg_quality - base.jpeg_quality), 6)
             self.assertEqual(candidate.font_name, base.font_name)
             self.assertEqual(candidate.font_path, base.font_path)
             self.assertEqual(candidate.font_size, base.font_size)
             self.assertEqual(candidate.opacity, base.opacity)
             self.assertEqual(candidate.stroke_opacity, base.stroke_opacity)
             self.assertEqual(candidate.ink_gain, base.ink_gain)
-            self.assertEqual(candidate.alpha_contrast, base.alpha_contrast)
             self.assertEqual(candidate.core_ink_gain, base.core_ink_gain)
             self.assertEqual(candidate.core_darken_strength, base.core_darken_strength)
             self.assertEqual(candidate.text_dx, base.text_dx)

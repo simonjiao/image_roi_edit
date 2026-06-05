@@ -104,6 +104,7 @@ INK_GRAY_GRID_BUDGET_RANGE = (100, 800)
 PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS = frozenset(
     {
         "blur",
+        "alpha_contrast",
         "photo_warp",
         "edge_breakup",
         "photo_noise",
@@ -118,7 +119,6 @@ PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS = frozenset(
         "opacity",
         "stroke_opacity",
         "ink_gain",
-        "alpha_contrast",
         "core_ink_gain",
         "core_darken_strength",
         "core_darken_threshold",
@@ -1143,12 +1143,14 @@ def photo_texture_axes(params: CandidateParams, report: dict[str, Any] | None) -
     flags = photo_texture_issue_flags(report)
     if flags["too_blurry"]:
         blur_deltas = (0.0, -0.06, -0.10)
+        alpha_deltas = (0.0, 0.02)
         warp_deltas = (0.0, -0.02)
         breakup_deltas = (0.0, -0.004, 0.004)
         noise_deltas = (0.0, -0.008, -0.014)
         jpeg_deltas = (0, 6)
     else:
         blur_deltas = (0.0, 0.04, 0.08)
+        alpha_deltas = (0.0, -0.02)
         warp_deltas = (0.0, 0.02)
         breakup_deltas = (0.0, 0.006, 0.012)
         noise_deltas = (0.0, 0.014, 0.024)
@@ -1159,7 +1161,8 @@ def photo_texture_axes(params: CandidateParams, report: dict[str, Any] | None) -
             noise_deltas = (0.012, 0.020, 0.030)
 
     return {
-        "blur": _float_axis(params.blur, blur_deltas, low=0.0, high=2.0, target_len=3),
+        "blur": _float_axis(params.blur, blur_deltas, low=0.0, high=2.0, target_len=2),
+        "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=2),
         "photo_warp": _float_axis(params.photo_warp, warp_deltas, low=0.0, high=1.0, target_len=2),
         "edge_breakup": _float_axis(params.edge_breakup, breakup_deltas, low=0.0, high=0.2, target_len=3),
         "photo_noise": _float_axis(params.photo_noise, noise_deltas, low=0.0, high=0.35, target_len=3),
@@ -1186,12 +1189,14 @@ def photo_texture_candidate_grid(
 
     axes = photo_texture_axes(params, report)
     blur_values = axes["blur"]
+    alpha_values = axes["alpha_contrast"]
     warp_values = axes["photo_warp"]
     breakup_values = axes["edge_breakup"]
     noise_values = axes["photo_noise"]
     jpeg_values = axes["jpeg_quality"]
     raw_budget = (
         len(blur_values)
+        * len(alpha_values)
         * len(warp_values)
         * len(breakup_values)
         * len(noise_values)
@@ -1200,20 +1205,22 @@ def photo_texture_candidate_grid(
 
     variants: list[CandidateParams] = []
     for blur in blur_values:
-        for photo_warp in warp_values:
-            for edge_breakup in breakup_values:
-                for photo_noise in noise_values:
-                    for jpeg_quality in jpeg_values:
-                        variants.append(
-                            mutate_params(
-                                params,
-                                blur=blur,
-                                photo_warp=photo_warp,
-                                edge_breakup=edge_breakup,
-                                photo_noise=photo_noise,
-                                jpeg_quality=jpeg_quality,
+        for alpha_contrast in alpha_values:
+            for photo_warp in warp_values:
+                for edge_breakup in breakup_values:
+                    for photo_noise in noise_values:
+                        for jpeg_quality in jpeg_values:
+                            variants.append(
+                                mutate_params(
+                                    params,
+                                    blur=blur,
+                                    alpha_contrast=alpha_contrast,
+                                    photo_warp=photo_warp,
+                                    edge_breakup=edge_breakup,
+                                    photo_noise=photo_noise,
+                                    jpeg_quality=jpeg_quality,
+                                )
                             )
-                        )
     retained_limit = min(limit, PHOTO_TEXTURE_GRID_TOP_LIMIT)
     candidates = dedupe_params(variants, retained_limit)
     candidate_records: list[dict[str, Any]] = []
@@ -1253,11 +1260,14 @@ def photo_texture_candidate_grid(
             },
             "axes": {
                 "blur_count": len(blur_values),
+                "alpha_contrast_count": len(alpha_values),
                 "photo_warp_count": len(warp_values),
                 "edge_breakup_count": len(breakup_values),
                 "photo_noise_count": len(noise_values),
                 "jpeg_quality_count": len(jpeg_values),
                 "ranking_method": "local_photo_texture_issue_axis_priority",
+                "alpha_adjustment_scope": "small_alpha_degradation_or_recovery_only",
+                "residual_retexture_keys": ["edge_breakup", "photo_noise", "jpeg_quality"],
             },
             "issue_flags": photo_texture_issue_flags(report),
             "allowed_delta_keys": sorted(PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS),
