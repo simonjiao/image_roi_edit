@@ -202,11 +202,23 @@ class StageContractsTest(unittest.TestCase):
         photo_scan = stage_profile("photo_scan")
         self.assertEqual(photo_scan.stage_order, EXPECTED_STAGE_ORDER)
         self.assertEqual(photo_scan.enabled_stage_ids, frozenset(EXPECTED_STAGE_ORDER))
+        self.assertTrue(photo_scan.enable_pose)
+        self.assertTrue(photo_scan.enable_photo_texture)
         clean_digital = stage_profile("clean_digital")
         self.assertFalse(clean_digital.enable_photo_texture)
+        self.assertFalse(clean_digital.enable_photo_warp)
         self.assertNotIn("photo_texture", clean_digital.enabled_stage_ids)
+        low_res = stage_profile("low_res_thumbnail")
+        self.assertEqual(low_res.vision_context_scale, "magnified")
+        self.assertIn("stroke_body_weight", low_res.shape_priority)
         manual_quick = stage_profile("manual_roi_quick")
         self.assertTrue(manual_quick.manual_roi)
+        self.assertFalse(manual_quick.enable_photo_texture)
+        self.assertEqual(manual_quick.revision_complexity, "minimal")
+        self.assertEqual(
+            manual_quick.enabled_stage_ids,
+            frozenset(("hard_boundary", "text_shape", "ink_gray_balance")),
+        )
 
     def test_text_shape_stage_rejects_photo_or_background_primary_patches(self) -> None:
         accepted, rejected = filter_patches_for_stage(

@@ -255,8 +255,57 @@ def prompt_stage_context(report: dict[str, Any], profile: StageProfile | str | N
     gate = stage_gate_for_report(report, profile)
     blocking_stage = gate.get("blocking_stage")
     spec = stage_spec(str(blocking_stage)) if blocking_stage else None
+    profile_summary = gate.get("profile_summary")
     return {
         "pipeline_profile": gate.get("profile"),
+        "profile_summary": profile_summary,
+        "profile_constraints": {
+            "enabled_stage_ids": (
+                profile_summary.get("enabled_stage_ids")
+                if isinstance(profile_summary, dict)
+                else []
+            ),
+            "enable_photo_texture": (
+                profile_summary.get("enable_photo_texture")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "enable_pose": (
+                profile_summary.get("enable_pose")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "enable_photo_warp": (
+                profile_summary.get("enable_photo_warp")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "vision_context_scale": (
+                profile_summary.get("vision_context_scale")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "shape_priority": (
+                profile_summary.get("shape_priority")
+                if isinstance(profile_summary, dict)
+                else []
+            ),
+            "revision_complexity": (
+                profile_summary.get("revision_complexity")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "preserve_rejected_candidate": (
+                profile_summary.get("preserve_rejected_candidate")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+            "edge_policy": (
+                profile_summary.get("edge_policy")
+                if isinstance(profile_summary, dict)
+                else None
+            ),
+        },
         "stage_order": gate.get("order"),
         "blocking_stage": blocking_stage,
         "blocking_stage_blocks_next": spec.blocks_next if spec else False,

@@ -14,11 +14,19 @@ class StageProfile:
     enabled_stage_ids: frozenset[str]
     description: str
     enable_photo_texture: bool = True
+    enable_pose: bool = True
+    enable_photo_warp: bool = True
+    vision_context_scale: str = "standard"
+    shape_priority: tuple[str, ...] = ()
+    revision_complexity: str = "full"
+    preserve_rejected_candidate: bool = True
+    edge_policy: str = "match_source_texture"
     manual_roi: bool = False
 
     def as_report(self) -> dict[str, Any]:
         data = asdict(self)
         data["enabled_stage_ids"] = list(self.enabled_stage_ids)
+        data["shape_priority"] = list(self.shape_priority)
         return data
 
 
@@ -29,6 +37,11 @@ PHOTO_SCAN = StageProfile(
     enabled_stage_ids=frozenset(STAGE_ORDER),
     description="Default profile for photographed or scanned small text.",
     enable_photo_texture=True,
+    enable_pose=True,
+    enable_photo_warp=True,
+    vision_context_scale="standard",
+    shape_priority=("font_family_similarity", "stroke_body_weight", "local_pose_match", "photo_texture_match"),
+    edge_policy="match_photo_scan_texture",
 )
 
 CLEAN_DIGITAL = StageProfile(
@@ -38,6 +51,11 @@ CLEAN_DIGITAL = StageProfile(
     enabled_stage_ids=frozenset(stage for stage in STAGE_ORDER if stage != "photo_texture"),
     description="Digital screenshots or clean raster text; disables photo texture tuning.",
     enable_photo_texture=False,
+    enable_pose=True,
+    enable_photo_warp=False,
+    vision_context_scale="standard",
+    shape_priority=("font_family_similarity", "stroke_body_weight", "clean_edge"),
+    edge_policy="clean_edges_no_photo_warp",
 )
 
 LOW_RES_THUMBNAIL = StageProfile(
@@ -47,15 +65,28 @@ LOW_RES_THUMBNAIL = StageProfile(
     enabled_stage_ids=frozenset(STAGE_ORDER),
     description="Very small ROI text where stage thresholds must remain explicit and conservative.",
     enable_photo_texture=True,
+    enable_pose=True,
+    enable_photo_warp=True,
+    vision_context_scale="magnified",
+    shape_priority=("font_family_similarity", "stroke_body_weight", "slot_geometry", "ink_gray_density"),
+    edge_policy="magnified_low_res_edges",
 )
 
 MANUAL_ROI_QUICK = StageProfile(
     id="manual_roi_quick",
     display_name="Manual ROI quick check",
     stage_order=STAGE_ORDER,
-    enabled_stage_ids=frozenset(STAGE_ORDER),
-    description="Manual rectangles; still reports all gates but keeps ROI selection outside the profile.",
-    enable_photo_texture=True,
+    enabled_stage_ids=frozenset(
+        ("hard_boundary", "text_shape", "ink_gray_balance")
+    ),
+    description="Manual rectangles; runs the minimal local gates and preserves rejected candidates instead of auto-running complex texture stages.",
+    enable_photo_texture=False,
+    enable_pose=True,
+    enable_photo_warp=False,
+    vision_context_scale="standard",
+    shape_priority=("slot_geometry", "font_family_similarity", "stroke_body_weight"),
+    revision_complexity="minimal",
+    edge_policy="manual_roi_no_complex_texture",
     manual_roi=True,
 )
 

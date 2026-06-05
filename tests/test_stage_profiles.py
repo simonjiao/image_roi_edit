@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 
 from roi_image_edit.cli import build_parser
+from roi_image_edit.local_validation import apply_local_acceptance_gate
 from roi_image_edit.run_artifacts import result_audit_payload
 from roi_image_edit.stage_profiles import (
     resolve_stage_profile,
@@ -13,6 +14,7 @@ from roi_image_edit.stage_profiles import (
     stage_profile_summary,
 )
 from roi_image_edit.stages import stage_gate_for_report, stage_specs
+from roi_image_edit.stages import prompt_stage_context
 
 
 class StageProfilesTest(unittest.TestCase):
@@ -68,6 +70,118 @@ class StageProfilesTest(unittest.TestCase):
                 self.assertEqual(gate["order"], [spec.id for spec in specs])
                 if profile_id == "clean_digital":
                     self.assertNotIn("photo_texture", gate["order"])
+                if profile_id == "manual_roi_quick":
+                    self.assertEqual(
+                        gate["order"],
+                        ["hard_boundary", "text_shape", "ink_gray_balance"],
+                    )
+
+    def test_profile_shape_priorities_do_not_reintroduce_old_stage_ids(self) -> None:
+        old_public_ids = {
+            "slot_alignment",
+            "font_structure",
+            "pose_geometry",
+            "stroke_body",
+            "tone_gray",
+            "edge_quality",
+        }
+        for profile_id in stage_profile_choices():
+            with self.subTest(profile_id=profile_id):
+                self.assertFalse(set(stage_profile(profile_id).shape_priority) & old_public_ids)
+
+    def test_photo_scan_profile_enables_pose_texture_and_blocks_visual_deliver_on_shape(self) -> None:
+        profile = stage_profile("photo_scan")
+        self.assertTrue(profile.enable_pose)
+        self.assertTrue(profile.enable_photo_texture)
+        self.assertTrue(profile.enable_photo_warp)
+        self.assertIn("local_pose_match", profile.shape_priority)
+        self.assertIn("photo_texture", profile.enabled_stage_ids)
+
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "strict_gate": {
+                "issues": [{"type": "ink_area_ratio_too_low"}],
+            },
+            "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+        }
+        gate = stage_gate_for_report(report, "photo_scan")
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        gated = apply_local_acceptance_gate(
+            {
+                "pass": True,
+                "acceptance_level": "pass",
+                "final_decision": "deliver",
+            },
+            report,
+        )
+        self.assertFalse(gated["pass"])
+        self.assertEqual(gated["final_decision"], "revise")
+        self.assertEqual(gated["stage_gate"]["blocking_stage"], "text_shape")
+
+    def test_clean_digital_profile_disables_photo_texture_and_photo_warp(self) -> None:
+        profile = stage_profile("clean_digital")
+        self.assertFalse(profile.enable_photo_texture)
+        self.assertFalse(profile.enable_photo_warp)
+        self.assertEqual(profile.edge_policy, "clean_edges_no_photo_warp")
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "clean_digital",
+                "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+            },
+            "clean_digital",
+        )
+        self.assertTrue(gate["pass"])
+        self.assertNotIn("photo_texture", gate["order"])
+        context = prompt_stage_context({"pass": True}, "clean_digital")
+        self.assertFalse(context["profile_constraints"]["enable_photo_texture"])
+        self.assertFalse(context["profile_constraints"]["enable_photo_warp"])
+        self.assertEqual(
+            context["profile_constraints"]["edge_policy"],
+            "clean_edges_no_photo_warp",
+        )
+
+    def test_low_res_thumbnail_profile_prioritizes_shape_and_uses_magnified_context(self) -> None:
+        profile = stage_profile("low_res_thumbnail")
+        self.assertEqual(profile.vision_context_scale, "magnified")
+        self.assertEqual(
+            profile.shape_priority,
+            ("font_family_similarity", "stroke_body_weight", "slot_geometry", "ink_gray_density"),
+        )
+        context = prompt_stage_context({"pass": True}, "low_res_thumbnail")
+        self.assertEqual(context["profile_constraints"]["vision_context_scale"], "magnified")
+        self.assertEqual(
+            context["profile_constraints"]["shape_priority"],
+            ["font_family_similarity", "stroke_body_weight", "slot_geometry", "ink_gray_density"],
+        )
+
+    def test_manual_roi_quick_profile_uses_minimal_stages_and_rejected_artifacts(self) -> None:
+        profile = stage_profile("manual_roi_quick")
+        self.assertTrue(profile.manual_roi)
+        self.assertFalse(profile.enable_photo_texture)
+        self.assertFalse(profile.enable_photo_warp)
+        self.assertEqual(profile.revision_complexity, "minimal")
+        self.assertTrue(profile.preserve_rejected_candidate)
+        self.assertEqual(
+            tuple(spec.id for spec in stage_specs("manual_roi_quick")),
+            ("hard_boundary", "text_shape", "ink_gray_balance"),
+        )
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "manual_roi_quick",
+                "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+                "local_background_texture_issues": [{"type": "background_patch_visible"}],
+            },
+            "manual_roi_quick",
+        )
+        self.assertTrue(gate["pass"])
+        self.assertNotIn("photo_texture", gate["order"])
+        self.assertNotIn("background_cleanup", gate["order"])
+        context = prompt_stage_context({"pass": True}, "manual_roi_quick")
+        self.assertEqual(context["profile_constraints"]["revision_complexity"], "minimal")
+        self.assertTrue(context["profile_constraints"]["preserve_rejected_candidate"])
 
     def test_explicit_profile_overrides_auto_suggestion(self) -> None:
         resolution = resolve_stage_profile("clean_digital", "photo_scan")

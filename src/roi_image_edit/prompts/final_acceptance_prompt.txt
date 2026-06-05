@@ -17,6 +17,10 @@
 不为空，视觉验收必须围绕该阶段判断失败原因；参数建议只能使用
 `stage_context.allowed_patch_keys` 中允许的参数族，不能把
 `stage_context.blocked_patch_keys` 作为当前轮主修复方向。
+`stage_context.profile_constraints` 是当前 profile 的约束。如果
+`vision_context_scale=magnified`，必须按放大对比优先验收字体结构、笔画体量和
+低分辨率边缘；如果 `enable_photo_texture=false` 或 `enable_photo_warp=false`，
+不要把照片质感或 photo_warp 作为当前主修复方向。
 公开阶段只能是：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
 
 硬性验收规则：

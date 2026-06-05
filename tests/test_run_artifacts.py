@@ -184,6 +184,15 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertEqual(context["optimization_policy"]["stage_id"], "hard_boundary")
         self.assertFalse(context["optimization_policy"]["allowed_steps"])
 
+    def test_model_stage_context_default_includes_profile_constraints(self) -> None:
+        context = model_stage_context(None, "low_res_thumbnail")
+
+        self.assertEqual(context["pipeline_profile"], "low_res_thumbnail")
+        self.assertEqual(context["profile_constraints"]["vision_context_scale"], "magnified")
+        self.assertIn("stroke_body_weight", context["profile_constraints"]["shape_priority"])
+        self.assertIsNone(context["blocking_stage"])
+        self.assertIsNone(context["optimization_policy"]["stage_id"])
+
     def test_rank_report_attaches_stage_context_candidate_count_and_contract(self) -> None:
         hard_reports = {
             "candidates": {

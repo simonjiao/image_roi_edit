@@ -230,16 +230,12 @@ def revision_round_continuation_contract(
 
 def model_stage_context(report: dict[str, Any] | None, pipeline_profile: str) -> dict[str, Any]:
     if not isinstance(report, dict):
-        return {
-            "pipeline_profile": pipeline_profile,
-            "stage_order": list(STAGE_ORDER),
-            "blocking_stage": None,
-            "blocking_stage_blocks_next": False,
-            "stage_status": {},
-            "allowed_patch_keys": [],
-            "blocked_patch_keys": [],
-            "optimization_policy": stage_optimization_summary(None),
-        }
+        context = prompt_stage_context(
+            {"pass": True, "pipeline_profile": pipeline_profile},
+            pipeline_profile,
+        )
+        context["optimization_policy"] = stage_optimization_summary(None)
+        return context
     context = prompt_stage_context(report, pipeline_profile)
     blocking_stage = context.get("blocking_stage")
     context["optimization_policy"] = stage_optimization_summary(

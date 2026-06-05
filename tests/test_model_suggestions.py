@@ -33,6 +33,7 @@ class ModelSuggestionsTest(unittest.TestCase):
         for name, prompt in prompts.items():
             with self.subTest(prompt=name):
                 self.assertIn("stage_context", prompt)
+                self.assertIn("profile_constraints", prompt)
                 self.assertIn("blocking_stage", prompt)
                 self.assertIn("blocked_patch_keys", prompt)
                 self.assertIn("stage_assessment", prompt)
