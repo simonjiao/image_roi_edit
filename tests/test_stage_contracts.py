@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import fields
+import importlib
 from pathlib import Path
 import unittest
 
@@ -131,6 +132,31 @@ class StageContractsTest(unittest.TestCase):
                 "prompt_stage_context": ["stages.py"],
             },
         )
+
+    def test_stage_gate_is_not_imported_from_local_validation(self) -> None:
+        src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
+        bad_imports: list[str] = []
+        for path in src_root.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "roi_image_edit.local_validation":
+                    continue
+                for alias in node.names:
+                    if alias.name == "stage_gate_for_report":
+                        bad_imports.append(f"{path.name}:{node.lineno}")
+
+        self.assertEqual(bad_imports, [])
+
+    def test_runtime_stage_modules_import_cleanly(self) -> None:
+        for module_name in (
+            "roi_image_edit.processing_service",
+            "roi_image_edit.revision_solver",
+            "roi_image_edit.stage_patchers",
+        ):
+            with self.subTest(module_name=module_name):
+                importlib.import_module(module_name)
 
     def test_profile_contracts_cover_current_profiles(self) -> None:
         self.assertEqual(

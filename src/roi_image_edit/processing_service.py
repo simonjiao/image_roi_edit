@@ -48,7 +48,6 @@ from roi_image_edit.local_validation import (
     report_stage_pass,
     save_region_compare,
     save_region_context,
-    stage_gate_for_report,
     stage_issue_severity,
     stage_issues,
 )
@@ -78,6 +77,7 @@ from roi_image_edit.run_artifacts import (
     stage_progress_fields,
 )
 from roi_image_edit.stage_profiles import stage_profile
+from roi_image_edit.stages import stage_gate_for_report
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
     build_region_plan,

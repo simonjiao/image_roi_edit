@@ -24,7 +24,6 @@ from roi_image_edit.local_validation import (
     report_has_outer_gray_halo,
     report_needs_thinner_strokes,
     report_needs_wider_gray_strokes,
-    stage_gate_for_report,
     stage_issues,
 )
 from roi_image_edit.roi_locator import max_font_size_for_plan, text_chars
@@ -33,6 +32,7 @@ from roi_image_edit.stage_patchers import (
     acceptance_reports_background_patch,
     acceptance_reports_too_dark_or_bold,
 )
+from roi_image_edit.stages import stage_gate_for_report
 
 
 def final_acceptance_delivers(acceptance: dict[str, Any]) -> bool:
