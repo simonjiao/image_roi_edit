@@ -126,7 +126,7 @@
 ### I. 黑灰比例搜索
 
 - [ ] `ink_gray_balance` 只在形态 top candidates 上执行；验证方式是 ink candidate 的 parent shape candidate id 可追溯。
-- [ ] 黑灰报告必须分开记录 `<55`、`<70`、`70-120`、`120-165`；验证方式是 hard report 字段。
+- [x] 黑灰报告必须分开记录 `<55`、`<70`、`70-120`、`120-165`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_strict_visual_metrics.py::StrictVisualMetricsTest.test_ink_gray_report_records_core_dark_body_and_outer_gray_bands` 验证 `strict_visual_metrics.bands` 分别记录 `<55`、`<70`、`70-120`、`120-165` 的 old/new/delta 字段。
 - [x] 核心太黑时，必须生成降低 `opacity`、`core_ink_gain` 或 `core_darken_strength` 的候选；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core` 验证 `changed_char_core_too_black` 进入 `ink_gray_balance` patcher，并生成负向 `opacity_delta`、`core_ink_gain_delta` 或 `core_darken_strength_delta`。
 - [ ] 核心不足但灰边多时，不能继续加 blur 或扩大灰边，必须恢复核心密度并收紧外灰；验证方式是核心不足+灰边多 fixture。
 - [ ] 旧字和邻字指标冲突时，必须记录仲裁，并优先同一行邻字作为风格上限；验证方式是 conflict report 字段。
