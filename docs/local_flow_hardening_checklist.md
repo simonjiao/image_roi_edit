@@ -37,11 +37,11 @@
 ### A. 三层流程边界
 
 - [ ] 五个本地 stage 必须成为代码、prompt、报告和测试的唯一权威结构：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；验证方式是 stage order、prompt payload、result schema 和回归报告都只使用这五个 stage。
-- [ ] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
-- [ ] `StageResult` 必须有稳定字段契约：`stage_id`、`passed`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
-- [ ] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；验证方式是每个 stage 的 `StageResult` 和 prompt context 都输出对应字段。
+- [x] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_spec_field_contract_and_reports`。
+- [x] `StageResult` 必须有稳定字段契约：`stage_id`、`display_name`、`passed`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
+- [x] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
 - [ ] 增加前置安全流程验收：`orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard` 必须在候选生成前完成；验证方式是失败样例 `candidate_count=0` 或 rejected，且 `progress.jsonl` 记录失败步骤。
-- [ ] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；验证方式是单测读取常量并断言顺序。
+- [x] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_order_is_the_five_stage_contract`。
 - [ ] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；验证方式是 `result.json` 中同时存在两类字段。
 - [ ] 增加视觉终检边界验收：视觉模型只能看本地 top candidates；验证方式是视觉请求记录中 `candidate_count <= vision_candidate_limit` 且包含本地 `stage_context`。
 
@@ -121,7 +121,7 @@
 - [ ] 形态排序必须包含姿态继承误差；验证方式是 shear/pose score 明细字段。
 - [ ] 形态排序必须包含 protected text 距离；验证方式是 score 明细字段。
 - [ ] 形态排序必须包含字体风格分数和可渲染字符检查；验证方式是 font report 字段。
-- [ ] 形态没通过时，`blur`、`noise`、`jpeg_quality`、背景融合不能成为主修复方向；验证方式是 stage filter 单测。
+- [x] 形态没通过时，`blur`、`noise`、`jpeg_quality`、背景融合不能成为主修复方向；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 
 ### I. 黑灰比例搜索
 
@@ -162,6 +162,7 @@
 
 ### M. Stage patcher 迁移边界
 
+- [x] stage patch filter 已能按当前 blocking stage 接受/拒绝补丁族；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 - [ ] 每个 stage patcher 必须声明 primary stage、allowed keys、blocked keys；验证方式是单测遍历 patcher registry。
 - [ ] patcher 输出不能包含未声明参数；验证方式是单测。
 - [ ] 跨 stage patch 必须被拒绝或声明主阶段、次级影响和不破坏前置阶段的依据；验证方式是 filter report 单测。
@@ -172,6 +173,7 @@
 
 ### N. Profile 验收
 
+- [x] profile registry 已公开 `photo_scan`、`clean_digital`、`low_res_thumbnail`、`manual_roi_quick`，且 `clean_digital` 当前禁用 `photo_texture`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_profile_contracts_cover_current_profiles`。
 - [ ] `photo_scan` 必须启用姿态和照片质感，且视觉模型不能在 stroke/shape 失败时 deliver；验证方式是 photo fixture。
 - [ ] `clean_digital` 不启用 `photo_texture`，不鼓励 `photo_warp`，边缘应更干净；验证方式是 clean digital fixture。
 - [ ] `low_res_thumbnail` 更重视字体结构和笔画体量，并要求视觉验收看放大图；验证方式是 low-res fixture 和 prompt payload。
@@ -209,7 +211,7 @@
 
 - [ ] 一个问题失败后不能把所有补丁族混合评分；验证方式是候选生成报告只显示当前 blocking stage 主导 patch。
 - [ ] 视觉模型说 `ok` 不能覆盖本地阶段失败；验证方式是 mock response 单测。
-- [ ] 字体没过时不能调 blur；验证方式是 stage filter 单测。
+- [x] 字体没过时不能调 blur；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 - [ ] 粗细没过时不能先清灰边；验证方式是粗细失败 fixture。
 - [ ] 灰边过多时不能继续加 photo_noise 制造灰雾；验证方式是 edge/gray fixture。
 - [ ] 不能把某张图的左倾/右倾写成通用规则；验证方式是代码搜索禁止具体图片/文字特例。
