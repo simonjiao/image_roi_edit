@@ -92,6 +92,57 @@ class StageProfilesTest(unittest.TestCase):
         self.assertEqual(audit["profileResolution"]["requested_profile"], "clean_digital")
         self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
 
+    def test_same_image_profile_matrix_records_stage_order_difference(self) -> None:
+        def audit_for(profile_id: str) -> dict:
+            gate = stage_gate_for_report({"pass": True, "pipeline_profile": profile_id}, profile_id)
+            return result_audit_payload(
+                {
+                    "ok": True,
+                    "runDir": f"output/web/{profile_id}",
+                    "profile": profile_id,
+                    "profileResolution": resolve_stage_profile(profile_id, None),
+                    "images": [
+                        {
+                            "id": "same-image",
+                            "ok": True,
+                            "regions": [
+                                {
+                                    "id": "region_1",
+                                    "summary": {
+                                        "stage_evidence": {
+                                            "stage_order": gate["order"],
+                                        }
+                                    },
+                                }
+                            ],
+                            "candidates": [
+                                {
+                                    "id": "c1",
+                                    "stage_context": {
+                                        "stage_order": gate["order"],
+                                        "blocking_stage": gate["blocking_stage"],
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+
+        photo = audit_for("photo_scan")
+        clean = audit_for("clean_digital")
+        self.assertEqual(photo["images"][0]["id"], clean["images"][0]["id"])
+        photo_order = photo["images"][0]["regions"][0]["summary"]["stage_evidence"]["stage_order"]
+        clean_order = clean["images"][0]["regions"][0]["summary"]["stage_evidence"]["stage_order"]
+        self.assertIn("photo_texture", photo_order)
+        self.assertNotIn("photo_texture", clean_order)
+        self.assertEqual(clean["profileResolution"]["id"], "clean_digital")
+        self.assertEqual(clean["profileResolution"]["source"], "explicit_request")
+        self.assertEqual(
+            clean["images"][0]["candidates"][0]["stage_context"]["stage_order"],
+            clean_order,
+        )
+
     def test_auto_suggestion_used_only_without_explicit_profile(self) -> None:
         resolution = resolve_stage_profile(None, "low_res_thumbnail")
         self.assertEqual(resolution["id"], "low_res_thumbnail")
