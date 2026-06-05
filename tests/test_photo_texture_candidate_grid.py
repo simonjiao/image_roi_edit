@@ -5,6 +5,7 @@ import unittest
 
 from roi_image_edit.iterative_pipeline import CandidateParams
 import roi_image_edit.processing_service as processing_service
+from roi_image_edit.processing_service import prior_stage_regression_report
 from roi_image_edit.revision_solver import (
     PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS,
     PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS,
@@ -107,6 +108,28 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
         self.assertIn("photo_texture_candidate_grid", source)
         self.assertIn('"photo_texture_candidate_grid": photo_candidate_grid.report', source)
         self.assertIn('"photo_texture_count": len(photo_texture_params)', source)
+        self.assertIn('"prior_stage_regression": prior_regression', source)
+
+    def test_photo_texture_candidate_records_prior_shape_or_ink_regression(self) -> None:
+        before = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+        }
+        after = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "font_style_gate": {"issues": [{"type": "font_style_mismatch"}]},
+            "local_photo_texture_issues": [{"type": "photo_texture_too_clean"}],
+        }
+
+        audit = prior_stage_regression_report(before, after, "photo_texture")
+
+        self.assertFalse(audit["pass"])
+        self.assertEqual(audit["prior_stage_ids"], ["hard_boundary", "text_shape", "ink_gray_balance"])
+        self.assertEqual(audit["regressions"][0]["stage_id"], "text_shape")
+        self.assertIn("font_style_mismatch", audit["regressions"][0]["after_issue_types"])
+        self.assertFalse(audit["stage_severity"]["text_shape"]["after_pass"])
 
 
 if __name__ == "__main__":

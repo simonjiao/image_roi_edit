@@ -172,6 +172,60 @@ def image_from_data_url(value: str) -> Image.Image:
     return ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
 
 
+def prior_stage_regression_report(
+    before_report: dict[str, Any] | None,
+    after_report: dict[str, Any] | None,
+    current_stage: str | None,
+) -> dict[str, Any]:
+    if not current_stage or current_stage not in STAGE_ORDER:
+        return {
+            "current_stage": current_stage,
+            "prior_stage_ids": [],
+            "pass": True,
+            "regressions": [],
+            "stage_severity": {},
+        }
+    prior_stage_ids = list(STAGE_ORDER[: STAGE_ORDER.index(current_stage)])
+    stage_severity: dict[str, dict[str, Any]] = {}
+    regressions: list[dict[str, Any]] = []
+    for stage_id in prior_stage_ids:
+        before_issues = stage_issues(before_report, stage_id)
+        after_issues = stage_issues(after_report, stage_id)
+        before_severity = float(stage_issue_severity(before_report, stage_id))
+        after_severity = float(stage_issue_severity(after_report, stage_id))
+        before_pass = not before_issues
+        after_pass = not after_issues
+        record = {
+            "before": round(before_severity, 3),
+            "after": round(after_severity, 3),
+            "delta": round(after_severity - before_severity, 3),
+            "before_pass": before_pass,
+            "after_pass": after_pass,
+        }
+        stage_severity[stage_id] = record
+        if before_pass and (not after_pass or after_severity > before_severity + 1.0):
+            regressions.append(
+                {
+                    "stage_id": stage_id,
+                    "before_severity": record["before"],
+                    "after_severity": record["after"],
+                    "delta": record["delta"],
+                    "after_issue_types": [
+                        str(issue.get("type") or "")
+                        for issue in after_issues
+                        if isinstance(issue, dict)
+                    ],
+                }
+            )
+    return {
+        "current_stage": current_stage,
+        "prior_stage_ids": prior_stage_ids,
+        "pass": not regressions,
+        "regressions": regressions,
+        "stage_severity": stage_severity,
+    }
+
+
 
 
 
@@ -682,6 +736,11 @@ def run_region_vision_checks(
                     and patched_blocking_stage == current_blocking_stage
                     and (patched_score < current_score - 1.0 or current_stage_improvement > 6.0)
                 )
+                prior_regression = prior_stage_regression_report(
+                    current_report,
+                    patched_report,
+                    str(current_blocking_stage) if current_blocking_stage else None,
+                )
                 attempt_record = {
                     "index": len(revision_attempts) + 1,
                     "round": round_idx,
@@ -699,6 +758,7 @@ def run_region_vision_checks(
                     "current_stage_severity_before": round(float(current_stage_severity_before), 3),
                     "current_stage_severity_after": round(float(current_stage_severity_after), 3),
                     "current_stage_improvement": round(float(current_stage_improvement), 3),
+                    "prior_stage_regression": prior_regression,
                     "score": round(float(patched_score), 3),
                     "selection_score": round(float(patched_selection_score), 3),
                 }
@@ -779,7 +839,10 @@ def run_region_vision_checks(
                 if not report_stage_pass(patched_report):
                     attempt_record["stage_gate"] = patched_report.get("stage_gate")
                 revision_attempts.append(attempt_record)
-                if patched_strict or progresses_past_text_shape or improves_current_stage:
+                if (
+                    prior_regression.get("pass")
+                    and (patched_strict or progresses_past_text_shape or improves_current_stage)
+                ):
                     round_candidates.append(
                         (
                             patched_selection_score,
