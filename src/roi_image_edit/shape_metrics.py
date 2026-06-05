@@ -96,3 +96,122 @@ def default_shape_thresholds(slot_height: float) -> dict[str, Any]:
         "col_projection_distance": {"limit": 0.34, "threshold_source": "default"},
         "margin_distribution_delta": {"limit": 0.22, "threshold_source": "default"},
     }
+
+
+def neighbor_stability(widths: list[float], heights: list[float]) -> dict[str, Any]:
+    def ratio(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        median_value = median(values)
+        return (max(values) - min(values)) / max(1.0, median_value)
+
+    width_variation = ratio(widths)
+    height_variation = ratio(heights)
+    variation = max(width_variation, height_variation)
+    return {
+        "source": "neighbor_slot_geometry",
+        "slot_count": len(widths),
+        "width_variation_ratio": round(float(width_variation), 4),
+        "height_variation_ratio": round(float(height_variation), 4),
+        "stable": bool(variation <= 0.18),
+        "stability_score": round(max(0.0, 1.0 - variation), 4),
+    }
+
+
+def median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[midpoint])
+    return float(ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+
+def font_candidate_distribution(
+    *,
+    selected_font_size: float,
+    slot_heights: list[float],
+    reported_distribution: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(reported_distribution, dict) and reported_distribution:
+        return {
+            "source": "slot_quality_report_font_candidate_distribution",
+            **reported_distribution,
+        }
+    median_slot_height = median(slot_heights)
+    return {
+        "source": "selected_candidate_font_size_distribution",
+        "sample_count": 1,
+        "median_font_size": round(float(selected_font_size), 3),
+        "median_slot_height": round(float(median_slot_height), 3),
+        "font_size_to_slot_height_ratio": round(float(selected_font_size) / max(1.0, median_slot_height), 4),
+    }
+
+
+def dynamic_shape_thresholds(
+    *,
+    slot_height: float,
+    neighbor_stability_report: dict[str, Any],
+    font_distribution_report: dict[str, Any],
+) -> dict[str, Any]:
+    base = default_shape_thresholds(slot_height)
+    stable_neighbors = bool(neighbor_stability_report.get("stable"))
+    try:
+        font_ratio = float(font_distribution_report.get("font_size_to_slot_height_ratio") or 1.0)
+    except (TypeError, ValueError):
+        font_ratio = 1.0
+    font_adjustment = max(0.92, min(1.12, font_ratio))
+    neighbor_adjustment = 0.92 if stable_neighbors else 1.08
+    center_adjustment = neighbor_adjustment * font_adjustment
+    threshold_context = {
+        "old_slot_height": round(float(slot_height), 3),
+        "neighbor_stability": neighbor_stability_report,
+        "font_candidate_distribution": font_distribution_report,
+    }
+
+    def limit(name: str, value: float) -> dict[str, Any]:
+        return {
+            "limit": round(float(value), 4),
+            "threshold_source": "dynamic",
+            "threshold_context": threshold_context,
+            "source_components": ["old_slot_height", "neighbor_stability", "font_candidate_distribution"],
+        }
+
+    def range_limit(name: str, lower: float, upper: float) -> dict[str, Any]:
+        return {
+            "range": [round(float(lower), 4), round(float(upper), 4)],
+            "threshold_source": "dynamic",
+            "threshold_context": threshold_context,
+            "source_components": ["old_slot_height", "neighbor_stability", "font_candidate_distribution"],
+        }
+
+    return {
+        "bbox_width_delta_ratio": limit(
+            "bbox_width_delta_ratio",
+            float(base["bbox_width_delta_ratio"]["limit"]) * (1.04 if not stable_neighbors else 0.96),
+        ),
+        "bbox_height_delta_ratio": limit(
+            "bbox_height_delta_ratio",
+            float(base["bbox_height_delta_ratio"]["limit"]) * (1.04 if not stable_neighbors else 0.96),
+        ),
+        "centroid_dx": limit("centroid_dx", float(base["centroid_dx"]["limit"]) * center_adjustment),
+        "centroid_dy": limit("centroid_dy", float(base["centroid_dy"]["limit"]) * center_adjustment),
+        "ink_area_ratio": range_limit(
+            "ink_area_ratio",
+            float(base["ink_area_ratio"]["range"][0]) / font_adjustment,
+            float(base["ink_area_ratio"]["range"][1]) * font_adjustment,
+        ),
+        "row_projection_distance": limit(
+            "row_projection_distance",
+            float(base["row_projection_distance"]["limit"]) * (1.05 if not stable_neighbors else 0.95),
+        ),
+        "col_projection_distance": limit(
+            "col_projection_distance",
+            float(base["col_projection_distance"]["limit"]) * (1.05 if not stable_neighbors else 0.95),
+        ),
+        "margin_distribution_delta": limit(
+            "margin_distribution_delta",
+            float(base["margin_distribution_delta"]["limit"]) * (1.05 if not stable_neighbors else 0.95),
+        ),
+    }

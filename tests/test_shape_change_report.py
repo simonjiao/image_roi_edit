@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
@@ -66,8 +67,16 @@ class ShapeChangeReportTest(unittest.TestCase):
         self.assertIn("target_image_metrics", changed)
         self.assertEqual(changed["source_image_metrics"]["box"], [10, 10, 20, 30])
         self.assertEqual(changed["target_image_metrics"]["box"], [12, 16, 28, 36])
-        self.assertEqual(changed["thresholds"]["bbox_width_delta_ratio"]["threshold_source"], "default")
-        self.assertEqual(changed["thresholds"]["row_projection_distance"]["threshold_source"], "default")
+        self.assertEqual(changed["thresholds"]["bbox_width_delta_ratio"]["threshold_source"], "dynamic")
+        self.assertEqual(changed["thresholds"]["row_projection_distance"]["threshold_source"], "dynamic")
+        threshold_context = changed["thresholds"]["bbox_width_delta_ratio"]["threshold_context"]
+        self.assertIn("old_slot_height", threshold_context)
+        self.assertIn("neighbor_stability", threshold_context)
+        self.assertIn("font_candidate_distribution", threshold_context)
+        self.assertEqual(
+            changed["thresholds"]["bbox_width_delta_ratio"]["source_components"],
+            ["old_slot_height", "neighbor_stability", "font_candidate_distribution"],
+        )
         issue_types = {issue["type"] for issue in report["issues"]}
         self.assertIn("bbox_width_delta_ratio_large", issue_types)
         self.assertIn("row_projection_distance_large", issue_types)
@@ -100,8 +109,41 @@ class ShapeChangeReportTest(unittest.TestCase):
         self.assertFalse(report["shape_change_large"])
         self.assertEqual(len(report["changed_chars"]), 1)
         self.assertEqual(report["issues"], [])
-        self.assertEqual(report["shape_change_basis"]["large_change_decision"], "geometry_thresholds_only")
+        self.assertEqual(report["shape_change_basis"]["large_change_decision"], "dynamic_geometry_thresholds")
         self.assertFalse(report["shape_change_basis"]["semantic_character_table_used"])
+
+    def test_dynamic_thresholds_record_slot_neighbor_and_font_distribution_sources(self) -> None:
+        custom_plan = replace(
+            plan(),
+            slot_quality_report={
+                "pass": True,
+                "font_candidate_distribution": {
+                    "sample_count": 5,
+                    "median_font_size": 19,
+                    "median_slot_height": 20,
+                    "font_size_to_slot_height_ratio": 0.95,
+                },
+            },
+        )
+        with patch(
+            "roi_image_edit.local_validation.replacement_char_bboxes",
+            return_value=((12, 16, 28, 36), (28, 10, 38, 30)),
+        ):
+            report = shape_change_report((64, 48), custom_plan, params())
+        changed = report["changed_chars"][0]
+        threshold_context = changed["thresholds"]["centroid_dx"]["threshold_context"]
+        self.assertEqual(threshold_context["old_slot_height"], 20.0)
+        self.assertEqual(threshold_context["neighbor_stability"]["source"], "neighbor_slot_geometry")
+        self.assertTrue(threshold_context["neighbor_stability"]["stable"])
+        self.assertEqual(
+            threshold_context["font_candidate_distribution"]["source"],
+            "slot_quality_report_font_candidate_distribution",
+        )
+        self.assertEqual(threshold_context["font_candidate_distribution"]["sample_count"], 5)
+        self.assertEqual(
+            report["shape_change_basis"]["threshold_sources"],
+            ["old_slot_height", "neighbor_stability", "font_candidate_distribution"],
+        )
 
 
 if __name__ == "__main__":

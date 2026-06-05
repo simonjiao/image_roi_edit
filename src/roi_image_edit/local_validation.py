@@ -37,7 +37,12 @@ from roi_image_edit.roi_locator import (
     text_chars,
     text_run_box,
 )
-from roi_image_edit.shape_metrics import box_metrics, default_shape_thresholds
+from roi_image_edit.shape_metrics import (
+    box_metrics,
+    dynamic_shape_thresholds,
+    font_candidate_distribution,
+    neighbor_stability,
+)
 from roi_image_edit.shape_scoring import shape_score_breakdown
 from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
@@ -1921,6 +1926,17 @@ def shape_change_report(
         return {"enabled": False, "reason": "missing_candidate_char_boxes"}
 
     ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    slot_widths = [float(max(1, slot.x2 - slot.x1)) for slot in ordered_slots]
+    slot_heights = [float(max(1, slot.y2 - slot.y1)) for slot in ordered_slots]
+    neighbor_stability_report = neighbor_stability(slot_widths, slot_heights)
+    slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
+    font_distribution_report = font_candidate_distribution(
+        selected_font_size=float(params.font_size),
+        slot_heights=slot_heights,
+        reported_distribution=slot_report.get("font_candidate_distribution")
+        if isinstance(slot_report.get("font_candidate_distribution"), dict)
+        else None,
+    )
     per_char: list[dict[str, Any]] = []
     issues: list[dict[str, Any]] = []
     for idx, (source_char, target_char) in enumerate(zip(source_chars, target_chars)):
@@ -1946,7 +1962,11 @@ def shape_change_report(
         x1, y1, x2, y2 = candidate_box
         metrics = box_metrics((slot.x1, slot.y1, slot.x2, slot.y2), (int(x1), int(y1), int(x2), int(y2)))
         delta = metrics["delta"]
-        thresholds = default_shape_thresholds(slot_h)
+        thresholds = dynamic_shape_thresholds(
+            slot_height=slot_h,
+            neighbor_stability_report=neighbor_stability_report,
+            font_distribution_report=font_distribution_report,
+        )
         width_delta_ratio = float(delta["bbox_width_delta_ratio"])
         height_delta_ratio = float(delta["bbox_height_delta_ratio"])
         centroid_dx = float(delta["centroid_dx"])
@@ -2068,8 +2088,11 @@ def shape_change_report(
         "placement_strategy_reason": plan.placement_strategy_reason,
         "shape_change_basis": {
             "changed_char_selection": "source_target_char_identity",
-            "large_change_decision": "geometry_thresholds_only",
+            "large_change_decision": "dynamic_geometry_thresholds",
             "semantic_character_table_used": False,
+            "threshold_sources": ["old_slot_height", "neighbor_stability", "font_candidate_distribution"],
+            "neighbor_stability": neighbor_stability_report,
+            "font_candidate_distribution": font_distribution_report,
         },
         "shape_change_large": bool(issues),
         "per_char": per_char,
