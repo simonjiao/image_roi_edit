@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-candidates", type=int, default=28)
     run.add_argument("--vision", choices=("on", "auto", "off"), default="auto")
     run.add_argument("--acceptance-mode", choices=("strict", "normal"), default="strict")
+    run.add_argument("--profile", choices=stage_profile_choices(), default="photo_scan")
     run.add_argument("--max-dark-pixel-ratio", type=float, default=1.12)
     run.add_argument("--min-dark-pixel-ratio", type=float, default=0.88)
     run.add_argument("--max-core-mean-gray-delta", type=float, default=18.0)

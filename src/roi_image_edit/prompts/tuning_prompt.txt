@@ -13,11 +13,19 @@
 代码硬校验报告：
 {hard_check_report}
 
+代码硬校验报告中包含 `pipeline_profile`、`stage_gate` 和 `stage_context`。
+`stage_context.stage_order` 只能使用：
+`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+这些是唯一可公开输出的本地阶段。
+
 判断规则：
 1. 如果输出尺寸与原图不一致，pass=false。
 2. 如果 ROI 外变化像素数不为 0，pass=false。
 3. 如果边缘变化像素数不为 0，pass=false。
 4. 如果硬校验通过，再判断视觉自然度。
+5. 如果 `stage_context.blocking_stage` 不为空，只能围绕该阶段给主建议；`suggested_patch` 不能使用 `stage_context.blocked_patch_keys` 中的参数。
+6. 如果 `text_shape` 未通过，不能把加模糊、加噪声、压缩或背景修补作为主要修复方向。
+7. 如果 `ink_gray_balance` 未通过，必须区分 `too_dark`、`too_bold`、`too_light`、`too_thin`，不要混用。
 
 请重点判断：
 1. 每个 target_text 字符是否相对对应 source_text 旧槽位偏左、偏右、偏上、偏下；
@@ -42,6 +50,8 @@
 
 {
   "pass": true,
+  "blocking_stage": null,
+  "direction": "deliver / fix_text_shape / reduce_true_black_core / recover_core_black / widen_mid_gray_body / trim_outer_gray_halo / add_photo_texture / clean_background_ghost",
   "reason": "当前结果是否可接受，以及主要问题",
   "visual_findings": {
     "char_positions": "ok / left / right / up / down / mixed",

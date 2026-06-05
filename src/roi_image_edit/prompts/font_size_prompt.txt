@@ -6,6 +6,15 @@
 3. 每个候选图的字体名称和字号参数；
 4. 代码硬校验报告。
 
+代码硬校验报告：
+{hard_check_report}
+
+代码硬校验报告中如果包含 `stage_context`，必须服从本地阶段顺序。
+本 prompt 只对应 `text_shape` 阶段内的字体和字号判断，不是独立 stage。
+如果 `stage_context.blocking_stage` 不是 `text_shape`，可以描述字体观察，但不要把字体或字号作为当前轮主修复方向。
+公开阶段只能是：
+`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+
 判断重点：
 1. 字体结构是否接近原图；
 2. 是否接近打印宋体/仿宋风格；
@@ -22,6 +31,8 @@
 输出 JSON：
 
 {
+  "blocking_stage": "text_shape",
+  "direction": "fix_text_shape",
   "best_font": "字体名称",
   "best_font_size": 26,
   "reason": "为什么选择该字体和字号",

@@ -17,6 +17,7 @@
 不为空，视觉验收必须围绕该阶段判断失败原因；参数建议只能使用
 `stage_context.allowed_patch_keys` 中允许的参数族，不能把
 `stage_context.blocked_patch_keys` 作为当前轮主修复方向。
+公开阶段只能是：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
 
 硬性验收规则：
 1. 如果输出尺寸与原图尺寸不一致，必须 pass=false。

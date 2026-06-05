@@ -36,7 +36,7 @@
 
 ### A. 三层流程边界
 
-- [ ] 五个本地 stage 必须成为代码、prompt、报告和测试的唯一权威结构：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；验证方式是 stage order、prompt payload、result schema 和回归报告都只使用这五个 stage。
+- [x] 五个本地 stage 必须成为代码、prompt、报告和测试的唯一权威结构：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_authority.py` 覆盖 stage order、runtime prompt 资产、candidate-rank prompt payload、progress/result report schema 都只使用五个公开 stage。
 - [x] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_spec_field_contract_and_reports`。
 - [x] `StageResult` 必须有稳定字段契约：`stage_id`、`display_name`、`passed`、`blocks_next`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。
 - [x] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stage_result_field_contract_and_stage_context`。

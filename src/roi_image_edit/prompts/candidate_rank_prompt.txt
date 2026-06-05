@@ -14,6 +14,7 @@
 2. `stage_context_by_candidate`；
 3. 每个候选当前的 `blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`；
 4. `stage_filter_contract`。
+公开阶段只能是：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
 
 如果硬校验报告显示任一候选存在以下问题，直接淘汰：
 1. 输出尺寸与原图不一致；

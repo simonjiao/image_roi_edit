@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 import unittest
 
+from roi_image_edit.cli import build_parser
 from roi_image_edit.stage_profiles import (
     resolve_stage_profile,
     stage_profile,
@@ -78,6 +79,19 @@ class StageProfilesTest(unittest.TestCase):
         resolution = resolve_stage_profile(None, "low_res_thumbnail")
         self.assertEqual(resolution["id"], "low_res_thumbnail")
         self.assertEqual(resolution["source"], "auto_suggestion")
+
+    def test_cli_run_profile_argument_is_available_on_legacy_pipeline(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--metadata",
+                "tests/fixtures/example.json",
+                "--profile",
+                "clean_digital",
+            ]
+        )
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.profile, "clean_digital")
 
 
 if __name__ == "__main__":

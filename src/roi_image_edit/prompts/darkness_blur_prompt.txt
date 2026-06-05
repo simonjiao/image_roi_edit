@@ -6,6 +6,15 @@
 3. 每个候选图的 opacity 和 blur 参数；
 4. 代码硬校验报告。
 
+代码硬校验报告：
+{hard_check_report}
+
+代码硬校验报告中如果包含 `stage_context`，必须服从本地阶段顺序。
+本 prompt 只对应 `ink_gray_balance` 和 `photo_texture` 阶段内的黑灰、灰边和模糊判断，不是独立 stage。
+如果 `stage_context.blocking_stage` 是 `text_shape` 或 `background_cleanup`，可以描述黑灰/模糊观察，但不要把 opacity、blur、noise 或压缩作为当前轮主修复方向。
+公开阶段只能是：
+`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`。
+
 判断重点：
 1. 新字是否比原字明显更黑；
 2. 新字是否比原字明显更浅；
@@ -21,6 +30,8 @@
 输出 JSON：
 
 {
+  "blocking_stage": "ink_gray_balance / photo_texture",
+  "direction": "reduce_true_black_core / recover_core_black / trim_outer_gray_halo / add_photo_texture",
   "best_opacity": 0.86,
   "best_blur": 0.5,
   "reason": "为什么选择该透明度和模糊半径",

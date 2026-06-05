@@ -31,11 +31,21 @@ from roi_image_edit.environment import (
     resolve_scanned_fonts,
 )
 from roi_image_edit.prompt_assets import load_prompt, require_prompts
+from roi_image_edit.run_artifacts import attach_stage_context_to_rank_report, model_stage_context
+from roi_image_edit.stage_profiles import stage_profile, stage_profile_choices
+from roi_image_edit.stages import stage_gate_for_report
 
 
 DEFAULT_ENV = Path(".env")
 DEFAULT_MAX_ITERATIONS = 8
 PREFERRED_CORE_MEAN_GRAY_DELTA = -1.4
+
+
+def attach_report_stage_context(report: dict[str, Any], pipeline_profile: str) -> dict[str, Any]:
+    report["pipeline_profile"] = pipeline_profile
+    report["stage_gate"] = stage_gate_for_report(report, pipeline_profile)
+    report["stage_context"] = model_stage_context(report, pipeline_profile)
+    return report
 
 
 @dataclass(frozen=True)
@@ -3886,7 +3896,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = args.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     progress = ProgressTracker(run_dir, enabled=args.progress)
-    progress.emit("run_started", "created run directory", run_dir=str(run_dir))
+    pipeline_profile = stage_profile(str(getattr(args, "profile", None) or "photo_scan")).id
+    progress.emit(
+        "run_started",
+        "created run directory",
+        run_dir=str(run_dir),
+        pipeline_profile=pipeline_profile,
+    )
 
     full_image, crop, split_box, plan, context = build_task_from_metadata(
         args.metadata,
@@ -4092,6 +4108,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 and bool(font_style_report.get("pass", True)),
                 "issues": strict_issues + alignment_issues + list(font_style_report.get("issues", [])),
             }
+            attach_report_stage_context(report, pipeline_profile)
             image_path = candidates_dir / f"{params.candidate_id}.png"
             image.save(image_path)
             rendered.append((params, image, report))
@@ -4099,7 +4116,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             hard_reports[params.candidate_id] = {"params": asdict(params), "hard_check": report}
 
         hard_report_path = iter_dir / "hard_check_report.json"
-        write_json(hard_report_path, hard_reports)
+        write_json(
+            hard_report_path,
+            attach_stage_context_to_rank_report(
+                {"candidates": hard_reports},
+                pipeline_profile=pipeline_profile,
+            ),
+        )
         contact_sheet_path = iter_dir / "contact_sheet.png"
         make_contact_sheet(sheet_items, contact_sheet_path, scale=args.sheet_scale, cols=args.sheet_cols)
         progress.emit(
@@ -4168,9 +4191,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     total_candidate_count=len(rendered),
                     contact_sheet=str(vision_contact_sheet_path),
                 )
+            vision_hard_payload = attach_stage_context_to_rank_report(
+                {"candidates": vision_hard_reports},
+                pipeline_profile=pipeline_profile,
+            )
             prompt = candidate_prompt_template.replace(
                 "{hard_check_report}",
-                json.dumps(vision_hard_reports, ensure_ascii=False, indent=2),
+                json.dumps(vision_hard_payload, ensure_ascii=False, indent=2),
             )
             prompt += vision_task_context(plan)
             if args.acceptance_mode == "strict":
@@ -4187,6 +4214,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     user_prompt=prompt,
                     image_paths=[run_dir / "original_crop.png", vision_contact_sheet_path],
                 )
+                candidate_rank_json["local_stage_context"] = {
+                    "pipeline_profile": pipeline_profile,
+                    "stage_context_by_candidate": vision_hard_payload.get("stage_context_by_candidate"),
+                    "stage_filter_contract": vision_hard_payload.get("stage_filter_contract"),
+                }
                 write_json(iter_dir / "visual_eval_candidate_rank.json", candidate_rank_json)
                 model_best = find_best_candidate_from_model(candidate_rank_json, rendered)
                 if model_best:
@@ -4315,6 +4347,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                         + rank_patched_alignment_issues
                         + list(rank_patched_font_style.get("issues", [])),
                     }
+                    attach_report_stage_context(rank_patched_report, pipeline_profile)
                     chosen_tuple = next(
                         (item for item in rendered if item[0].candidate_id == chosen_params.candidate_id),
                         None,
@@ -4440,6 +4473,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             and bool(current_font_style_report.get("pass", True)),
             "issues": current_strict_issues + current_alignment_issues + list(current_font_style_report.get("issues", [])),
         }
+        attach_report_stage_context(current_report, pipeline_profile)
         current_image_path = iter_dir / "current_after_patch.png"
         compare_path = iter_dir / "compare_current.png"
         current_image.save(current_image_path)
@@ -4539,6 +4573,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                         + patched_alignment_issues
                         + list(patched_font_style_report.get("issues", [])),
                     }
+                    attach_report_stage_context(patched_report, pipeline_profile)
                     patched_pass = (
                         bool(patched_report.get("pass"))
                         and not patched_strict_issues
@@ -4713,6 +4748,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         and bool(final_font_style_report.get("pass", True)),
         "issues": final_strict_issues + final_alignment_issues + list(final_font_style_report.get("issues", [])),
     }
+    attach_report_stage_context(final_crop_report, pipeline_profile)
     make_compare_image(crop, final_crop, run_dir / "compare_final_crop.png", scale=args.compare_scale)
 
     final_full_path = None
@@ -4736,6 +4772,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     final_acceptance_json: dict[str, Any] | None = None
     if vision_client:
         hard_payload = {
+            "pipeline_profile": pipeline_profile,
+            "stage_context": model_stage_context(final_crop_report, pipeline_profile),
             "crop": final_crop_report,
             "full": final_full_report,
             "strict_visual_metrics": final_strict_metrics,
@@ -4821,6 +4859,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "font_scan_dirs": args.font_scan_dirs,
         "max_scanned_fonts": args.max_scanned_fonts,
         "font_candidate_pool_size": args.font_candidate_pool_size,
+        "pipeline_profile": pipeline_profile,
         "environment": environment_report(args.env, args.metadata),
         "final_params": asdict(final_params),
         "final_crop": str(final_crop_path),
@@ -4896,6 +4935,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-candidates", type=int, default=28)
     parser.add_argument("--vision", choices=("on", "auto", "off"), default="auto")
     parser.add_argument("--acceptance-mode", choices=("strict", "normal"), default="strict")
+    parser.add_argument("--profile", choices=stage_profile_choices(), default="photo_scan")
     parser.add_argument("--max-dark-pixel-ratio", type=float, default=1.12)
     parser.add_argument("--min-dark-pixel-ratio", type=float, default=0.88)
     parser.add_argument("--max-core-mean-gray-delta", type=float, default=18.0)
