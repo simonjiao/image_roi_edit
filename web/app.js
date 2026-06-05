@@ -4,10 +4,31 @@ const imageList = document.getElementById("imageList");
 const statusText = document.getElementById("statusText");
 const template = document.getElementById("imageTemplate");
 const profileSelect = document.getElementById("profileSelect");
+const editorModal = document.getElementById("imageEditorModal");
+const editorTitle = document.getElementById("editorTitle");
+const editorCanvasShell = document.getElementById("editorCanvasShell");
+const editorCanvas = document.getElementById("editorCanvas");
+const editorSelectMode = document.getElementById("editorSelectMode");
+const editorPanMode = document.getElementById("editorPanMode");
+const editorZoomOut = document.getElementById("editorZoomOut");
+const editorZoomIn = document.getElementById("editorZoomIn");
+const editorZoomFit = document.getElementById("editorZoomFit");
+const editorZoomValue = document.getElementById("editorZoomValue");
+const editorRotateLeft = document.getElementById("editorRotateLeft");
+const editorRotateRight = document.getElementById("editorRotateRight");
+const editorClose = document.getElementById("editorClose");
 
 const state = {
   items: [],
   dragging: null,
+  editor: {
+    itemId: null,
+    mode: "select",
+    zoom: 1,
+    zoomMode: "fit",
+    dragging: null,
+    panning: null,
+  },
 };
 
 const MIN_CANVAS_ZOOM = 0.1;
@@ -111,6 +132,131 @@ function changeItemZoom(item, delta) {
   setItemZoom(item, (item.zoom || fitZoomForItem(item)) + delta);
 }
 
+function activeEditorItem() {
+  return state.editor.itemId ? getItem(state.editor.itemId) : null;
+}
+
+function fitZoomForEditor(item) {
+  const imageWidth = item.image?.naturalWidth || editorCanvas?.width || 1;
+  const imageHeight = item.image?.naturalHeight || editorCanvas?.height || 1;
+  const shellRect = editorCanvasShell?.getBoundingClientRect
+    ? editorCanvasShell.getBoundingClientRect()
+    : null;
+  const shellWidth = editorCanvasShell?.clientWidth || shellRect?.width || imageWidth;
+  const shellHeight = editorCanvasShell?.clientHeight || shellRect?.height || imageHeight;
+  const availableWidth = Math.max(1, shellWidth - 36);
+  const availableHeight = Math.max(1, shellHeight - 36);
+  return clampCanvasZoom(Math.min(1, availableWidth / imageWidth, availableHeight / imageHeight));
+}
+
+function applyEditorZoom(item) {
+  if (!editorCanvas) {
+    return;
+  }
+  const imageWidth = item.image?.naturalWidth || editorCanvas.width || 1;
+  const imageHeight = item.image?.naturalHeight || editorCanvas.height || 1;
+  const zoom = clampCanvasZoom(state.editor.zoom || 1);
+  editorCanvas.style.width = `${Math.max(1, Math.round(imageWidth * zoom))}px`;
+  editorCanvas.style.height = `${Math.max(1, Math.round(imageHeight * zoom))}px`;
+  if (editorZoomValue) {
+    editorZoomValue.textContent = `${Math.round(zoom * 100)}%`;
+  }
+}
+
+function setEditorZoom(zoom, mode = "manual") {
+  const item = activeEditorItem();
+  if (!item) {
+    return;
+  }
+  state.editor.zoom = clampCanvasZoom(zoom);
+  state.editor.zoomMode = mode;
+  applyEditorZoom(item);
+}
+
+function resetEditorZoomToFit() {
+  const item = activeEditorItem();
+  if (!item) {
+    return;
+  }
+  state.editor.zoom = fitZoomForEditor(item);
+  state.editor.zoomMode = "fit";
+  applyEditorZoom(item);
+}
+
+function changeEditorZoom(delta) {
+  setEditorZoom((state.editor.zoom || 1) + delta);
+}
+
+function zoomEditorAtEvent(event, factor) {
+  const item = activeEditorItem();
+  if (!item || !editorCanvasShell || !editorCanvas) {
+    return;
+  }
+  const shellRect = editorCanvasShell.getBoundingClientRect();
+  const beforeWidth = editorCanvas.getBoundingClientRect().width || 1;
+  const beforeHeight = editorCanvas.getBoundingClientRect().height || 1;
+  const focusX = event.clientX - shellRect.left + editorCanvasShell.scrollLeft;
+  const focusY = event.clientY - shellRect.top + editorCanvasShell.scrollTop;
+  const ratioX = focusX / beforeWidth;
+  const ratioY = focusY / beforeHeight;
+  setEditorZoom((state.editor.zoom || fitZoomForEditor(item)) * factor);
+  const afterWidth = editorCanvas.getBoundingClientRect().width || beforeWidth;
+  const afterHeight = editorCanvas.getBoundingClientRect().height || beforeHeight;
+  editorCanvasShell.scrollLeft = ratioX * afterWidth - (event.clientX - shellRect.left);
+  editorCanvasShell.scrollTop = ratioY * afterHeight - (event.clientY - shellRect.top);
+}
+
+function setEditorMode(mode) {
+  state.editor.mode = mode === "pan" ? "pan" : "select";
+  if (editorSelectMode) {
+    editorSelectMode.classList.toggle("active", state.editor.mode === "select");
+  }
+  if (editorPanMode) {
+    editorPanMode.classList.toggle("active", state.editor.mode === "pan");
+  }
+  if (editorCanvas) {
+    editorCanvas.classList.toggle("pan-mode", state.editor.mode === "pan");
+  }
+}
+
+function clampRectToImage(rect, width, height) {
+  const x1 = Math.max(0, Math.min(width, Math.round(rect.x)));
+  const y1 = Math.max(0, Math.min(height, Math.round(rect.y)));
+  const x2 = Math.max(0, Math.min(width, Math.round(rect.x + rect.w)));
+  const y2 = Math.max(0, Math.min(height, Math.round(rect.y + rect.h)));
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    w: Math.abs(x2 - x1),
+    h: Math.abs(y2 - y1),
+  };
+}
+
+function rotateRectForImageTurn(rect, imageWidth, imageHeight, turn) {
+  if (turn > 0) {
+    return clampRectToImage(
+      {
+        x: imageHeight - rect.y - rect.h,
+        y: rect.x,
+        w: rect.h,
+        h: rect.w,
+      },
+      imageHeight,
+      imageWidth,
+    );
+  }
+  return clampRectToImage(
+    {
+      x: rect.y,
+      y: imageWidth - rect.x - rect.w,
+      w: rect.h,
+      h: rect.w,
+    },
+    imageHeight,
+    imageWidth,
+  );
+}
+
 function normalizedRect(start, end) {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
@@ -124,8 +270,7 @@ function normalizedRect(start, end) {
   };
 }
 
-function drawCanvas(item) {
-  const canvas = item.elements.canvas;
+function paintCanvas(canvas, item, dragging) {
   const ctx = canvas.getContext("2d");
   canvas.width = item.image.naturalWidth;
   canvas.height = item.image.naturalHeight;
@@ -143,8 +288,8 @@ function drawCanvas(item) {
     ctx.fillText(String(index + 1), region.rect.x + 4, Math.max(14, region.rect.y - 4));
   });
 
-  if (state.dragging && state.dragging.itemId === item.id) {
-    const rect = normalizedRect(state.dragging.start, state.dragging.current);
+  if (dragging && dragging.itemId === item.id) {
+    const rect = normalizedRect(dragging.start, dragging.current);
     ctx.setLineDash([8, 5]);
     ctx.strokeStyle = "#b85f00";
     ctx.fillStyle = "rgba(184, 95, 0, 0.13)";
@@ -152,7 +297,94 @@ function drawCanvas(item) {
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.setLineDash([]);
   }
+}
+
+function drawCanvas(item) {
+  paintCanvas(item.elements.canvas, item, state.dragging);
   applyCanvasZoom(item);
+  if (state.editor.itemId === item.id) {
+    drawEditorCanvas();
+  }
+}
+
+function drawEditorCanvas() {
+  const item = activeEditorItem();
+  if (!item || !editorCanvas) {
+    return;
+  }
+  paintCanvas(editorCanvas, item, state.editor.dragging);
+  applyEditorZoom(item);
+}
+
+function openImageEditor(item) {
+  if (!editorModal || !editorCanvasShell) {
+    return;
+  }
+  state.editor.itemId = item.id;
+  state.editor.dragging = null;
+  state.editor.panning = null;
+  if (editorTitle) {
+    editorTitle.textContent = item.filename;
+  }
+  editorModal.hidden = false;
+  if (document.body?.classList) {
+    document.body.classList.add("modal-open");
+  }
+  setEditorMode("select");
+  drawEditorCanvas();
+  resetEditorZoomToFit();
+  editorCanvasShell.scrollLeft = 0;
+  editorCanvasShell.scrollTop = 0;
+}
+
+function closeImageEditor() {
+  state.editor.itemId = null;
+  state.editor.dragging = null;
+  state.editor.panning = null;
+  if (editorModal) {
+    editorModal.hidden = true;
+  }
+  if (document.body?.classList) {
+    document.body.classList.remove("modal-open");
+  }
+}
+
+async function rotateItemImage(item, turn) {
+  const normalizedTurn = turn >= 0 ? 1 : -1;
+  const oldWidth = item.image.naturalWidth;
+  const oldHeight = item.image.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = oldHeight;
+  canvas.height = oldWidth;
+  const ctx = canvas.getContext("2d");
+  if (normalizedTurn > 0) {
+    ctx.translate(canvas.width, 0);
+    ctx.rotate(Math.PI / 2);
+  } else {
+    ctx.translate(0, canvas.height);
+    ctx.rotate(-Math.PI / 2);
+  }
+  ctx.drawImage(item.image, 0, 0);
+
+  const dataUrl = canvas.toDataURL("image/png");
+  item.dataUrl = dataUrl;
+  item.image = await loadImage(dataUrl);
+  item.regions = item.regions
+    .map((region) => ({
+      ...region,
+      rect: rotateRectForImageTurn(region.rect, oldWidth, oldHeight, normalizedTurn),
+    }))
+    .filter((region) => region.rect.w >= 4 && region.rect.h >= 4);
+
+  if (item.zoomMode === "fit") {
+    resetItemZoomToFit(item);
+  }
+  if (state.editor.itemId === item.id) {
+    resetEditorZoomToFit();
+  }
+  drawCanvas(item);
+  updateRegionCount(item);
+  setStatus(`已旋转：${item.filename}`);
 }
 
 function updateRegionCount(item) {
@@ -604,6 +836,9 @@ function renderItem(item) {
     zoomSlider: node.querySelector(".zoom-slider"),
     zoomValue: node.querySelector(".zoom-value"),
     zoomReset: node.querySelector(".zoom-reset"),
+    rotateLeft: node.querySelector(".rotate-left"),
+    rotateRight: node.querySelector(".rotate-right"),
+    openEditor: node.querySelector(".open-editor"),
     instruction: node.querySelector(".instruction-input"),
     clearRects: node.querySelector(".clear-rects"),
     regionCount: node.querySelector(".region-count"),
@@ -649,6 +884,18 @@ function renderItem(item) {
     resetItemZoomToFit(item);
   });
 
+  item.elements.rotateLeft.addEventListener("click", async () => {
+    await rotateItemImage(item, -1);
+  });
+
+  item.elements.rotateRight.addEventListener("click", async () => {
+    await rotateItemImage(item, 1);
+  });
+
+  item.elements.openEditor.addEventListener("click", () => {
+    openImageEditor(item);
+  });
+
   item.elements.canvasShell.addEventListener("wheel", (event) => {
     if (!event.ctrlKey && !event.metaKey && !event.altKey) {
       return;
@@ -688,6 +935,8 @@ function renderItem(item) {
     state.dragging = null;
     if (rect.w >= 4 && rect.h >= 4) {
       item.regions.push({ id: uid("region"), rect });
+    } else {
+      openImageEditor(item);
     }
     drawCanvas(item);
     updateRegionCount(item);
@@ -782,6 +1031,165 @@ async function processAll() {
   } finally {
     updateProcessButton();
   }
+}
+
+function finishEditorSelection() {
+  const item = activeEditorItem();
+  if (!item || !state.editor.dragging) {
+    return;
+  }
+  const rect = normalizedRect(state.editor.dragging.start, state.editor.dragging.current);
+  state.editor.dragging = null;
+  if (rect.w >= 4 && rect.h >= 4) {
+    item.regions.push({ id: uid("region"), rect });
+  }
+  drawCanvas(item);
+  updateRegionCount(item);
+}
+
+function finishEditorPan() {
+  state.editor.panning = null;
+  if (editorCanvas) {
+    editorCanvas.classList.remove("panning");
+  }
+}
+
+if (editorSelectMode) {
+  editorSelectMode.addEventListener("click", () => {
+    setEditorMode("select");
+  });
+}
+
+if (editorPanMode) {
+  editorPanMode.addEventListener("click", () => {
+    setEditorMode("pan");
+  });
+}
+
+if (editorZoomOut) {
+  editorZoomOut.addEventListener("click", () => {
+    changeEditorZoom(-CANVAS_ZOOM_STEP);
+  });
+}
+
+if (editorZoomIn) {
+  editorZoomIn.addEventListener("click", () => {
+    changeEditorZoom(CANVAS_ZOOM_STEP);
+  });
+}
+
+if (editorZoomFit) {
+  editorZoomFit.addEventListener("click", () => {
+    resetEditorZoomToFit();
+  });
+}
+
+if (editorRotateLeft) {
+  editorRotateLeft.addEventListener("click", async () => {
+    const item = activeEditorItem();
+    if (item) {
+      await rotateItemImage(item, -1);
+    }
+  });
+}
+
+if (editorRotateRight) {
+  editorRotateRight.addEventListener("click", async () => {
+    const item = activeEditorItem();
+    if (item) {
+      await rotateItemImage(item, 1);
+    }
+  });
+}
+
+if (editorClose) {
+  editorClose.addEventListener("click", closeImageEditor);
+}
+
+if (editorCanvasShell) {
+  editorCanvasShell.addEventListener(
+    "wheel",
+    (event) => {
+      if (!activeEditorItem()) {
+        return;
+      }
+      event.preventDefault();
+      zoomEditorAtEvent(event, event.deltaY < 0 ? 1.12 : 0.88);
+    },
+    { passive: false },
+  );
+}
+
+if (editorCanvas) {
+  editorCanvas.addEventListener("pointerdown", (event) => {
+    const item = activeEditorItem();
+    if (!item) {
+      return;
+    }
+    event.preventDefault();
+    editorCanvas.setPointerCapture(event.pointerId);
+    if (state.editor.mode === "pan" || event.button === 1) {
+      state.editor.panning = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        scrollLeft: editorCanvasShell.scrollLeft,
+        scrollTop: editorCanvasShell.scrollTop,
+      };
+      editorCanvas.classList.add("panning");
+      return;
+    }
+    const point = canvasPoint(editorCanvas, event);
+    state.editor.dragging = { itemId: item.id, start: point, current: point };
+    drawEditorCanvas();
+  });
+
+  editorCanvas.addEventListener("pointermove", (event) => {
+    const item = activeEditorItem();
+    if (!item) {
+      return;
+    }
+    if (state.editor.panning) {
+      const dx = event.clientX - state.editor.panning.clientX;
+      const dy = event.clientY - state.editor.panning.clientY;
+      editorCanvasShell.scrollLeft = state.editor.panning.scrollLeft - dx;
+      editorCanvasShell.scrollTop = state.editor.panning.scrollTop - dy;
+      return;
+    }
+    if (!state.editor.dragging || state.editor.dragging.itemId !== item.id) {
+      return;
+    }
+    state.editor.dragging.current = canvasPoint(editorCanvas, event);
+    drawEditorCanvas();
+  });
+
+  editorCanvas.addEventListener("pointerup", () => {
+    finishEditorSelection();
+    finishEditorPan();
+  });
+
+  editorCanvas.addEventListener("pointercancel", () => {
+    state.editor.dragging = null;
+    finishEditorPan();
+    drawEditorCanvas();
+  });
+}
+
+if (typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.editor.itemId) {
+      closeImageEditor();
+    }
+    if (event.key === " " && state.editor.itemId) {
+      event.preventDefault();
+      setEditorMode("pan");
+    }
+  });
+  document.addEventListener("keyup", (event) => {
+    if (event.key === " " && state.editor.itemId) {
+      event.preventDefault();
+      setEditorMode("select");
+    }
+  });
 }
 
 fileInput.addEventListener("change", async () => {

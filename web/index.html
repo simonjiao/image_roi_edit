@@ -43,6 +43,9 @@
               <div class="zoom-value">100%</div>
               <button class="zoom-button zoom-in" type="button" title="放大">+</button>
               <button class="zoom-button zoom-reset" type="button" title="适配窗口">⤢</button>
+              <button class="zoom-button rotate-left" type="button" title="左转 90°">↺</button>
+              <button class="zoom-button rotate-right" type="button" title="右转 90°">↻</button>
+              <button class="zoom-button open-editor" type="button" title="大图编辑">⛶</button>
             </div>
             <div class="canvas-shell">
               <canvas class="source-canvas"></canvas>
@@ -70,6 +73,26 @@
         </div>
       </section>
     </template>
+
+    <div id="imageEditorModal" class="image-editor-modal" hidden>
+      <div class="image-editor-toolbar">
+        <div id="editorTitle" class="image-editor-title"></div>
+        <div class="editor-mode-group" aria-label="编辑模式">
+          <button id="editorSelectMode" class="editor-tool-button active" type="button">框选</button>
+          <button id="editorPanMode" class="editor-tool-button" type="button">移动</button>
+        </div>
+        <button id="editorZoomOut" class="editor-icon-button" type="button" title="缩小">−</button>
+        <div id="editorZoomValue" class="editor-zoom-value">100%</div>
+        <button id="editorZoomIn" class="editor-icon-button" type="button" title="放大">+</button>
+        <button id="editorZoomFit" class="editor-icon-button" type="button" title="适配窗口">⤢</button>
+        <button id="editorRotateLeft" class="editor-icon-button" type="button" title="左转 90°">↺</button>
+        <button id="editorRotateRight" class="editor-icon-button" type="button" title="右转 90°">↻</button>
+        <button id="editorClose" class="editor-icon-button close" type="button" title="关闭">×</button>
+      </div>
+      <div id="editorCanvasShell" class="image-editor-canvas-shell">
+        <canvas id="editorCanvas" class="image-editor-canvas"></canvas>
+      </div>
+    </div>
 
     <script src="/app.js"></script>
   </body>

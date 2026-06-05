@@ -22,10 +22,17 @@ class WebCanvasZoomTest(unittest.TestCase):
             "zoom-value",
             "zoom-in",
             "zoom-reset",
+            "rotate-left",
+            "rotate-right",
+            "open-editor",
+            "image-editor-modal",
+            "image-editor-canvas",
         ):
             self.assertIn(class_name, html)
 
         self.assertIn(".source-pane .canvas-shell", css)
+        self.assertIn(".image-editor-modal", css)
+        self.assertIn(".image-editor-canvas-shell", css)
         self.assertIn("overflow: auto", css)
         self.assertIn("max-width: none", css)
         self.assertIn("max-height: none", css)
@@ -112,6 +119,15 @@ class WebCanvasZoomTest(unittest.TestCase):
             }
             if (slider.value !== "200" || zoomValue.textContent !== "200%") {
               throw new Error(`${slider.value} ${zoomValue.textContent}`);
+            }
+
+            const clockwise = context.rotateRectForImageTurn({ x: 10, y: 20, w: 30, h: 40 }, 100, 80, 1);
+            if (JSON.stringify(clockwise) !== JSON.stringify({ x: 20, y: 10, w: 40, h: 30 })) {
+              throw new Error(JSON.stringify(clockwise));
+            }
+            const counterClockwise = context.rotateRectForImageTurn({ x: 10, y: 20, w: 30, h: 40 }, 100, 80, -1);
+            if (JSON.stringify(counterClockwise) !== JSON.stringify({ x: 20, y: 60, w: 40, h: 30 })) {
+              throw new Error(JSON.stringify(counterClockwise));
             }
             """
         )

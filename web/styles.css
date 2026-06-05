@@ -24,6 +24,10 @@ body {
     sans-serif;
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -217,6 +221,12 @@ select {
   border-color: var(--accent);
 }
 
+.zoom-button.active {
+  border-color: var(--accent);
+  background: #e9f4f0;
+  color: var(--accent-dark);
+}
+
 .zoom-slider {
   width: min(180px, 38vw);
   accent-color: var(--accent);
@@ -265,6 +275,128 @@ select {
   max-height: none;
   cursor: crosshair;
   background: #fff;
+}
+
+.image-editor-modal[hidden] {
+  display: none;
+}
+
+.image-editor-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: rgba(18, 24, 29, 0.92);
+}
+
+.image-editor-toolbar {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.image-editor-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.editor-mode-group {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.editor-tool-button,
+.editor-icon-button {
+  height: 32px;
+  border: 0;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.editor-tool-button {
+  min-width: 52px;
+  padding: 0 10px;
+}
+
+.editor-tool-button + .editor-tool-button {
+  border-left: 1px solid var(--line-strong);
+}
+
+.editor-tool-button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.editor-icon-button {
+  width: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.editor-icon-button:hover {
+  border-color: var(--accent);
+}
+
+.editor-icon-button.close {
+  color: var(--danger);
+}
+
+.editor-zoom-value {
+  min-width: 54px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.image-editor-canvas-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%);
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+  background-size: 20px 20px;
+}
+
+.image-editor-canvas {
+  display: block;
+  max-width: none;
+  max-height: none;
+  background: #fff;
+  cursor: crosshair;
+}
+
+.image-editor-canvas.pan-mode {
+  cursor: grab;
+}
+
+.image-editor-canvas.pan-mode.panning {
+  cursor: grabbing;
 }
 
 .result-image {
@@ -534,6 +666,14 @@ select {
   .zoom-slider {
     flex: 1;
     min-width: 130px;
+  }
+
+  .image-editor-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .image-editor-title {
+    flex-basis: 100%;
   }
 
   .status-text {
