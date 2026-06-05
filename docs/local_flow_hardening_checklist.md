@@ -37,6 +37,9 @@
 ### A. 三层流程边界
 
 - [x] 五个本地 stage 已写入本 checklist：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；证据：本节 A-T 以这五个 stage 为权威结构。
+- [ ] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
+- [ ] `StageResult` 必须有稳定字段契约：`stage_id`、`passed`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
+- [ ] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；验证方式是每个 stage 的 `StageResult` 和 prompt context 都输出对应字段。
 - [ ] 增加前置安全流程验收：`orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard` 必须在候选生成前完成；验证方式是失败样例 `candidate_count=0` 或 rejected，且 `progress.jsonl` 记录失败步骤。
 - [ ] 增加阶段门禁顺序验收：`src/roi_image_edit/stage_policy.py` 的 `STAGE_ORDER` 必须与本 checklist 的五阶段顺序一致；验证方式是单测读取常量并断言顺序。
 - [ ] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；验证方式是 `result.json` 中同时存在两类字段。
@@ -174,6 +177,7 @@
 - [ ] `low_res_thumbnail` 更重视字体结构和笔画体量，并要求视觉验收看放大图；验证方式是 low-res fixture 和 prompt payload。
 - [ ] `manual_roi_quick` 只做最少阶段，未通过时保留 rejected candidate，不自动做复杂照片质感；验证方式是 manual ROI fixture。
 - [ ] 同一张图可以用不同 profile 运行，并在 `result.json` 记录不同 stage order 或启用阶段差异；验证方式是 profile matrix smoke。
+- [ ] 用户指定 profile 必须优先于自动 profile 建议；验证方式是同一输入同时存在自动建议和显式 `--profile` 时，`result.json` 使用用户指定 profile 并记录自动建议仅供参考。
 
 ### O. 视觉模型 prompt 和本地仲裁
 
