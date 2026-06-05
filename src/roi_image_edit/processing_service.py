@@ -428,6 +428,7 @@ def run_region_vision_checks(
         current_score = final_score
         current_acceptance = final_acceptance_json
         seen_params: set[str] = {params_signature(current_params)}
+        current_shape_parent_candidate_id = current_params.candidate_id
         rank_patch = candidate_rank_json.get("suggested_patch")
         max_revision_rounds = max(1, int(max_revision_rounds))
         for round_idx in range(1, max_revision_rounds + 1):
@@ -548,6 +549,7 @@ def run_region_vision_checks(
                 current_params,
                 current_report,
                 limit=16,
+                parent_shape_candidate_id=current_shape_parent_candidate_id,
             )
             ink_gray_params = ink_candidate_grid.candidates
             photo_candidate_grid = photo_texture_candidate_grid(
@@ -1032,6 +1034,11 @@ def run_region_vision_checks(
             current_report = patched_report
             current_score = patched_score
             current_acceptance = patched_acceptance
+            if (
+                attempt_record.get("origin") == "shape_reset"
+                and (patched_report.get("stage_gate") or {}).get("blocking_stage") != "text_shape"
+            ):
+                current_shape_parent_candidate_id = patched_params.candidate_id
             final_params = current_params
             final_image = current_image
             final_report = current_report

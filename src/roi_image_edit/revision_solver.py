@@ -155,16 +155,27 @@ class PhotoTextureCandidateGrid:
 
 def layered_candidate_search_report(*grid_reports: dict[str, Any]) -> dict[str, Any]:
     stages: list[dict[str, Any]] = []
+    parent_shape_trace: dict[str, Any] = {}
     for report in grid_reports:
         if not isinstance(report, dict):
             continue
         budget = report.get("budget") if isinstance(report.get("budget"), dict) else {}
+        stage_id = report.get("stage_id")
         stage_record = {
-            "stage_id": report.get("stage_id"),
+            "stage_id": stage_id,
             "optimization_step": report.get("optimization_step"),
             "enabled": bool(report.get("enabled")),
             "candidate_count": int(report.get("candidate_count") or 0),
         }
+        parent_shape_contract = report.get("parent_shape_contract")
+        if isinstance(parent_shape_contract, dict) and stage_id:
+            parent_shape_trace[str(stage_id)] = parent_shape_contract
+            stage_record["parent_shape_candidate_id"] = parent_shape_contract.get(
+                "parent_shape_candidate_id"
+            )
+            stage_record["parent_shape_stage_passed"] = parent_shape_contract.get(
+                "parent_shape_stage_passed"
+            )
         if budget:
             stage_record["raw_candidate_budget"] = int(budget.get("raw_candidate_budget") or 0)
             stage_record["retained_count"] = int(budget.get("retained_count") or 0)
@@ -195,6 +206,7 @@ def layered_candidate_search_report(*grid_reports: dict[str, Any]) -> dict[str, 
             for stage in stages
             if stage.get("enabled")
         },
+        "parent_shape_trace": parent_shape_trace,
         "pruned_count_by_stage": {
             str(stage.get("stage_id")): stage.get("pruned_count")
             for stage in stages
@@ -995,6 +1007,7 @@ def ink_gray_candidate_grid(
     report: dict[str, Any] | None,
     *,
     limit: int = INK_GRAY_GRID_TOP_LIMIT,
+    parent_shape_candidate_id: str | None = None,
 ) -> InkGrayCandidateGrid:
     if not report_blocks_ink_gray(report):
         return InkGrayCandidateGrid(
@@ -1049,6 +1062,7 @@ def ink_gray_candidate_grid(
     candidates = dedupe_params(variants, retained_limit)
     candidate_records: list[dict[str, Any]] = []
     violations: list[dict[str, Any]] = []
+    shape_parent_id = str(parent_shape_candidate_id or params.candidate_id)
     for candidate in candidates:
         delta_keys = params_delta_keys(params, candidate)
         blocked_delta_keys = sorted(delta_keys & INK_GRAY_GRID_BLOCKED_DELTA_KEYS)
@@ -1056,6 +1070,7 @@ def ink_gray_candidate_grid(
         record = {
             "candidate_id": candidate.candidate_id,
             "parent_candidate_id": params.candidate_id,
+            "parent_shape_candidate_id": shape_parent_id,
             "delta_keys": sorted(delta_keys),
             "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
             "blocked_delta_keys": blocked_delta_keys,
@@ -1065,6 +1080,34 @@ def ink_gray_candidate_grid(
         if blocked_delta_keys or undeclared_delta_keys:
             violations.append(record)
 
+    stage_gate = stage_gate_for_report(report or {})
+    text_shape_status = (
+        stage_gate.get("stage_status", {}).get("text_shape")
+        if isinstance(stage_gate.get("stage_status"), dict)
+        else {}
+    )
+    parent_shape_contract = {
+        "required_prior_stage": "text_shape",
+        "required_parent_state": "text_shape_passed_before_ink_gray",
+        "current_blocking_stage": stage_gate.get("blocking_stage"),
+        "parent_candidate_id": params.candidate_id,
+        "parent_shape_candidate_id": shape_parent_id,
+        "parent_shape_source": "current_candidate_after_text_shape_pass",
+        "parent_shape_stage_passed": bool(
+            isinstance(text_shape_status, dict) and text_shape_status.get("pass")
+        ),
+        "candidate_parent_trace_complete": all(
+            record.get("parent_shape_candidate_id") == shape_parent_id
+            for record in candidate_records
+        ),
+        "candidate_parent_shape_ids": sorted(
+            {
+                str(record.get("parent_shape_candidate_id"))
+                for record in candidate_records
+                if record.get("parent_shape_candidate_id")
+            }
+        ),
+    }
     budget_min, budget_max = INK_GRAY_GRID_BUDGET_RANGE
     return InkGrayCandidateGrid(
         candidates=candidates,
@@ -1073,7 +1116,8 @@ def ink_gray_candidate_grid(
             "stage_id": "ink_gray_balance",
             "optimization_step": "ink_gray_balance",
             "parent_candidate_id": params.candidate_id,
-            "parent_shape_candidate_id": params.candidate_id,
+            "parent_shape_candidate_id": shape_parent_id,
+            "parent_shape_contract": parent_shape_contract,
             "budget": {
                 "raw_candidate_budget": raw_budget,
                 "budget_min": budget_min,

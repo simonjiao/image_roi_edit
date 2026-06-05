@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from dataclasses import replace
 
 from roi_image_edit.iterative_pipeline import CandidateParams
 import roi_image_edit.processing_service as processing_service
@@ -9,6 +10,7 @@ from roi_image_edit.revision_solver import (
     INK_GRAY_GRID_ALLOWED_DELTA_KEYS,
     INK_GRAY_GRID_BLOCKED_DELTA_KEYS,
     ink_gray_candidate_grid,
+    layered_candidate_search_report,
 )
 
 
@@ -63,6 +65,20 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertEqual(grid.report["stage_id"], "ink_gray_balance")
         self.assertEqual(grid.report["optimization_step"], "ink_gray_balance")
         self.assertEqual(grid.report["parent_shape_candidate_id"], "shape-top-01")
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["required_parent_state"],
+            "text_shape_passed_before_ink_gray",
+        )
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["parent_shape_source"],
+            "current_candidate_after_text_shape_pass",
+        )
+        self.assertTrue(grid.report["parent_shape_contract"]["parent_shape_stage_passed"])
+        self.assertTrue(grid.report["parent_shape_contract"]["candidate_parent_trace_complete"])
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["candidate_parent_shape_ids"],
+            ["shape-top-01"],
+        )
         self.assertEqual(grid.report["candidate_count"], 16)
         self.assertEqual(len(grid.candidates), 16)
         self.assertTrue(grid.report["budget"]["within_budget"])
@@ -85,6 +101,7 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             self.assertFalse(audit["blocked_delta_keys"], audit)
             self.assertFalse(audit["undeclared_delta_keys"], audit)
             self.assertEqual(audit["parent_candidate_id"], base.candidate_id)
+            self.assertEqual(audit["parent_shape_candidate_id"], base.candidate_id)
             self.assertEqual(candidate.font_name, base.font_name)
             self.assertEqual(candidate.font_path, base.font_path)
             self.assertEqual(candidate.font_size, base.font_size)
@@ -109,11 +126,55 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertEqual(grid.report["reason"], "ink_gray_balance_not_blocking")
         self.assertEqual(grid.candidates, [])
 
+    def test_parent_shape_candidate_survives_multiple_ink_gray_rounds(self) -> None:
+        ink_round_parent = replace(params(), candidate_id="ink-round-01")
+        grid = ink_gray_candidate_grid(
+            ink_round_parent,
+            ink_gray_report(),
+            limit=8,
+            parent_shape_candidate_id="shape-top-01",
+        )
+
+        self.assertEqual(grid.report["parent_candidate_id"], "ink-round-01")
+        self.assertEqual(grid.report["parent_shape_candidate_id"], "shape-top-01")
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["parent_candidate_id"],
+            "ink-round-01",
+        )
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["parent_shape_candidate_id"],
+            "shape-top-01",
+        )
+        for audit in grid.report["candidate_delta_audit"]:
+            self.assertEqual(audit["parent_candidate_id"], "ink-round-01")
+            self.assertEqual(audit["parent_shape_candidate_id"], "shape-top-01")
+
     def test_processing_service_preserves_ink_gray_grid_report_in_revision_rounds(self) -> None:
         source = inspect.getsource(processing_service.run_region_vision_checks)
         self.assertIn("ink_gray_candidate_grid", source)
         self.assertIn('"ink_gray_candidate_grid": ink_candidate_grid.report', source)
         self.assertIn('"ink_gray_count": len(ink_gray_params)', source)
+        self.assertIn("current_shape_parent_candidate_id = current_params.candidate_id", source)
+        self.assertIn("parent_shape_candidate_id=current_shape_parent_candidate_id", source)
+
+    def test_layered_search_report_preserves_ink_parent_shape_trace(self) -> None:
+        grid = ink_gray_candidate_grid(params(), ink_gray_report(), limit=16)
+        report = layered_candidate_search_report(grid.report)
+
+        self.assertEqual(
+            report["parent_shape_trace"]["ink_gray_balance"]["parent_shape_candidate_id"],
+            "shape-top-01",
+        )
+        self.assertTrue(
+            report["parent_shape_trace"]["ink_gray_balance"]["parent_shape_stage_passed"]
+        )
+        self.assertTrue(
+            report["parent_shape_trace"]["ink_gray_balance"]["candidate_parent_trace_complete"]
+        )
+        self.assertEqual(
+            report["stages"][0]["parent_shape_candidate_id"],
+            "shape-top-01",
+        )
 
 
 if __name__ == "__main__":
