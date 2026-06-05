@@ -214,8 +214,8 @@
 - [x] 字体没过时不能调 blur；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 - [x] 粗细没过时不能先清灰边；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise` 验证笔画体量失败时 `mask_threshold_delta`/background cleanup 补丁被拒绝。
 - [x] 灰边过多时不能继续加 photo_noise 制造灰雾；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_ink_gray_stage_rejects_photo_noise_as_primary_fix` 验证 `ink_gray_balance` 阻塞时 `photo_noise_delta` 被拒绝。
-- [ ] 不能把某张图的左倾/右倾写成通用规则；验证方式是代码搜索禁止具体图片/文字特例。
-- [ ] 不能为单个字写特殊规则；验证方式是代码和 prompt 中无具体人名、具体目标字调参规则。
+- [x] 不能把某张图的左倾/右倾写成通用规则；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_no_hardcoded_special_cases.py::NoHardcodedSpecialCasesTest.test_runtime_code_and_prompts_do_not_encode_specific_names_images_or_target_char_rules` 验证 runtime code 和 packaged prompts 不含具体图片号、`本图`/`这个字` 或目标字符左右倾特例。
+- [x] 不能为单个字写特殊规则；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_no_hardcoded_special_cases.py::NoHardcodedSpecialCasesTest.test_runtime_code_and_prompts_do_not_encode_specific_names_images_or_target_char_rules` 验证 runtime code 和 packaged prompts 不含具体人名或目标字调参规则。
 - [ ] 不能用更多迭代次数替代阶段判定；验证方式是 max rounds 增加前必须有 stage-specific new candidate direction。
 - [ ] 不允许“先交付，再靠用户肉眼指出问题”作为成功标准；验证方式是 deliver 需要全部本地 stage 和最终视觉验收通过。
 
