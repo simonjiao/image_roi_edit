@@ -101,6 +101,39 @@ INK_GRAY_GRID_BLOCKED_DELTA_KEYS = frozenset(
 INK_GRAY_GRID_TOP_LIMIT = 16
 INK_GRAY_GRID_BUDGET_RANGE = (100, 800)
 
+PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS = frozenset(
+    {
+        "blur",
+        "photo_warp",
+        "edge_breakup",
+        "photo_noise",
+        "jpeg_quality",
+    }
+)
+PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS = frozenset(
+    {
+        "font_name",
+        "font_path",
+        "font_size",
+        "opacity",
+        "stroke_opacity",
+        "ink_gain",
+        "alpha_contrast",
+        "core_ink_gain",
+        "core_darken_strength",
+        "core_darken_threshold",
+        "core_darken_target_gray",
+        "text_dx",
+        "text_dy",
+        "char_offsets",
+        "mask_threshold",
+        "mask_dilate_iterations",
+        "inpaint_radius",
+    }
+)
+PHOTO_TEXTURE_GRID_TOP_LIMIT = 6
+PHOTO_TEXTURE_GRID_BUDGET_RANGE = (30, 200)
+
 
 @dataclass(frozen=True)
 class ShapeCandidateGrid:
@@ -110,6 +143,12 @@ class ShapeCandidateGrid:
 
 @dataclass(frozen=True)
 class InkGrayCandidateGrid:
+    candidates: list[CandidateParams]
+    report: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PhotoTextureCandidateGrid:
     candidates: list[CandidateParams]
     report: dict[str, Any]
 
@@ -1005,6 +1044,165 @@ def ink_gray_candidate_grid(
             "issue_flags": ink_gray_issue_flags(report),
             "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
             "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
+            "candidate_count": len(candidates),
+            "candidate_delta_audit": candidate_records,
+            "violations": violations,
+        },
+    )
+
+
+def report_blocks_photo_texture(report: dict[str, Any] | None) -> bool:
+    if not isinstance(report, dict):
+        return False
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    return stage_gate.get("blocking_stage") == "photo_texture"
+
+
+def photo_texture_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in stage_issues(report, "photo_texture")
+        if isinstance(issue, dict)
+    }
+    return {
+        "too_sharp": "photo_texture_too_sharp" in issue_types,
+        "too_clean": "photo_texture_too_clean" in issue_types,
+        "too_blurry": "photo_texture_too_blurry" in issue_types,
+        "edge_breakup_missing": "photo_texture_edge_breakup_missing" in issue_types,
+        "not_applied": "photo_texture_not_applied" in issue_types,
+    }
+
+
+def _jpeg_axis(base: int, deltas: tuple[int, ...], *, target_len: int) -> tuple[int, ...]:
+    start = int(base or 94)
+    return _int_axis(start, deltas, low=35, high=99, target_len=target_len)
+
+
+def photo_texture_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
+    flags = photo_texture_issue_flags(report)
+    if flags["too_blurry"]:
+        blur_deltas = (0.0, -0.06, -0.10)
+        warp_deltas = (0.0, -0.02)
+        breakup_deltas = (0.0, -0.004, 0.004)
+        noise_deltas = (0.0, -0.008, -0.014)
+        jpeg_deltas = (0, 6)
+    else:
+        blur_deltas = (0.0, 0.04, 0.08)
+        warp_deltas = (0.0, 0.02)
+        breakup_deltas = (0.0, 0.006, 0.012)
+        noise_deltas = (0.0, 0.014, 0.024)
+        jpeg_deltas = (0, -6)
+        if flags["edge_breakup_missing"] or flags["not_applied"]:
+            breakup_deltas = (0.006, 0.012, 0.018)
+        if flags["too_clean"] or flags["not_applied"]:
+            noise_deltas = (0.012, 0.020, 0.030)
+
+    return {
+        "blur": _float_axis(params.blur, blur_deltas, low=0.0, high=2.0, target_len=3),
+        "photo_warp": _float_axis(params.photo_warp, warp_deltas, low=0.0, high=1.0, target_len=2),
+        "edge_breakup": _float_axis(params.edge_breakup, breakup_deltas, low=0.0, high=0.2, target_len=3),
+        "photo_noise": _float_axis(params.photo_noise, noise_deltas, low=0.0, high=0.35, target_len=3),
+        "jpeg_quality": _jpeg_axis(params.jpeg_quality, jpeg_deltas, target_len=2),
+    }
+
+
+def photo_texture_candidate_grid(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+    *,
+    limit: int = PHOTO_TEXTURE_GRID_TOP_LIMIT,
+) -> PhotoTextureCandidateGrid:
+    if not report_blocks_photo_texture(report):
+        return PhotoTextureCandidateGrid(
+            candidates=[],
+            report={
+                "enabled": False,
+                "reason": "photo_texture_not_blocking",
+                "stage_id": "photo_texture",
+                "candidate_count": 0,
+            },
+        )
+
+    axes = photo_texture_axes(params, report)
+    blur_values = axes["blur"]
+    warp_values = axes["photo_warp"]
+    breakup_values = axes["edge_breakup"]
+    noise_values = axes["photo_noise"]
+    jpeg_values = axes["jpeg_quality"]
+    raw_budget = (
+        len(blur_values)
+        * len(warp_values)
+        * len(breakup_values)
+        * len(noise_values)
+        * len(jpeg_values)
+    )
+
+    variants: list[CandidateParams] = []
+    for blur in blur_values:
+        for photo_warp in warp_values:
+            for edge_breakup in breakup_values:
+                for photo_noise in noise_values:
+                    for jpeg_quality in jpeg_values:
+                        variants.append(
+                            mutate_params(
+                                params,
+                                blur=blur,
+                                photo_warp=photo_warp,
+                                edge_breakup=edge_breakup,
+                                photo_noise=photo_noise,
+                                jpeg_quality=jpeg_quality,
+                            )
+                        )
+    retained_limit = min(limit, PHOTO_TEXTURE_GRID_TOP_LIMIT)
+    candidates = dedupe_params(variants, retained_limit)
+    candidate_records: list[dict[str, Any]] = []
+    violations: list[dict[str, Any]] = []
+    for candidate in candidates:
+        delta_keys = params_delta_keys(params, candidate)
+        blocked_delta_keys = sorted(delta_keys & PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS)
+        undeclared_delta_keys = sorted(delta_keys - PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS)
+        record = {
+            "candidate_id": candidate.candidate_id,
+            "parent_candidate_id": params.candidate_id,
+            "delta_keys": sorted(delta_keys),
+            "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
+            "blocked_delta_keys": blocked_delta_keys,
+            "undeclared_delta_keys": undeclared_delta_keys,
+        }
+        candidate_records.append(record)
+        if blocked_delta_keys or undeclared_delta_keys:
+            violations.append(record)
+
+    budget_min, budget_max = PHOTO_TEXTURE_GRID_BUDGET_RANGE
+    return PhotoTextureCandidateGrid(
+        candidates=candidates,
+        report={
+            "enabled": True,
+            "stage_id": "photo_texture",
+            "optimization_step": "photo_texture",
+            "parent_candidate_id": params.candidate_id,
+            "budget": {
+                "raw_candidate_budget": raw_budget,
+                "budget_min": budget_min,
+                "budget_max": budget_max,
+                "within_budget": budget_min <= raw_budget <= budget_max,
+                "retained_top_limit": retained_limit,
+                "retained_count": len(candidates),
+                "pruned_count": max(0, raw_budget - len(candidates)),
+            },
+            "axes": {
+                "blur_count": len(blur_values),
+                "photo_warp_count": len(warp_values),
+                "edge_breakup_count": len(breakup_values),
+                "photo_noise_count": len(noise_values),
+                "jpeg_quality_count": len(jpeg_values),
+                "ranking_method": "local_photo_texture_issue_axis_priority",
+            },
+            "issue_flags": photo_texture_issue_flags(report),
+            "allowed_delta_keys": sorted(PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS),
+            "blocked_delta_keys": sorted(PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS),
             "candidate_count": len(candidates),
             "candidate_delta_audit": candidate_records,
             "violations": violations,

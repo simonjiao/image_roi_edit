@@ -65,6 +65,7 @@ from roi_image_edit.revision_solver import (
     final_acceptance_delivers,
     final_font_revision_candidates,
     ink_gray_candidate_grid,
+    photo_texture_candidate_grid,
     report_blocks_text_shape,
     revision_selection_score,
     text_shape_reset_candidate_grid,
@@ -493,6 +494,12 @@ def run_region_vision_checks(
                 limit=16,
             )
             ink_gray_params = ink_candidate_grid.candidates
+            photo_candidate_grid = photo_texture_candidate_grid(
+                current_params,
+                current_report,
+                limit=6,
+            )
+            photo_texture_params = photo_candidate_grid.candidates
             round_record: dict[str, Any] = {
                 "round": round_idx,
                 "basis_candidate_id": current_params.candidate_id,
@@ -501,6 +508,7 @@ def run_region_vision_checks(
                 "patch_count": len(round_patches),
                 "shape_reset_count": len(shape_reset_params),
                 "ink_gray_count": len(ink_gray_params),
+                "photo_texture_count": len(photo_texture_params),
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -513,6 +521,7 @@ def run_region_vision_checks(
                 },
                 "shape_candidate_grid": shape_candidate_grid.report,
                 "ink_gray_candidate_grid": ink_candidate_grid.report,
+                "photo_texture_candidate_grid": photo_candidate_grid.report,
                 "stage_filter_report": local_stage_filter_report,
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
@@ -529,6 +538,7 @@ def run_region_vision_checks(
                         "patch_count": len(round_patches),
                         "shape_reset_count": len(shape_reset_params),
                         "ink_gray_count": len(ink_gray_params),
+                        "photo_texture_count": len(photo_texture_params),
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -537,7 +547,7 @@ def run_region_vision_checks(
                         **stage_progress_fields(current_report),
                     },
                 )
-            if not round_patches and not shape_reset_params and not ink_gray_params:
+            if not round_patches and not shape_reset_params and not ink_gray_params and not photo_texture_params:
                 round_record["stop_reason"] = "no_revision_candidates"
                 revision_rounds.append(round_record)
                 break
@@ -559,6 +569,21 @@ def run_region_vision_checks(
                         {
                             "applied": False,
                             "reason": "ink_gray_grid",
+                            "changes": {},
+                            "parent_candidate_id": current_params.candidate_id,
+                        },
+                    )
+                )
+            for photo_idx, photo_params in enumerate(photo_texture_params, start=1):
+                candidate_jobs.append(
+                    (
+                        "photo_texture_grid",
+                        photo_idx,
+                        None,
+                        photo_params,
+                        {
+                            "applied": False,
+                            "reason": "photo_texture_grid",
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
                         },
@@ -587,6 +612,8 @@ def run_region_vision_checks(
                     suffix = "s"
                 elif candidate_origin == "ink_gray_grid":
                     suffix = "g"
+                elif candidate_origin == "photo_texture_grid":
+                    suffix = "p"
                 patched_params = mutate_params(
                     patched_params,
                     candidate_id=f"{current_params.candidate_id}_{suffix}{round_idx:02d}_{candidate_idx:02d}",
@@ -694,7 +721,7 @@ def run_region_vision_checks(
                     attempt_record["optimization_policy"] = optimization_policy
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "shape_reset"
-                else:
+                elif candidate_origin == "ink_gray_grid":
                     optimization_policy = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
                         "optimization_steps": ["ink_gray_balance"],
@@ -711,6 +738,34 @@ def run_region_vision_checks(
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "ink_gray_balance"
                     attempt_record["parent_shape_candidate_id"] = current_params.candidate_id
+                elif candidate_origin == "photo_texture_grid":
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": ["photo_texture"],
+                        "primary_optimization_steps": ["photo_texture"],
+                        "optimization_step": "photo_texture",
+                        "allowed": current_blocking_stage == "photo_texture",
+                        "rejection_reason": (
+                            None
+                            if current_blocking_stage == "photo_texture"
+                            else "photo texture grid is only generated for photo_texture"
+                        ),
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "photo_texture"
+                else:
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": [],
+                        "primary_optimization_steps": [],
+                        "optimization_step": candidate_origin,
+                        "allowed": False,
+                        "rejection_reason": f"unknown revision candidate origin: {candidate_origin}",
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = []
+                    attempt_record["optimization_step"] = candidate_origin
                 if not patched_strict:
                     attempt_record["strict_gate"] = patched_report.get("strict_gate")
                 if not report_stage_pass(patched_report):
