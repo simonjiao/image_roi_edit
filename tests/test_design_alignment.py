@@ -48,7 +48,7 @@ class DesignAlignmentTest(unittest.TestCase):
     def test_checklist_keeps_design_sync_as_a_closeable_goal(self) -> None:
         checklist = (ROOT / "docs" / "local_flow_hardening_checklist.md").read_text(encoding="utf-8")
         self.assertIn("staged_roi_pipeline_design.md", checklist)
-        self.assertIn("旧 7 阶段设计必须说明与当前 5 stage 结构的关系", checklist)
+        self.assertIn("旧 7 类诊断关注点必须说明与当前 5 stage 结构的关系", checklist)
 
 
 if __name__ == "__main__":

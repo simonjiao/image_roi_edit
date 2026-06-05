@@ -45,7 +45,7 @@
 - [ ] 增加阶段内 Optimization Step 验收：每个候选报告必须区分 `stage_id` 和 `optimization_step`，不能把 Optimization Step 当成新 stage；验证方式是 `result.json` 中同时存在两类字段。
 - [ ] 增加视觉终检边界验收：视觉模型只能看本地 top candidates；验证方式是视觉请求记录中 `candidate_count <= vision_candidate_limit` 且包含本地 `stage_context`。
 
-### B. 旧 7 类阶段术语映射到当前 5 个 stage
+### B. 旧 7 类诊断关注点映射到当前 5 个 stage
 
 - [ ] `slot_alignment` 必须映射到 `hard_boundary` 的 ROI/slot 安全条件和 `text_shape.slot_alignment_search`；验证方式是 stage evidence 记录旧名、当前 stage、Optimization Step 和报告字段。
 - [ ] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；验证方式是字体失败样例不会进入 `ink_gray_balance` 主调参。
@@ -54,7 +54,7 @@
 - [ ] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；验证方式是黑芯过量和核心不足分别生成相反方向候选。
 - [ ] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；验证方式是灰边过量不会先破坏已通过的 stroke body。
 - [ ] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；验证方式是 `photo_texture` 只在形态和黑灰通过后成为 blocking stage。
-- [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类阶段当成本地 gate。
+- [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类诊断关注点当成本地 gate。
 
 ### C. 全局硬约束
 
@@ -222,7 +222,7 @@
 ### S. 设计文档状态同步
 
 - [ ] `text_shape_joint_optimization_design.md` 的“现有流程差距”表必须同步当前状态：已实现项标记为已覆盖，未实现项链接到本 checklist 对应条目。
-- [x] `staged_roi_pipeline_design.md` 的旧 7 阶段设计必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_design_alignment.py::DesignAlignmentTest.test_staged_design_declares_five_stage_gate_and_old_concern_mapping`。
+- [x] `staged_roi_pipeline_design.md` 的旧 7 类诊断关注点必须说明与当前 5 stage 结构的关系，避免两个阶段体系并存；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_design_alignment.py::DesignAlignmentTest.test_staged_design_declares_five_stage_gate_and_old_concern_mapping`。
 - [ ] README 中不能宣称本地流程完善完成，除非本节所有 `[ ]` 关闭。
 - [ ] 提交或 PR 说明必须引用关闭的 checklist 项，不能只写“优化流程”。
 
