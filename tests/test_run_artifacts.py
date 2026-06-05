@@ -65,6 +65,33 @@ class RunArtifactsTest(unittest.TestCase):
                     "accepted": False,
                     "sourceDataUrl": "data:image/png;base64,source",
                     "resultDataUrl": "data:image/png;base64,result",
+                    "autoRoiEvidence": {
+                        "region_count": 1,
+                        "all_have_search_roi": True,
+                        "all_have_edit_roi": True,
+                        "regions": [
+                            {
+                                "field_key": "name",
+                                "search_roi": [2, 4, 46, 26],
+                                "edit_roi": [10, 8, 32, 22],
+                            }
+                        ],
+                    },
+                    "stage_evidence": {
+                        "auto_roi": {
+                            "region_count": 1,
+                            "overlay_path": "output/web/run1/sample_auto_roi_overlay.png",
+                            "regions": [
+                                {
+                                    "search_roi": [2, 4, 46, 26],
+                                    "edit_roi": [10, 8, 32, 22],
+                                }
+                            ],
+                        }
+                    },
+                    "artifacts": {
+                        "auto_roi_overlay": "output/web/run1/sample_auto_roi_overlay.png",
+                    },
                     "candidates": [
                         {
                             "id": "c1",
@@ -107,6 +134,15 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertNotIn("resultDataUrl", image)
         self.assertNotIn("dataUrl", image["candidates"][0])
         self.assertEqual(image["candidates"][0]["stage_context"]["blocking_stage"], "text_shape")
+        self.assertEqual(image["autoRoiEvidence"]["regions"][0]["search_roi"], [2, 4, 46, 26])
+        self.assertEqual(image["autoRoiEvidence"]["regions"][0]["edit_roi"], [10, 8, 32, 22])
+        self.assertEqual(image["stage_evidence"]["auto_roi"]["regions"][0]["search_roi"], [2, 4, 46, 26])
+        self.assertEqual(image["stage_evidence"]["auto_roi"]["regions"][0]["edit_roi"], [10, 8, 32, 22])
+        self.assertEqual(
+            image["stage_evidence"]["auto_roi"]["overlay_path"],
+            "output/web/run1/sample_auto_roi_overlay.png",
+        )
+        self.assertEqual(image["artifacts"]["auto_roi_overlay"], "output/web/run1/sample_auto_roi_overlay.png")
         self.assertEqual(image["regions"][0]["summary"]["trace"]["final_blocking_stage"], "text_shape")
         self.assertEqual(
             image["regions"][0]["summary"]["vision"]["revision_rounds"][0]["stage_id"],

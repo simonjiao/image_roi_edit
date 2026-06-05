@@ -34,6 +34,7 @@ from roi_image_edit.iterative_pipeline import (
     write_json,
 )
 from roi_image_edit.prompt_assets import load_prompt, missing_prompt_names
+from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_auto_roi_overlay
 
 from roi_image_edit.local_validation import (
     apply_local_acceptance_gate,
@@ -1875,6 +1876,15 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                 raise ValueError("no valid rectangles")
 
             safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(filename).stem)[:80] or image_id or "image"
+            auto_roi_evidence = auto_roi_evidence_payload(regions)
+            auto_roi_overlay_path: Path | None = None
+            if auto_roi_evidence["region_count"]:
+                auto_roi_overlay_path = run_dir / f"{safe_stem}_auto_roi_overlay.png"
+                save_auto_roi_overlay(original_image, regions, auto_roi_overlay_path)
+            auto_roi_stage_evidence = {
+                **auto_roi_evidence,
+                "overlay_path": str(auto_roi_overlay_path) if auto_roi_overlay_path else None,
+            }
             original_path = run_dir / f"{safe_stem}_original.png"
             final_path = run_dir / f"{safe_stem}_final.png"
             applied_path = run_dir / f"{safe_stem}_applied.png"
@@ -1894,11 +1904,16 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "resultDataUrl": image_to_data_url(result_image),
                     "candidates": candidates[:5],
                     "orientation": orientation_summary,
+                    "autoRoiEvidence": auto_roi_evidence,
+                    "stage_evidence": {
+                        "auto_roi": auto_roi_stage_evidence,
+                    },
                     "regions": region_results,
                     "artifacts": {
                         "original": str(original_path),
                         "final": str(final_path),
                         "applied": str(applied_path),
+                        "auto_roi_overlay": str(auto_roi_overlay_path) if auto_roi_overlay_path else None,
                         "final_is_rejected_candidate": not image_accepted,
                     },
                 }

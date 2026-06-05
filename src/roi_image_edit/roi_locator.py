@@ -113,6 +113,9 @@ def auto_orient_for_instruction(
             )
             continue
         auto_score = min(float(region.get("_autoScore", 0.0)) for region in regions)
+        region_evidence = [auto_region_evidence(region) for region in regions]
+        target_field_quality = target_field_quality_summary(region_evidence)
+        old_value_quality = old_value_location_quality_summary(region_evidence)
         selection_score = auto_score - float(orientation_quality.get("score") or 0.0)
         attempt = {
             "orientation": orientation,
@@ -122,12 +125,23 @@ def auto_orient_for_instruction(
             "direction_score": orientation_quality.get("score"),
             "selection_score": round(float(selection_score), 3),
             "direction_quality": orientation_quality,
+            "target_field_quality": target_field_quality,
+            "old_value_location_quality": old_value_quality,
+            "selection_basis": {
+                "uses_page_direction_quality": True,
+                "uses_target_field_quality": True,
+                "uses_old_value_location_quality": True,
+                "score_formula": "selection_score = auto_roi_score - page_direction_score",
+            },
             "regions": [
                 {
                     "id": str(region.get("id") or ""),
                     "rect": region.get("rect") or {},
                     "auto_score": region.get("_autoScore"),
                     "target_roi": region.get("_autoTargetRoi"),
+                    "search_roi": region.get("_autoSearchRoi"),
+                    "edit_roi": region.get("_autoEditRoi"),
+                    "evidence": auto_region_evidence(region),
                 }
                 for region in regions
             ],
@@ -163,11 +177,83 @@ def auto_orient_for_instruction(
             "selection_margin": selection_margin,
             "direction_margin": direction_margin,
             "selected_attempt": selected_attempt,
+            "final_direction_reason": (
+                "selected lowest combined score using page direction quality, "
+                "target field quality, and old value location quality"
+            ),
         }
 
     if first_error is not None:
         raise first_error
     raise ValueError("无法自动定位旧文字。")
+
+
+def auto_region_evidence(region: dict[str, Any]) -> dict[str, Any]:
+    rect = region.get("rect") if isinstance(region, dict) else None
+    edit_roi = region.get("_autoEditRoi") if isinstance(region, dict) else None
+    if edit_roi is None and isinstance(rect, dict):
+        try:
+            x = int(round(float(rect.get("x", 0))))
+            y = int(round(float(rect.get("y", 0))))
+            w = int(round(float(rect.get("w", 0))))
+            h = int(round(float(rect.get("h", 0))))
+            edit_roi = [x, y, x + w, y + h]
+        except (TypeError, ValueError):
+            edit_roi = None
+    slot_report = region.get("_autoSlotQualityReport") if isinstance(region, dict) else None
+    if not isinstance(slot_report, dict):
+        slot_report = {}
+    source_text_value = str(region.get("sourceText") or "") if isinstance(region, dict) else ""
+    target_text_value = str(region.get("targetText") or "") if isinstance(region, dict) else ""
+    return {
+        "field_key": region.get("_autoFieldKey") if isinstance(region, dict) else None,
+        "search_roi": region.get("_autoSearchRoi") if isinstance(region, dict) else None,
+        "edit_roi": edit_roi,
+        "target_roi": region.get("_autoTargetRoi") if isinstance(region, dict) else None,
+        "source_text": source_text_value,
+        "target_text": target_text_value,
+        "auto_score": region.get("_autoScore") if isinstance(region, dict) else None,
+        "slot_boxes": region.get("_autoSlotBoxes") if isinstance(region, dict) else [],
+        "protected_boxes": region.get("_autoProtectedBoxes") if isinstance(region, dict) else [],
+        "slot_quality_pass": slot_report.get("pass"),
+        "slot_quality_issue_count": len(slot_report.get("issues") or []),
+        "source_count": slot_report.get("source_count"),
+        "target_count": slot_report.get("target_count"),
+        "actual_slot_count": slot_report.get("actual_count"),
+        "length_change": slot_report.get("length_change"),
+    }
+
+
+def target_field_quality_summary(region_evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    valid = [item for item in region_evidence if item.get("search_roi") and item.get("edit_roi")]
+    scores = [
+        float(item["auto_score"])
+        for item in valid
+        if isinstance(item.get("auto_score"), (int, float))
+    ]
+    return {
+        "available": bool(valid),
+        "region_count": len(valid),
+        "field_keys": sorted({str(item.get("field_key")) for item in valid if item.get("field_key")}),
+        "best_auto_score": round(min(scores), 3) if scores else None,
+        "has_search_roi": all(bool(item.get("search_roi")) for item in valid) if valid else False,
+        "has_edit_roi": all(bool(item.get("edit_roi")) for item in valid) if valid else False,
+    }
+
+
+def old_value_location_quality_summary(region_evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    valid = [item for item in region_evidence if item.get("source_text")]
+    slot_pass_values = [item.get("slot_quality_pass") for item in valid]
+    return {
+        "available": bool(valid),
+        "source_texts": [str(item.get("source_text")) for item in valid],
+        "all_slot_quality_pass": all(value is True for value in slot_pass_values) if slot_pass_values else False,
+        "slot_quality_pass_values": slot_pass_values,
+        "slot_counts": [item.get("actual_slot_count") for item in valid],
+        "source_counts": [item.get("source_count") for item in valid],
+        "target_counts": [item.get("target_count") for item in valid],
+        "length_changes": [item.get("length_change") for item in valid],
+    }
 
 
 def parse_instruction(text: str) -> tuple[str, str]:
@@ -2227,6 +2313,8 @@ def auto_select_regions_for_instruction(
         field_key=field_key,
     )
     x1, y1, x2, y2 = roi
+    slot_boxes = [text_run_box(slot) for slot in selected_plan.slot_boxes]
+    protected_boxes = [list(box) for box in selected_plan.protected_boxes]
     return [
         {
             "id": f"auto_{field_key or 'field'}",
@@ -2235,8 +2323,13 @@ def auto_select_regions_for_instruction(
             "sourceText": selected_source_text,
             "targetText": target_text,
             "_autoScore": round(float(selected_score), 3),
+            "_autoFieldKey": field_key,
             "_autoTargetRoi": list(selected_plan.target_roi),
             "_autoSearchRoi": list(search_roi),
+            "_autoEditRoi": [x1, y1, x2, y2],
+            "_autoSlotBoxes": [list(box) for box in slot_boxes],
+            "_autoProtectedBoxes": protected_boxes,
+            "_autoSlotQualityReport": selected_plan.slot_quality_report,
         }
     ]
 
