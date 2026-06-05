@@ -30,6 +30,7 @@ from roi_image_edit.iterative_pipeline import (
     strict_gate_issues,
     strict_visual_metrics,
 )
+from roi_image_edit.placement_strategy import placement_strategy_report
 from roi_image_edit.roi_locator import (
     clamp_box_to_container,
     protected_box_overlaps_row,
@@ -2074,77 +2075,6 @@ def shape_change_report(
         "per_char": per_char,
         "changed_chars": [item for item in per_char if item.get("source_char") != item.get("target_char")],
         "issues": issues,
-    }
-
-
-def placement_strategy_report(
-    plan: RenderPlan,
-    alignment_metrics: dict[str, Any],
-    alignment_issues: list[dict[str, Any]],
-    *,
-    max_char_center_dx: float,
-    max_char_center_dy: float,
-    max_char_center_distance_delta: float,
-    max_replacement_center_y_range: float,
-) -> dict[str, Any]:
-    source_count = len(text_chars(plan.source_text or ""))
-    target_count = len(text_chars(plan.target_text))
-    if source_count and target_count > source_count:
-        length_change = "longer"
-    elif source_count and target_count < source_count:
-        length_change = "shorter"
-    elif source_count and target_count:
-        length_change = "same"
-    else:
-        length_change = "unknown"
-    slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
-    per_char = alignment_metrics.get("per_char") if isinstance(alignment_metrics, dict) else []
-    if not isinstance(per_char, list):
-        per_char = []
-    center_dx_values = [
-        abs(float(item.get("center_dx")))
-        for item in per_char
-        if isinstance(item, dict) and item.get("center_dx") is not None
-    ]
-    center_dy_values = [
-        abs(float(item.get("center_dy")))
-        for item in per_char
-        if isinstance(item, dict) and item.get("center_dy") is not None
-    ]
-    slot_quality_pass = slot_report.get("pass")
-    return {
-        "strategy": plan.placement_strategy,
-        "reason": plan.placement_strategy_reason,
-        "pass": not alignment_issues and slot_quality_pass is not False,
-        "conditions": {
-            "source_count": source_count,
-            "target_count": target_count,
-            "length_change": length_change,
-            "draw_mode": plan.draw_mode,
-            "is_cjk": is_mostly_cjk((plan.source_text or "") + plan.target_text),
-            "slot_count": len(plan.slot_boxes),
-            "slot_quality_pass": slot_quality_pass,
-        },
-        "constraints": {
-            "max_char_center_dx": max_char_center_dx,
-            "max_char_center_dy": max_char_center_dy,
-            "max_char_center_distance_delta": max_char_center_distance_delta,
-            "max_replacement_center_y_range": max_replacement_center_y_range,
-        },
-        "actual_errors": {
-            "alignment_metrics_enabled": bool(alignment_metrics.get("enabled"))
-            if isinstance(alignment_metrics, dict)
-            else False,
-            "max_abs_center_dx": round(max(center_dx_values), 3) if center_dx_values else None,
-            "max_abs_center_dy": round(max(center_dy_values), 3) if center_dy_values else None,
-            "center_distance_delta": alignment_metrics.get("center_distance_delta")
-            if isinstance(alignment_metrics, dict)
-            else None,
-            "candidate_center_y_range": alignment_metrics.get("candidate_center_y_range")
-            if isinstance(alignment_metrics, dict)
-            else None,
-        },
-        "issues": alignment_issues,
     }
 
 

@@ -92,12 +92,12 @@
 ### F. 放置策略选择
 
 - [x] `placement_strategy` 和选择原因必须有 schema 和多场景 fixture 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_strategy_reason_is_declared_for_core_scenarios` 覆盖同字数 CJK、字数增加、字数减少、日期/年龄类非 CJK、手动 ROI 无旧值策略和 reason，`test_placement_report_schema_records_conditions_constraints_errors_and_pass` 验证 report schema 记录条件、约束、实际误差和 pass。
-- [ ] 同字数 CJK 且字形变化小：必须验证 `top_left_anchor` 或等价策略，约束中心误差、字距、基线；验证方式是同字数小变化 fixture。
-- [ ] 同字数 CJK 且字形变化大：必须验证 `center_primary`，约束左边界、基线、字距；验证方式是同字数大变化 fixture。
-- [ ] 字数减少：目标字按旧值整体跨度排布，并清理多余旧槽位；验证方式是 3 字变 2 字 fixture。
-- [ ] 字数增加：左边界锚定、向右扩展，且不覆盖 protected text；验证方式是 2 字变 3 字 fixture。
-- [ ] 数字、日期、编号：左对齐和基线优先，保持数字节奏和字段宽度；验证方式是日期和年龄 fixture。
-- [ ] 手动 ROI 且无旧值：使用保守居中或左对齐 fallback，并降低自动验收置信；验证方式是手动画框无旧值 fixture。
+- [x] 同字数 CJK 且字形变化小：必须验证 `top_left_anchor` 或等价策略，约束中心误差、字距、基线；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_same_length_small_cjk_uses_top_left_with_center_spacing_and_baseline_constraints` 使用同字数小变化 fixture，验证 `shape_change_large=false` 时选择 `top_left_anchor`，并记录 `max_char_center_dx`、`max_char_spacing_delta`、`baseline_dy` 和 `char_spacing_delta`。
+- [x] 同字数 CJK 且字形变化大：必须验证 `center_primary`，约束左边界、基线、字距；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_same_length_large_cjk_uses_center_with_left_baseline_and_spacing_constraints` 使用同字数大变化 fixture，验证 `shape_change_large=true` 时选择 `center_primary`，并记录 `left_boundary_dx`、`baseline_dy` 和 `char_spacing_delta`。
+- [x] 字数减少：目标字按旧值整体跨度排布，并清理多余旧槽位；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_shorter_replacement_uses_old_span_and_requires_extra_slot_cleanup` 使用 3 字变 2 字 fixture，验证 `left_anchor_span`、`span_width_delta`、`char_spacing_delta`、`baseline_dy` 和 `cleanup_extra_source_slots_required`。
+- [x] 字数增加：左边界锚定、向右扩展，且不覆盖 protected text；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_longer_replacement_left_anchors_extends_right_and_guards_protected_text` 使用 2 字变 3 字 fixture，验证 `left_anchor_span`、`left_boundary_dx`、`span_width_delta`、`protected_text_overlap_pixels=0` 和 `right_boundary_pass=true`。
+- [x] 数字、日期、编号：左对齐和基线优先，保持数字节奏和字段宽度；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_numeric_date_and_age_use_left_baseline_rhythm_and_field_width_constraints` 覆盖日期和年龄 fixture，验证 `baseline_numeric`、`left_boundary_dx`、`baseline_dy`、`rhythm_delta` 和 `field_width_delta`。
+- [x] 手动 ROI 且无旧值：使用保守居中或左对齐 fallback，并降低自动验收置信；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_manual_roi_without_source_uses_conservative_fallback_and_reduced_acceptance_confidence` 验证 `manual_fallback`、`manual_roi_conservative`、允许 center/left 对齐，并记录 `auto_acceptance_confidence=reduced` 和 `auto_acceptance_confidence_cap=0.45`。
 - [x] 每个放置策略必须在 `result.json` 写入使用条件、关键约束、实际误差和是否通过；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_placement_report_schema_records_conditions_constraints_errors_and_pass` 验证 `placement_strategy_report` schema，`test_result_audit_preserves_placement_strategy_report` 验证 result audit 保留 strategy、reason、conditions、constraints、actual_errors 和 pass。
 
 ### G. 单字形态变化检测

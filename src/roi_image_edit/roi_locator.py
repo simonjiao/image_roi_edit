@@ -18,6 +18,7 @@ from roi_image_edit.iterative_pipeline import (
     is_mostly_cjk,
     split_run_by_projection,
 )
+from roi_image_edit.placement_strategy import choose_placement_strategy
 from roi_image_edit.slot_quality import slot_quality_report
 
 
@@ -2439,37 +2440,6 @@ def slots_for_region(
     if runs:
         return tuple(runs)
     return synthesize_slots(roi, len(basis_chars))
-
-
-def choose_placement_strategy(
-    *,
-    source_text: str,
-    target_text: str,
-    slots: tuple[TextRun, ...],
-    slot_report: dict[str, Any],
-    draw_mode: str,
-) -> tuple[str, str]:
-    source_count = len(text_chars(source_text))
-    target_count = len(text_chars(target_text))
-    if not source_count:
-        return "manual_fallback", "source_text_missing"
-    if draw_mode == "center" or target_count > source_count:
-        return "left_anchor_span", "target_text_longer_than_source"
-    if target_count < source_count:
-        return "left_anchor_span", "target_text_shorter_than_source"
-    if not is_mostly_cjk(source_text or target_text):
-        return "baseline_numeric", "non_cjk_value_uses_baseline_priority"
-    if not slot_report.get("pass"):
-        return "top_left_anchor", "slot_quality_failed_keeps_original_anchor_for_rejection"
-    if source_text != target_text:
-        return "center_primary", "same_length_cjk_changed_chars_use_slot_center"
-    heights = [max(1, slot.y2 - slot.y1) for slot in slots]
-    widths = [max(1, slot.x2 - slot.x1) for slot in slots]
-    if heights and max(heights) - min(heights) > max(2, float(np.median(heights)) * 0.18):
-        return "center_primary", "same_length_cjk_slot_height_variation"
-    if widths and max(widths) - min(widths) > max(3, float(np.median(widths)) * 0.22):
-        return "center_primary", "same_length_cjk_slot_width_variation"
-    return "top_left_anchor", "same_length_cjk_compact_slots"
 
 
 def build_region_plan(

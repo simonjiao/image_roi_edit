@@ -3,18 +3,76 @@ from __future__ import annotations
 import unittest
 
 from roi_image_edit.iterative_pipeline import RenderPlan, TextRun
-from roi_image_edit.local_validation import placement_strategy_report
+from roi_image_edit.placement_strategy import choose_placement_strategy, placement_strategy_report
 from roi_image_edit.run_artifacts import result_audit_payload
-from roi_image_edit.roi_locator import choose_placement_strategy
 
 
 def run(x1: int, y1: int = 2, x2: int | None = None, y2: int = 12) -> TextRun:
     return TextRun(x1=x1, y1=y1, x2=x2 if x2 is not None else x1 + 8, y2=y2, area=80)
 
 
+def plan_for(
+    *,
+    source: str,
+    target: str,
+    slots: tuple[TextRun, ...],
+    strategy: str,
+    reason: str,
+    slot_report: dict,
+    draw_mode: str = "auto",
+) -> RenderPlan:
+    return RenderPlan(
+        target_text=target,
+        source_text=source,
+        search_roi=(0, 0, 80, 24),
+        target_roi=(2, 2, 54, 16),
+        slot_boxes=slots,
+        protected_boxes=(),
+        source_reference_box=(2, 2, 54, 16),
+        style_reference_box=None,
+        style_reference_text=None,
+        draw_mode=draw_mode,
+        placement_strategy=strategy,
+        placement_strategy_reason=reason,
+        slot_quality_report=slot_report,
+    )
+
+
+def strategy_report(plan: RenderPlan, metrics: dict) -> dict:
+    return placement_strategy_report(
+        plan,
+        metrics,
+        [],
+        max_char_center_dx=2.0,
+        max_char_center_dy=2.5,
+        max_char_center_distance_delta=2.0,
+        max_replacement_center_y_range=2.0,
+    )
+
+
 class PlacementStrategyTest(unittest.TestCase):
     def test_strategy_reason_is_declared_for_core_scenarios(self) -> None:
         scenarios = [
+            {
+                "name": "same_length_cjk_small_shape_change",
+                "source": "日月",
+                "target": "曰朋",
+                "slots": (run(2), run(14)),
+                "slot_report": {"pass": True, "shape_change_report": {"shape_change_large": False}},
+                "draw_mode": "auto",
+                "strategy": "top_left_anchor",
+                "reason": "same_length_cjk_small_shape_change_uses_top_left_anchor",
+            },
+            {
+                "name": "same_length_cjk_large_shape_change",
+                "source": "赵芳",
+                "target": "陈慧",
+                "slots": (run(2), run(14)),
+                "slot_report": {"pass": True, "shape_change_report": {"shape_change_large": True}},
+                "draw_mode": "auto",
+                "strategy": "center_primary",
+                "reason": "same_length_cjk_large_shape_change_uses_slot_center",
+            },
             {
                 "name": "same_length_cjk_changed",
                 "source": "赵芳",
@@ -119,6 +177,223 @@ class PlacementStrategyTest(unittest.TestCase):
         self.assertEqual(report["constraints"]["max_char_center_dx"], 2.0)
         self.assertEqual(report["actual_errors"]["max_abs_center_dx"], 0.75)
         self.assertEqual(report["actual_errors"]["center_distance_delta"], 0.5)
+        self.assertEqual(report["strategy_contract"]["anchor_priority"], "slot_center")
+
+    def test_same_length_small_cjk_uses_top_left_with_center_spacing_and_baseline_constraints(self) -> None:
+        strategy, reason = choose_placement_strategy(
+            source_text="日月",
+            target_text="曰朋",
+            slots=(run(2), run(14)),
+            slot_report={"pass": True, "shape_change_report": {"shape_change_large": False}},
+            draw_mode="auto",
+        )
+        plan = plan_for(
+            source="日月",
+            target="曰朋",
+            slots=(run(2), run(14)),
+            strategy=strategy,
+            reason=reason,
+            slot_report={"pass": True, "shape_change_report": {"shape_change_large": False}},
+        )
+        report = strategy_report(
+            plan,
+            {
+                "enabled": True,
+                "per_char": [{"center_dx": 0.5, "center_dy": 0.25}, {"center_dx": -0.25, "center_dy": 0.5}],
+                "char_spacing_delta": 0.5,
+                "baseline_dy": 0.25,
+            },
+        )
+        self.assertEqual(report["strategy"], "top_left_anchor")
+        self.assertEqual(report["conditions"]["shape_change_large"], False)
+        self.assertEqual(report["strategy_contract"]["anchor_priority"], "top_left")
+        self.assertTrue(report["strategy_contract"]["baseline_checked"])
+        self.assertTrue(report["strategy_contract"]["char_spacing_checked"])
+        self.assertEqual(report["constraints"]["max_char_spacing_delta"], 2.0)
+        self.assertEqual(report["actual_errors"]["char_spacing_delta"], 0.5)
+        self.assertEqual(report["actual_errors"]["baseline_dy"], 0.25)
+        self.assertTrue(report["pass"])
+
+    def test_same_length_large_cjk_uses_center_with_left_baseline_and_spacing_constraints(self) -> None:
+        strategy, reason = choose_placement_strategy(
+            source_text="赵芳",
+            target_text="陈慧",
+            slots=(run(2), run(14)),
+            slot_report={"pass": True, "shape_change_report": {"shape_change_large": True}},
+            draw_mode="auto",
+        )
+        plan = plan_for(
+            source="赵芳",
+            target="陈慧",
+            slots=(run(2), run(14)),
+            strategy=strategy,
+            reason=reason,
+            slot_report={"pass": True, "shape_change_report": {"shape_change_large": True}},
+        )
+        report = strategy_report(
+            plan,
+            {
+                "enabled": True,
+                "per_char": [{"center_dx": 0.75, "center_dy": 0.5}, {"center_dx": -0.5, "center_dy": 0.25}],
+                "left_boundary_dx": 0.5,
+                "char_spacing_delta": 0.75,
+                "baseline_dy": 0.5,
+            },
+        )
+        self.assertEqual(report["strategy"], "center_primary")
+        self.assertEqual(report["conditions"]["shape_change_large"], True)
+        self.assertEqual(report["strategy_contract"]["anchor_priority"], "slot_center")
+        self.assertEqual(report["constraints"]["max_left_boundary_dx"], 2.0)
+        self.assertEqual(report["actual_errors"]["left_boundary_dx"], 0.5)
+        self.assertEqual(report["actual_errors"]["baseline_dy"], 0.5)
+        self.assertEqual(report["actual_errors"]["char_spacing_delta"], 0.75)
+        self.assertTrue(report["pass"])
+
+    def test_shorter_replacement_uses_old_span_and_requires_extra_slot_cleanup(self) -> None:
+        strategy, reason = choose_placement_strategy(
+            source_text="赵真真",
+            target_text="陈芸",
+            slots=(run(2), run(14), run(26)),
+            slot_report={
+                "pass": True,
+                "length_change_report": {"cleanup_mask_report": {"enabled": True}},
+            },
+            draw_mode="line_chars",
+        )
+        plan = plan_for(
+            source="赵真真",
+            target="陈芸",
+            slots=(run(2), run(14), run(26)),
+            strategy=strategy,
+            reason=reason,
+            slot_report={
+                "pass": True,
+                "length_change_report": {"cleanup_mask_report": {"enabled": True}},
+            },
+            draw_mode="line_chars",
+        )
+        report = strategy_report(
+            plan,
+            {
+                "enabled": True,
+                "left_boundary_dx": 0.25,
+                "span_width_delta": 1.0,
+                "char_spacing_delta": 0.5,
+                "baseline_dy": 0.25,
+            },
+        )
+        self.assertEqual(report["conditions"]["length_change"], "shorter")
+        self.assertEqual(report["strategy"], "left_anchor_span")
+        self.assertEqual(report["strategy_contract"]["anchor_priority"], "left_boundary")
+        self.assertTrue(report["strategy_contract"]["cleanup_required"])
+        self.assertTrue(report["actual_errors"]["extra_source_cleanup_enabled"])
+        self.assertEqual(report["actual_errors"]["span_width_delta"], 1.0)
+        self.assertTrue(report["pass"])
+
+    def test_longer_replacement_left_anchors_extends_right_and_guards_protected_text(self) -> None:
+        slot_report = {
+            "pass": True,
+            "length_change_report": {
+                "right_boundary": {
+                    "pass": True,
+                    "protected_gap_px": 12,
+                    "minimum_safe_gap_px": 3,
+                }
+            },
+        }
+        strategy, reason = choose_placement_strategy(
+            source_text="赵芳",
+            target_text="陈小慧",
+            slots=(run(2), run(14)),
+            slot_report=slot_report,
+            draw_mode="center",
+        )
+        plan = plan_for(
+            source="赵芳",
+            target="陈小慧",
+            slots=(run(2), run(14)),
+            strategy=strategy,
+            reason=reason,
+            slot_report=slot_report,
+            draw_mode="center",
+        )
+        report = strategy_report(
+            plan,
+            {
+                "enabled": True,
+                "left_boundary_dx": 0.25,
+                "span_width_delta": 1.5,
+                "char_spacing_delta": 0.5,
+                "baseline_dy": 0.25,
+                "protected_text_overlap_pixels": 0,
+            },
+        )
+        self.assertEqual(report["conditions"]["length_change"], "longer")
+        self.assertEqual(report["strategy"], "left_anchor_span")
+        self.assertTrue(report["strategy_contract"]["protected_text_guard_checked"])
+        self.assertEqual(report["constraints"]["protected_text_overlap_pixels"], 0)
+        self.assertEqual(report["actual_errors"]["protected_text_overlap_pixels"], 0)
+        self.assertTrue(report["actual_errors"]["right_boundary_pass"])
+        self.assertTrue(report["pass"])
+
+    def test_numeric_date_and_age_use_left_baseline_rhythm_and_field_width_constraints(self) -> None:
+        for source, target, slot_count in (("2024-01-01", "2025-02-03", 10), ("18", "19", 2)):
+            with self.subTest(source=source):
+                strategy, reason = choose_placement_strategy(
+                    source_text=source,
+                    target_text=target,
+                    slots=tuple(run(2 + idx * 8, x2=2 + idx * 8 + 5) for idx in range(slot_count)),
+                    slot_report={"pass": True},
+                    draw_mode="auto",
+                )
+                plan = plan_for(
+                    source=source,
+                    target=target,
+                    slots=tuple(run(2 + idx * 8, x2=2 + idx * 8 + 5) for idx in range(slot_count)),
+                    strategy=strategy,
+                    reason=reason,
+                    slot_report={"pass": True},
+                )
+                report = strategy_report(
+                    plan,
+                    {
+                        "enabled": True,
+                        "left_boundary_dx": 0.25,
+                        "baseline_dy": 0.25,
+                        "rhythm_delta": 0.5,
+                        "field_width_delta": 1.0,
+                    },
+                )
+                self.assertEqual(report["strategy"], "baseline_numeric")
+                self.assertEqual(report["strategy_contract"]["anchor_priority"], "left_baseline")
+                self.assertEqual(report["constraints"]["max_rhythm_delta"], 1.5)
+                self.assertEqual(report["actual_errors"]["field_width_delta"], 1.0)
+                self.assertTrue(report["pass"])
+
+    def test_manual_roi_without_source_uses_conservative_fallback_and_reduced_acceptance_confidence(self) -> None:
+        strategy, reason = choose_placement_strategy(
+            source_text="",
+            target_text="陈芸",
+            slots=(),
+            slot_report={"pass": True},
+            draw_mode="auto",
+        )
+        plan = plan_for(
+            source="",
+            target="陈芸",
+            slots=(),
+            strategy=strategy,
+            reason=reason,
+            slot_report={"pass": True},
+        )
+        report = strategy_report(plan, {"enabled": False, "reason": "manual_roi_no_source"})
+        self.assertEqual(report["strategy"], "manual_fallback")
+        self.assertEqual(report["conditions"]["length_change"], "unknown")
+        self.assertTrue(report["conditions"]["manual_source_missing"])
+        self.assertEqual(report["strategy_contract"]["anchor_priority"], "manual_roi_conservative")
+        self.assertEqual(report["strategy_contract"]["auto_acceptance_confidence"], "reduced")
+        self.assertEqual(report["strategy_contract"]["auto_acceptance_confidence_cap"], 0.45)
+        self.assertTrue(report["pass"])
 
     def test_result_audit_preserves_placement_strategy_report(self) -> None:
         placement_report = {
