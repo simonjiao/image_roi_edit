@@ -15,6 +15,84 @@
 文字形态门禁、放置策略、现有差距和分层联合优化设计见
 [`docs/text_shape_joint_optimization_design.md`](text_shape_joint_optimization_design.md)。当本 checklist 与该设计文档描述同一能力时，checklist 记录实施状态，设计文档记录目标结构和实施顺序。
 
+## Stage Refactor Execution Checklist
+
+本节跟踪 `staged_roi_pipeline_design.md` 中“阶段化流程”从设计到代码的实施状态。完成标准不是某张图看起来更好，而是代码中存在清晰模块边界、每阶段有可验证输入输出、失败时有可追踪证据。
+
+### Slice 1: 可执行 stage/profile 结构
+
+- [x] 新增 `src/roi_image_edit/stages.py`，定义 `StageSpec`、`StageResult` 和 detector mapping。
+- [x] 新增 `src/roi_image_edit/stage_profiles.py`，定义 `photo_scan`、`clean_digital`、`low_res_thumbnail`、`manual_roi_quick`。
+- [x] `local_validation.stage_gate_for_report()` 委托 `stages.py`，报告包含 `profile`、`stage_status`、`allowed_patch_keys`、`blocked_patch_keys`。
+- [ ] CLI 和 Web payload 支持用户指定 profile，并写入 `result.json` / `progress.jsonl`。
+
+验证：
+
+```bash
+.venv/bin/python -m compileall -q src scripts
+.venv/bin/python - <<'PY'
+from roi_image_edit.stage_profiles import stage_profile_choices
+from roi_image_edit.stages import stage_specs
+print(stage_profile_choices())
+print([spec.id for spec in stage_specs("photo_scan")])
+PY
+```
+
+### Slice 2: Stage patcher 调度
+
+- [ ] 新增 `src/roi_image_edit/stage_patchers.py`。
+- [ ] `revision_patches_for_round()` 缩成 stage dispatcher。
+- [ ] 每个 patcher 只生成当前 stage 允许的参数族。
+- [ ] 模型 JSON patch、rank patch、本地 patch 都经过同一个 stage filter。
+- [ ] patcher 输出必须记录 `stage_id`、`optimization_steps`、`allowed` / `rejection_reason`。
+
+验证：
+
+```bash
+.venv/bin/python - <<'PY'
+from roi_image_edit.stage_patchers import patch_allowed_for_stage
+print(patch_allowed_for_stage({"photo_noise_delta": 0.02}, "text_shape")["allowed"])
+print(patch_allowed_for_stage({"stroke_opacity_delta": 0.02}, "text_shape")["allowed"])
+PY
+```
+
+### Slice 3: 前置 slot quality gate
+
+- [ ] 新增 `slot_quality_report`。
+- [ ] 候选生成前检查旧值槽位数、槽位完整性、底部/灰边覆盖、protected text 冲突。
+- [ ] 旧槽位不完整时直接返回 rejected，不进入字体/墨色/照片质感候选。
+- [ ] 字数减少时，多余旧槽位纳入前置清除报告；字数增加时，右边界受 protected text 限制。
+
+验证：
+
+```bash
+.venv/bin/python scripts/roi_image_edit_cli.py process \
+  --image <image> \
+  --instruction '<字段旧值修改为新值>' \
+  --json
+```
+
+输出必须包含 `summary.plan.slot_quality_report`。失败时必须有 rejected candidate 和明确 `slot_quality_failed` 原因。
+
+### Slice 4: 放置策略和单字形态变化检测
+
+- [ ] 新增 `placement_strategy` 字段，至少支持 `top_left_anchor`、`center_primary`、`left_anchor_span`、`baseline_numeric`、`manual_fallback`。
+- [ ] 新增单字形态变化检测，报告 `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio`、投影距离和边距分布差异。
+- [ ] 同字数 CJK 字形变化大时自动切到 `center_primary`，并记录选择原因。
+- [ ] `text_shape` 未通过时，禁止 blur/noise/JPEG/background 成为主修复方向。
+
+验证：`candidate_report` 中必须能看到 `placement_strategy` 和 `shape_change_report`；当 `shape_change_large=true` 时，候选生成必须包含中心优先候选。
+
+### Slice 5: 分层候选产物和阶段证据
+
+- [ ] `progress.jsonl` 每轮写入 `pipeline_profile`、`stage_status`、`blocking_stage`、`allowed_patch_keys`、`blocked_patch_keys`。
+- [ ] `result.json` 写入最终候选的完整 stage evidence。
+- [ ] 保存 shape、ink-gray、photo texture、background cleanup 的 top candidate 或 rejected candidate 证据。
+- [ ] Web 候选抽屉展示 profile、stage、stage severity、patcher source。
+- [ ] 视觉 prompt 输入当前 stage context，输出建议不能越过本地 stage filter。
+
+验证：一次失败任务也必须能从 `output/web/<run>/progress.jsonl` 和 `result.json` 解释“卡在哪个阶段、为什么没有继续、下一轮应该调什么”。
+
 ## Current Implementation Status
 
 - 已接入 `reference_profile` 报告字段，包含旧文字、邻字、动态墨色阈值和动态核心变浅阈值。
