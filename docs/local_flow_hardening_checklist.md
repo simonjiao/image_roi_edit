@@ -30,13 +30,13 @@
 
 本节把 `staged_roi_pipeline_design.md` 和
 `text_shape_joint_optimization_design.md` 中的目标拆成可实施、可验证的 checklist 项。
-`[x]` 表示当前已有实施项或已经完成；`[ ]` 表示还需要代码、测试、报告或文档同步。
+`[x]` 只表示该条目标已经完整实现，并且有同条或相邻说明中的测试、报告、fixture 或稳定输出证据；`[ ]` 表示还需要代码、测试、报告或文档同步。
 每个 `[ ]` 都必须能用测试、CLI/Web 输出、`progress.jsonl`、`result.json`、stage evidence
 或 fixture 回归关闭，不能只靠文字说明关闭。
 
 ### A. 三层流程边界
 
-- [x] 五个本地 stage 已写入本 checklist：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；证据：本节 A-T 以这五个 stage 为权威结构。
+- [ ] 五个本地 stage 必须成为代码、prompt、报告和测试的唯一权威结构：`hard_boundary`、`text_shape`、`ink_gray_balance`、`photo_texture`、`background_cleanup`；验证方式是 stage order、prompt payload、result schema 和回归报告都只使用这五个 stage。
 - [ ] `StageSpec` 必须有稳定字段契约：`id`、`display_name`、`blocks_next`、`detect`、`optimization_steps`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
 - [ ] `StageResult` 必须有稳定字段契约：`stage_id`、`passed`、`severity`、`issues`、`reason`、`allowed_patch_keys`、`blocked_patch_keys`；验证方式是 schema/unit test 断言。
 - [ ] 每个 stage 必须能回答四个问题：是否通过、失败是否阻塞后续、允许哪些参数、禁止哪些参数；验证方式是每个 stage 的 `StageResult` 和 prompt context 都输出对应字段。
@@ -226,9 +226,9 @@
 
 ### T. 代码落点和模块边界
 
-- [x] 存在 `src/roi_image_edit/stages.py`，承载 `StageSpec`、`StageResult` 和 detector mapping；证据：当前仓库文件存在。
-- [x] 存在 `src/roi_image_edit/stage_profiles.py`，承载 profile 定义和加载；证据：当前仓库文件存在。
-- [x] 存在 `src/roi_image_edit/stage_patchers.py`，承载 stage patcher 调度入口；证据：当前仓库文件存在。
+- [ ] `src/roi_image_edit/stages.py` 必须成为 stage contract 的唯一入口，承载 `StageSpec`、`StageResult`、detector mapping 和 prompt context；验证方式是 schema/unit test 与依赖方向检查。
+- [ ] `src/roi_image_edit/stage_profiles.py` 必须成为 profile 定义和加载的唯一入口；验证方式是 profile matrix smoke 和用户指定 profile 覆盖自动建议测试。
+- [ ] `src/roi_image_edit/stage_patchers.py` 必须成为 stage patcher filter/dispatch 的唯一入口；验证方式是 patcher registry 单测、allowed/blocked keys 单测和旧混合路径依赖检查。
 - [ ] `local_validation.py` 中的 `local_*_issues` 必须继续收敛为 detector 底层函数，不能直接承担 stage policy；验证方式是 stage policy 单测只通过 `stages.py` 调用 detector。
 - [ ] `revision_solver.py` 中的旧评分和候选选择逻辑必须继续收敛为 dispatcher/selector，不能重新生成跨阶段混合 patch；验证方式是代码搜索和 stage filter 单测。
 - [ ] `processing_service.py` 不能继续承载 ROI 定位、候选生成、验收评分、修订求解器的长期核心逻辑；验证方式是这些能力迁移到 `roi_locator.py`、stage modules、solver modules 或等价 core 模块。
