@@ -2065,6 +2065,11 @@ def shape_change_report(
         "enabled": True,
         "placement_strategy": plan.placement_strategy,
         "placement_strategy_reason": plan.placement_strategy_reason,
+        "shape_change_basis": {
+            "changed_char_selection": "source_target_char_identity",
+            "large_change_decision": "geometry_thresholds_only",
+            "semantic_character_table_used": False,
+        },
         "shape_change_large": bool(issues),
         "per_char": per_char,
         "changed_chars": [item for item in per_char if item.get("source_char") != item.get("target_char")],

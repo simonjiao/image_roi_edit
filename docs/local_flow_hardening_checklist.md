@@ -109,7 +109,7 @@
 - [x] 增加 `margin_distribution_delta`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证字段存在，并以 `margin_distribution_delta_large` 参与 `shape_change_large`。
 - [ ] 动态阈值必须来自旧槽位高度、邻字稳定性和字体候选分布；验证方式是报告写入每个阈值来源。
 - [x] 固定数字阈值只能作为第一版保守起点，并必须写入报告；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证 `thresholds.*.threshold_source=default` 且 issue 带 `threshold_source`。
-- [ ] 禁止用语义字表判断“单字变化大”；验证方式是形态检测代码没有目标字 hardcode，且测试覆盖不同字符。
+- [x] 禁止用语义字表判断“单字变化大”；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_shape_change_large_uses_geometry_not_character_table` 验证不同字符但几何一致时 `shape_change_large=false`，并验证报告声明 `large_change_decision=geometry_thresholds_only`、`semantic_character_table_used=false`。
 
 ### H. 字体形态联合搜索
 

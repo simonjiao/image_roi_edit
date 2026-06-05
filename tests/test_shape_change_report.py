@@ -90,6 +90,19 @@ class ShapeChangeReportTest(unittest.TestCase):
         self.assertIn("row_projection_distance", unchanged)
         self.assertEqual(unchanged["issues"], [])
 
+    def test_shape_change_large_uses_geometry_not_character_table(self) -> None:
+        with patch(
+            "roi_image_edit.local_validation.replacement_char_bboxes",
+            return_value=((10, 10, 20, 30), (28, 10, 38, 30)),
+        ):
+            report = shape_change_report((64, 48), plan(), params())
+
+        self.assertFalse(report["shape_change_large"])
+        self.assertEqual(len(report["changed_chars"]), 1)
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["shape_change_basis"]["large_change_decision"], "geometry_thresholds_only")
+        self.assertFalse(report["shape_change_basis"]["semantic_character_table_used"])
+
 
 if __name__ == "__main__":
     unittest.main()
