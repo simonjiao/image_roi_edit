@@ -82,7 +82,7 @@
 - [x] 逐槽检查灰边覆盖；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_slot_quality.py::SlotQualityTest.test_slot_quality_schema_records_counts_coverage_overlap_and_masks` 验证每个 slot 输出 `gray_edge_pixels` 和 `coverage.gray_edge_coverage`。
 - [x] 逐槽检查底部覆盖；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_slot_quality.py::SlotQualityTest.test_bottom_overflow_fails_slot_quality_before_candidate_generation` 验证底部暗像素外溢会生成 `slot_bottom_overflow` 并使 `slot_quality_report.pass=false`，`tests/test_slot_quality_gate.py::SlotQualityGateTest.test_failed_slot_quality_stops_before_candidate_generation` 验证该失败会在候选生成前早停。
 - [ ] 逐槽检查倾斜外溢覆盖；验证方式是倾斜旧字 fixture 的外溢像素纳入 source slot 或 cleanup mask。
-- [ ] 检查槽位未混入字段标签、冒号或前置文本；验证方式是 label overlap 字段为 0 或低于动态阈值。
+- [x] 检查槽位未混入字段标签、冒号或前置文本；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_slot_quality.py::SlotQualityTest.test_slot_overlapping_left_label_is_reported_separately` 验证左侧 label/protected box 侵入旧字槽位会写入 `overlap_report.label_overlap_pixels` 并阻塞。
 - [x] 检查槽位未混入后续未修改文本；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_slot_quality.py::SlotQualityTest.test_slot_overlapping_protected_text_is_a_gate_failure` 验证 protected overlap 写入 `overlap_report.protected_overlap_pixels` 并以 `slot_overlaps_protected_text` 阻塞。
 - [ ] 检查最后一个旧字不会被误判成 protected text；验证方式是最后字右下角外溢 fixture 能进入 cleanup mask。
 - [x] 字数减少时，多余旧槽位必须进入前置清除区域；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_slot_quality.py::SlotQualityTest.test_shorter_replacement_reports_extra_source_cleanup_mask` 验证 `extra_source_slots_for_cleanup`、`extra_source_cleanup_span` 和 `cleanup_mask_report`。

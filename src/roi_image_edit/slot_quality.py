@@ -175,7 +175,7 @@ def slot_quality_report(
                 continue
             protected_overlap_pixels += overlap
             protected_conflicts.append(list(box))
-            if source_span_box and box[2] <= source_span_box[0]:
+            if source_span_box and box[0] < source_span_box[0]:
                 label_overlap_pixels += overlap
             elif source_span_box and box[0] >= source_span_box[2]:
                 right_protected_overlap_pixels += overlap

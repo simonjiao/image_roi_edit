@@ -141,6 +141,22 @@ class SlotQualityTest(unittest.TestCase):
         self.assertGreater(report["overlap_report"]["protected_overlap_pixels"], 0)
         self.assertIn("slot_overlaps_protected_text", {issue["type"] for issue in report["issues"]})
 
+    def test_slot_overlapping_left_label_is_reported_separately(self) -> None:
+        slots = (slot(10), slot(26))
+        report = slot_quality_report(
+            image_with_slots(slots),
+            (0, 0, 70, 36),
+            slots,
+            source_text="赵芳",
+            target_text="陈慧",
+            protected_boxes=((4, 10, 14, 24),),
+        )
+        self.assertFalse(report["pass"])
+        self.assertGreater(report["overlap_report"]["protected_overlap_pixels"], 0)
+        self.assertGreater(report["overlap_report"]["label_overlap_pixels"], 0)
+        self.assertEqual(report["overlap_report"]["right_protected_overlap_pixels"], 0)
+        self.assertGreater(report["per_slot"][0]["overlap"]["label_overlap_pixels"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
