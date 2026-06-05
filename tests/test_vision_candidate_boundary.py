@@ -80,13 +80,13 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
 
         self.assertEqual(len(fake_client.calls), 2)
         rank_prompt = str(fake_client.calls[0]["user_prompt"])
-        self.assertIn('"candidate_count": 2', rank_prompt)
-        self.assertIn('"vision_candidate_limit": 2', rank_prompt)
+        self.assertIn('"candidate_count": 3', rank_prompt)
+        self.assertIn('"vision_candidate_limit": 3', rank_prompt)
         self.assertIn('"total_candidate_count": 3', rank_prompt)
         self.assertIn('"stage_context_by_candidate"', rank_prompt)
         self.assertIn('"c1"', rank_prompt)
         self.assertIn('"c2"', rank_prompt)
-        self.assertNotIn('"c3"', rank_prompt)
+        self.assertIn('"c3"', rank_prompt)
         self.assertTrue(summary["candidate_rank"]["local_stage_context"]["stage_context_by_candidate"])
 
 

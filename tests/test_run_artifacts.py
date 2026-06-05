@@ -226,7 +226,7 @@ class RunArtifactsTest(unittest.TestCase):
         )
 
         self.assertEqual(request["requested_vision_candidate_limit"], 2)
-        self.assertEqual(request["vision_candidate_limit"], 2)
+        self.assertEqual(request["vision_candidate_limit"], 3)
         self.assertEqual(request["total_candidate_count"], 8)
         self.assertEqual(request["candidate_count"], 2)
         self.assertTrue(request["candidate_count_within_limit"])
@@ -236,6 +236,15 @@ class RunArtifactsTest(unittest.TestCase):
             request["stage_context_by_candidate"]["c1"]["blocking_stage"],
             "hard_boundary",
         )
+
+        high_request = vision_candidate_request_payload(
+            hard_reports,
+            pipeline_profile="photo_scan",
+            requested_vision_candidate_limit=12,
+            total_candidate_count=20,
+        )
+        self.assertEqual(high_request["requested_vision_candidate_limit"], 12)
+        self.assertEqual(high_request["vision_candidate_limit"], 8)
 
 
 if __name__ == "__main__":

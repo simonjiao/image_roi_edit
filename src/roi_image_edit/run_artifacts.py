@@ -6,6 +6,16 @@ from roi_image_edit.stage_policy import STAGE_ORDER, stage_optimization_summary
 from roi_image_edit.stages import prompt_stage_context, stage_gate_for_report
 
 
+VISION_CANDIDATE_MIN_LIMIT = 3
+VISION_CANDIDATE_MAX_LIMIT = 8
+
+
+def normalize_vision_candidate_limit(requested_limit: int | None, total_candidate_count: int) -> int:
+    raw_limit = int(requested_limit or VISION_CANDIDATE_MAX_LIMIT)
+    normalized = max(VISION_CANDIDATE_MIN_LIMIT, min(VISION_CANDIDATE_MAX_LIMIT, raw_limit))
+    return normalized
+
+
 def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "profile": payload.get("profile"),
@@ -151,8 +161,7 @@ def vision_candidate_request_payload(
     )
     requested_limit = int(requested_vision_candidate_limit or 0)
     total_count = max(0, int(total_candidate_count or 0))
-    effective_limit = requested_limit if requested_limit > 0 else total_count
-    effective_limit = max(1, effective_limit) if total_count else max(1, effective_limit)
+    effective_limit = normalize_vision_candidate_limit(requested_limit, total_count)
     candidate_count = int(enriched.get("candidate_count") or 0)
     stage_context_by_candidate = enriched.get("stage_context_by_candidate")
     stage_context_complete = (

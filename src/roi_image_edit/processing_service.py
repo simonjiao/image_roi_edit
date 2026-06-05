@@ -79,6 +79,7 @@ from roi_image_edit.stage_patchers import (
 from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
     model_stage_context,
+    normalize_vision_candidate_limit,
     request_audit_payload,
     result_audit_payload,
     stage_progress_fields,
@@ -194,7 +195,7 @@ def run_region_vision_checks(
     original_context_path = region_dir / "vision_original_context.png"
     save_region_context(original, context_box, original_context_path)
 
-    effective_candidate_limit = max(1, int(candidate_limit or 0))
+    effective_candidate_limit = normalize_vision_candidate_limit(candidate_limit, len(rendered))
     vision_rendered = rendered[:effective_candidate_limit]
     vision_sheet_path = region_dir / "vision_candidate_sheet.png"
     sheet_items = [

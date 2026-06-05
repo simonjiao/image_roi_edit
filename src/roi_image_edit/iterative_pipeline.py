@@ -34,6 +34,7 @@ from roi_image_edit.prompt_assets import load_prompt, require_prompts
 from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
     model_stage_context,
+    normalize_vision_candidate_limit,
     vision_candidate_request_payload,
 )
 from roi_image_edit.stage_profiles import stage_profile, stage_profile_choices
@@ -4172,8 +4173,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         vision_candidate_count = len(rendered)
 
         if vision_client:
-            vision_limit = int(getattr(args, "vision_candidate_limit", 0) or 0)
-            if 0 < vision_limit < len(scored_rendered):
+            requested_vision_limit = int(getattr(args, "vision_candidate_limit", 0) or 0)
+            vision_limit = normalize_vision_candidate_limit(
+                requested_vision_limit,
+                len(scored_rendered),
+            )
+            if vision_limit < len(scored_rendered):
                 vision_rendered = scored_rendered[:vision_limit]
                 vision_hard_reports = {
                     item[0].candidate_id: hard_reports[item[0].candidate_id]
@@ -4193,12 +4198,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     iteration=iteration + 1,
                     candidate_count=vision_candidate_count,
                     total_candidate_count=len(rendered),
+                    requested_vision_candidate_limit=requested_vision_limit,
+                    vision_candidate_limit=vision_limit,
                     contact_sheet=str(vision_contact_sheet_path),
                 )
             vision_hard_payload = vision_candidate_request_payload(
                 {"candidates": vision_hard_reports},
                 pipeline_profile=pipeline_profile,
-                requested_vision_candidate_limit=vision_limit,
+                requested_vision_candidate_limit=requested_vision_limit,
                 total_candidate_count=len(rendered),
             )
             write_json(iter_dir / "vision_candidate_request.json", vision_hard_payload)

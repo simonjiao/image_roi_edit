@@ -155,7 +155,7 @@
 - [x] Stage A shape search 本地候选预算为 300-1500，剪枝后保留 top 20-50；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_candidate_grid.py::ShapeCandidateGridTest.test_text_shape_grid_reports_budget_and_allowed_delta_keys` 验证 `shape_candidate_grid.budget.raw_candidate_budget` 在 300-1500 内、`retained_count=48`、`pruned_count>0`。
 - [ ] Stage B ink-gray search 本地候选预算为 100-800，剪枝后保留 top 8-20；验证方式是候选统计字段。
 - [ ] Stage C photo texture search 本地候选预算为 30-200，剪枝后保留 top 3-8；验证方式是候选统计字段。
-- [ ] Stage D vision final check 只看 top 3-8；验证方式是视觉请求候选数。
+- [x] Stage D vision final check 只看 top 3-8；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_run_artifacts.py::RunArtifactsTest.test_vision_candidate_request_records_limit_and_stage_context` 验证请求值低于 3 会提升到 `vision_candidate_limit=3`、高于 8 会收口到 `vision_candidate_limit=8`，`tests/test_vision_candidate_boundary.py::VisionCandidateBoundaryTest.test_region_vision_request_uses_top_candidates_with_stage_context` 验证视觉 prompt 实际只收到规范化后的 top candidates。
 - [ ] 形态剪枝必须覆盖字高、中心、基线、字距、protected distance、字体风格、笔画体量、姿态继承；验证方式是 prune reason 枚举测试。
 - [ ] 黑灰剪枝必须覆盖真黑核心、深色核心、外灰边、中灰笔画、复杂度修正；验证方式是 prune reason 枚举测试。
 - [ ] 照片质感剪枝必须覆盖过锐、过糊、无断裂、背景平滑、白影/暗影/旧残留、ROI 梯度断裂；验证方式是 prune reason 枚举测试。
