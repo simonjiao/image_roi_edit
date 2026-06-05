@@ -359,13 +359,14 @@ def slot_quality_report(
     }
     if length_change == "longer" and source_span_box is not None:
         row_box = source_span_box
-        margin = 3
+        minimum_safe_gap_px = 3
         right_protected_boxes = [
             box
             for box in protected_boxes
             if protected_box_overlaps_row(box, row_box) and box[0] >= row_box[2]
         ]
-        right_limit = min([roi[2], *(box[0] - margin for box in right_protected_boxes)])
+        protected_distances_px = [box[0] - row_box[2] for box in right_protected_boxes]
+        right_limit = min([roi[2], *(box[0] - minimum_safe_gap_px for box in right_protected_boxes)])
         slot_widths = [max(1, slot.x2 - slot.x1) for slot in ordered_slots]
         slot_gaps = [
             max(0, ordered_slots[idx + 1].x1 - ordered_slots[idx].x2)
@@ -383,10 +384,13 @@ def slot_quality_report(
         right_boundary = {
             "enabled": True,
             "source_span_box": list(row_box),
+            "roi_right_edge": int(roi[2]),
+            "minimum_safe_gap_px": int(minimum_safe_gap_px),
             "right_limit": int(right_limit),
             "available_right_px": int(available_right_px),
             "estimated_extra_width": round(float(estimated_extra_width), 3),
             "protected_gap_px": None if protected_gap_px is None else int(protected_gap_px),
+            "protected_distances_px": [int(distance) for distance in protected_distances_px],
             "limited_by_protected_text": bool(right_limit < roi[2]),
             "protected_right_boxes": [list(box) for box in right_protected_boxes],
             "pass": bool(available_right_px >= estimated_extra_width),
@@ -398,6 +402,7 @@ def slot_quality_report(
                     "available_right_px": int(available_right_px),
                     "estimated_extra_width": round(float(estimated_extra_width), 3),
                     "protected_gap_px": None if protected_gap_px is None else int(protected_gap_px),
+                    "minimum_safe_gap_px": int(minimum_safe_gap_px),
                 }
             )
 
