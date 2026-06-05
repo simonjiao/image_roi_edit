@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 
 from roi_image_edit.cli import build_parser
+from roi_image_edit.run_artifacts import result_audit_payload
 from roi_image_edit.stage_profiles import (
     resolve_stage_profile,
     stage_profile,
@@ -74,6 +75,22 @@ class StageProfilesTest(unittest.TestCase):
         self.assertEqual(resolution["source"], "explicit_request")
         self.assertEqual(resolution["requested_profile"], "clean_digital")
         self.assertEqual(resolution["suggested_profile"], "photo_scan")
+
+    def test_explicit_profile_resolution_is_preserved_in_result_audit(self) -> None:
+        resolution = resolve_stage_profile("clean_digital", "photo_scan")
+        audit = result_audit_payload(
+            {
+                "ok": True,
+                "runDir": "output/web/run1",
+                "profile": resolution["id"],
+                "profileResolution": resolution,
+                "images": [],
+            }
+        )
+        self.assertEqual(audit["profile"], "clean_digital")
+        self.assertEqual(audit["profileResolution"]["source"], "explicit_request")
+        self.assertEqual(audit["profileResolution"]["requested_profile"], "clean_digital")
+        self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
 
     def test_auto_suggestion_used_only_without_explicit_profile(self) -> None:
         resolution = resolve_stage_profile(None, "low_res_thumbnail")

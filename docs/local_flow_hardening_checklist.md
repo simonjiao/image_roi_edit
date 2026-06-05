@@ -179,7 +179,7 @@
 - [ ] `low_res_thumbnail` 更重视字体结构和笔画体量，并要求视觉验收看放大图；验证方式是 low-res fixture 和 prompt payload。
 - [ ] `manual_roi_quick` 只做最少阶段，未通过时保留 rejected candidate，不自动做复杂照片质感；验证方式是 manual ROI fixture。
 - [ ] 同一张图可以用不同 profile 运行，并在 `result.json` 记录不同 stage order 或启用阶段差异；验证方式是 profile matrix smoke。
-- [ ] 用户指定 profile 必须优先于自动 profile 建议；验证方式是同一输入同时存在自动建议和显式 `--profile` 时，`result.json` 使用用户指定 profile 并记录自动建议仅供参考。
+- [x] 用户指定 profile 必须优先于自动 profile 建议；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_profiles.py::StageProfilesTest.test_explicit_profile_overrides_auto_suggestion` 验证 resolver 选择显式 profile，`tests/test_stage_profiles.py::StageProfilesTest.test_explicit_profile_resolution_is_preserved_in_result_audit` 验证 result audit 使用用户指定 profile 并保留自动建议仅供参考。
 
 ### O. 视觉模型 prompt 和本地仲裁
 
