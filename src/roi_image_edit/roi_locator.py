@@ -425,6 +425,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "receive_time": ("接收时间", "接受时间", "采样时间", "收样时间", "receive time"),
     "date": ("日期", "时间", "检查日期", "报告日期", "出生日期", "date"),
     "age": ("年龄", "岁数", "age"),
+    "number": ("编号", "数字编号", "号码", "序号", "number"),
 }
 
 
@@ -2376,6 +2377,15 @@ def auto_select_regions_for_instruction(
         target_text=target_text,
         field_key=field_key,
     )
+    reported_search_roi = clamp_box(
+        (
+            min(search_roi[0], roi[0]),
+            min(search_roi[1], roi[1]),
+            max(search_roi[2], roi[2]),
+            max(search_roi[3], roi[3]),
+        ),
+        img.size,
+    )
     x1, y1, x2, y2 = roi
     slot_boxes = [text_run_box(slot) for slot in selected_plan.slot_boxes]
     protected_boxes = [list(box) for box in selected_plan.protected_boxes]
@@ -2389,7 +2399,7 @@ def auto_select_regions_for_instruction(
             "_autoScore": round(float(selected_score), 3),
             "_autoFieldKey": field_key,
             "_autoTargetRoi": list(selected_plan.target_roi),
-            "_autoSearchRoi": list(search_roi),
+            "_autoSearchRoi": list(reported_search_roi),
             "_autoEditRoi": [x1, y1, x2, y2],
             "_autoSlotBoxes": [list(box) for box in slot_boxes],
             "_autoProtectedBoxes": protected_boxes,
