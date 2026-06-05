@@ -37,7 +37,7 @@ DIAGNOSTIC_CONCERN_MAPPINGS: tuple[DiagnosticConcernMapping, ...] = (
         concern_id="pose_geometry",
         current_stages=("text_shape",),
         optimization_steps=("pose_shear_search",),
-        report_fields=("local_pose_issues", "text_angle_degrees", "shape_change_report"),
+        report_fields=("char_pose_metrics", "local_pose_issues", "text_angle_degrees", "shape_change_report"),
         notes="Pose is inferred from slots, neighbors, and projection metrics; no per-image direction rule is valid.",
     ),
     DiagnosticConcernMapping(

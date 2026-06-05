@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from roi_image_edit.local_validation import local_pose_issues
 from roi_image_edit.stage_concerns import (
     DIAGNOSTIC_CONCERN_MAPPINGS,
     diagnostic_concern_mapping_report,
@@ -82,6 +83,41 @@ class StageConcernMappingTest(unittest.TestCase):
         edge = mapping_for_concern("edge_quality")
         self.assertEqual(edge["current_stages"], ("ink_gray_balance", "photo_texture"))
         self.assertEqual(edge["optimization_steps"], ("outer_gray_control", "edge_breakup_match"))
+
+    def test_pose_geometry_maps_to_text_shape_and_reports_slot_neighbor_shear(self) -> None:
+        pose = mapping_for_concern("pose_geometry")
+        self.assertEqual(pose["current_stages"], ("text_shape",))
+        self.assertEqual(pose["optimization_steps"], ("pose_shear_search",))
+        self.assertIn("char_pose_metrics", pose["report_fields"])
+        self.assertIn("local_pose_issues", pose["report_fields"])
+        self.assertIn("slots, neighbors, and projection metrics", pose["notes"])
+
+        issues = local_pose_issues(
+            {
+                "char_pose_metrics": {
+                    "enabled": True,
+                    "per_char": [
+                        {
+                            "changed": True,
+                            "index": 0,
+                            "source_char": "甲",
+                            "target_char": "乙",
+                            "source_slot_shear": 0.08,
+                            "neighbor_shear": 0.04,
+                            "applied_shear": 0.01,
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(len(issues), 1)
+        issue = issues[0]
+        self.assertEqual(issue["type"], "changed_char_pose_shear_too_weak")
+        self.assertEqual(issue["source_slot_shear"], 0.08)
+        self.assertEqual(issue["neighbor_shear"], 0.04)
+        self.assertEqual(issue["reference_shear"], 0.07)
+        self.assertEqual(issue["applied_shear"], 0.01)
 
 
 if __name__ == "__main__":
