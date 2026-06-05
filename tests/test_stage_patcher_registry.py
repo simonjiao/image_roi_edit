@@ -171,6 +171,52 @@ class StagePatcherRegistryTest(unittest.TestCase):
         legacy = revision_patches_for_round(self.params, acceptance, report)
         self.assertEqual(legacy, dispatch["patches"])
 
+    def test_no_runtime_switch_points_to_old_mixed_revision_path(self) -> None:
+        src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
+        violations: list[str] = []
+        for path in src_root.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Name):
+                    call_name = node.func.id
+                    owner_name = ""
+                elif isinstance(node.func, ast.Attribute):
+                    call_name = node.func.attr
+                    if isinstance(node.func.value, ast.Name):
+                        owner_name = node.func.value.id
+                    elif isinstance(node.func.value, ast.Attribute):
+                        owner_name = node.func.value.attr
+                    else:
+                        owner_name = ""
+                else:
+                    continue
+
+                if path.name != "stage_patchers.py" and call_name == "final_acceptance_patches":
+                    violations.append(f"{path.name}:{node.lineno}: direct final_acceptance_patches call")
+
+                string_args = [
+                    arg.value
+                    for arg in node.args
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                ]
+                for value in string_args:
+                    normalized = value.lower().replace("-", "_")
+                    names_old_path = "legacy" in normalized or "mixed" in normalized
+                    names_revision = "revision" in normalized or "patch" in normalized
+                    if call_name == "add_argument" and names_old_path and names_revision:
+                        violations.append(f"{path.name}:{node.lineno}: runtime revision fallback arg {value}")
+                    if (
+                        call_name in {"get", "getenv"}
+                        and owner_name in {"environ", "os"}
+                        and names_old_path
+                        and names_revision
+                    ):
+                        violations.append(f"{path.name}:{node.lineno}: runtime revision fallback env {value}")
+
+        self.assertEqual(violations, [])
+
     def test_select_stage_patcher_reports_selection_reason(self) -> None:
         report = {
             "pass": True,
