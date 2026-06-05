@@ -25,6 +25,7 @@ OLD_PUBLIC_STAGE_IDS = (
     "slot_alignment",
     "font_structure",
     "pose_geometry",
+    "stroke_body",
     "tone_gray",
     "edge_quality",
 )
@@ -100,6 +101,23 @@ class StageAuthorityTest(unittest.TestCase):
                 stage_values = collect_public_stage_values(payload)
                 self.assertTrue(stage_values)
                 self.assertTrue(set(stage_values) <= set(EXPECTED_STAGE_ORDER), stage_values)
+
+    def test_runtime_prompts_cli_and_web_copy_do_not_expose_old_concerns_as_gates(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        checked_paths = [
+            *(repo_root / "src" / "roi_image_edit" / "prompts").glob("*.txt"),
+            repo_root / "src" / "roi_image_edit" / "cli.py",
+            repo_root / "src" / "roi_image_edit" / "web_app.py",
+            repo_root / "src" / "roi_image_edit" / "run_artifacts.py",
+            *(repo_root / "web").glob("*"),
+        ]
+        checked_paths = [path for path in checked_paths if path.is_file()]
+        self.assertTrue(checked_paths)
+        for path in checked_paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=str(path.relative_to(repo_root))):
+                for old_stage_id in OLD_PUBLIC_STAGE_IDS:
+                    self.assertNotIn(old_stage_id, text)
 
 
 if __name__ == "__main__":
