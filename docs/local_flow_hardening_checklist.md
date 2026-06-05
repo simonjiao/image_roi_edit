@@ -134,7 +134,7 @@
 
 ### J. 照片质感搜索
 
-- [ ] `photo_texture` 只能在 `text_shape` 和 `ink_gray_balance` 通过后执行；验证方式是 stage order 单测或失败 fixture。
+- [x] `photo_texture` 只能在 `text_shape` 和 `ink_gray_balance` 通过后执行；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_photo_texture_blocks_only_after_shape_and_ink_pass` 验证同时存在形态/黑灰/照片质感问题时先阻塞 `text_shape`，形态通过后先阻塞 `ink_gray_balance`，只有前两者通过后才阻塞 `photo_texture`。
 - [ ] 可调参数必须限定为小幅 blur、edge breakup、局部噪声、压缩质感、轻微 alpha 退化、局部残差回填；验证方式是 stage patcher allowed keys。
 - [ ] 目标必须是匹配原图拍照/扫描质感，不是把字弄糊；验证方式是报告同时记录 sharpness、breakup、noise、compression 指标。
 - [ ] 照片质感不能破坏已通过的黑灰和形态指标；验证方式是 photo candidate 记录前后 stage severity。

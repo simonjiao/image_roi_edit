@@ -35,6 +35,42 @@ class StageContractsTest(unittest.TestCase):
         self.assertEqual(tuple(spec.id for spec in stage_specs("photo_scan")), EXPECTED_STAGE_ORDER)
         self.assertEqual(set(STAGE_LABELS), set(EXPECTED_STAGE_ORDER))
 
+    def test_photo_texture_blocks_only_after_shape_and_ink_pass(self) -> None:
+        shape_and_photo = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "font_style_gate": {"issues": [{"type": "font_style_mismatch"}]},
+                "local_ink_balance_issues": [{"type": "ink_too_light"}],
+                "local_photo_texture_issues": [{"type": "photo_texture_too_sharp"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(shape_and_photo["blocking_stage"], "text_shape")
+        self.assertFalse(shape_and_photo["stage_status"]["photo_texture"]["pass"])
+
+        ink_and_photo = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [{"type": "ink_too_light"}],
+                "local_photo_texture_issues": [{"type": "photo_texture_too_sharp"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(ink_and_photo["blocking_stage"], "ink_gray_balance")
+        self.assertFalse(ink_and_photo["stage_status"]["photo_texture"]["pass"])
+
+        photo_only = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_photo_texture_issues": [{"type": "photo_texture_too_sharp"}],
+            },
+            "photo_scan",
+        )
+        self.assertEqual(photo_only["blocking_stage"], "photo_texture")
+
     def test_stage_spec_field_contract_and_reports(self) -> None:
         self.assertEqual(
             tuple(field.name for field in fields(StageSpec)),
