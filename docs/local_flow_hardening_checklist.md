@@ -67,7 +67,7 @@
 
 ### D. 方向、字段和旧值 ROI
 
-- [ ] 指令解析必须输出 `field`、`old_value`、`new_value`、解析置信和失败原因；验证方式是 CLI JSON 对姓名、日期、年龄、手动 ROI 四类输入都有字段。
+- [x] 指令解析必须输出 `field`、`old_value`、`new_value`、解析置信和失败原因；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_instruction_parsing.py::InstructionParsingTest.test_parse_name_date_age_and_manual_roi_instruction_fields` 覆盖姓名、日期、年龄、手动 ROI 无旧值输入，`test_empty_instruction_reports_failure_reason` 覆盖失败原因，`test_process_cli_json_summary_includes_instruction_details` 验证 CLI JSON summary 暴露 `instruction_details`。
 - [ ] 自动方向选择不能只看整页方向；必须同时记录目标字段质量、旧值定位质量和最终方向理由；验证方式是旋转图片 fixture。
 - [ ] 每个自动 ROI 任务必须同时记录 `search_roi` 和 `edit_roi`，并输出标注图；验证方式是 `stage_evidence` 中存在两个 ROI 的坐标和图片。
 - [ ] `search_roi` 可以覆盖字段锚点和后续保护文本，`edit_roi` 必须收缩到旧值槽位和必要空白；验证方式是同一任务中 `search_roi` 面积大于等于 `edit_roi`，且 edit ROI 不含 label。

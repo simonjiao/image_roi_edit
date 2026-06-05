@@ -176,6 +176,28 @@ def parse_instruction(text: str) -> tuple[str, str]:
 
 def parse_instruction_details(text: str) -> dict[str, Any]:
     raw = " ".join(str(text or "").strip().split())
+    def build_details(
+        *,
+        field_key: str | None,
+        source_text: str,
+        target_text: str,
+        source_explicit: bool,
+        confidence: float,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "raw": raw,
+            "field_key": field_key,
+            "field": field_key,
+            "source_text": source_text,
+            "target_text": target_text,
+            "old_value": source_text,
+            "new_value": target_text,
+            "source_explicit": source_explicit,
+            "confidence": round(float(confidence), 3),
+            "failure_reason": failure_reason,
+        }
+
     op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|->|=>|→"
     field_aliases = sorted(
         (alias for aliases in FIELD_ALIASES.values() for alias in aliases),
@@ -192,13 +214,16 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
     if field_only_pattern:
         field_match = re.search(field_only_pattern, raw, flags=re.IGNORECASE)
         if field_match:
-            return {
-                "raw": raw,
-                "field_key": infer_instruction_field(field_match.group("field")),
-                "source_text": "",
-                "target_text": cleanup_instruction_part(field_match.group("dst")),
-                "source_explicit": False,
-            }
+            field_key = infer_instruction_field(field_match.group("field"))
+            target_text = cleanup_instruction_part(field_match.group("dst"))
+            return build_details(
+                field_key=field_key,
+                source_text="",
+                target_text=target_text,
+                source_explicit=False,
+                confidence=0.72 if field_key and target_text else 0.45,
+                failure_reason=None if target_text else "target_text_missing",
+            )
     patterns = (
         rf"把\s*(?P<src>.+?)\s*(?:{op_pattern})\s*(?P<dst>.+)",
         rf"(?P<src>.+?)\s*(?:{op_pattern})\s*(?P<dst>.+)",
@@ -210,22 +235,33 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
             source = cleanup_instruction_part(strip_field_prefix(raw_source))
             target = cleanup_instruction_part(strip_field_prefix(match.group("dst")))
             if source and target:
-                return {
-                    "raw": raw,
-                    "field_key": infer_instruction_field(raw) or infer_instruction_field(raw_source),
-                    "source_text": source,
-                    "target_text": target,
-                    "source_explicit": True,
-                }
+                field_key = infer_instruction_field(raw) or infer_instruction_field(raw_source)
+                return build_details(
+                    field_key=field_key,
+                    source_text=source,
+                    target_text=target,
+                    source_explicit=True,
+                    confidence=0.96 if field_key else 0.84,
+                )
     if raw:
-        return {
-            "raw": raw,
-            "field_key": infer_instruction_field(raw),
-            "source_text": "",
-            "target_text": cleanup_instruction_part(raw),
-            "source_explicit": False,
-        }
-    return {"raw": "", "field_key": None, "source_text": "", "target_text": "", "source_explicit": False}
+        target_text = cleanup_instruction_part(raw)
+        field_key = infer_instruction_field(raw)
+        return build_details(
+            field_key=field_key,
+            source_text="",
+            target_text=target_text,
+            source_explicit=False,
+            confidence=0.56 if target_text else 0.0,
+            failure_reason=None if target_text else "target_text_missing",
+        )
+    return build_details(
+        field_key=None,
+        source_text="",
+        target_text="",
+        source_explicit=False,
+        confidence=0.0,
+        failure_reason="empty_instruction",
+    )
 
 
 def cleanup_instruction_part(value: str) -> str:

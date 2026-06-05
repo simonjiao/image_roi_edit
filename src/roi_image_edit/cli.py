@@ -121,6 +121,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_process_summary(
+    response: dict,
+    image_result: dict,
+    final_path: Path | None,
+) -> dict:
+    artifacts = image_result.get("artifacts") or {}
+    return {
+        "ok": image_result.get("ok"),
+        "accepted": image_result.get("accepted", False),
+        "applied": image_result.get("applied", False),
+        "error": image_result.get("error"),
+        "run_dir": response.get("runDir"),
+        "final_image": str(final_path) if final_path else None,
+        "applied_image": artifacts.get("applied"),
+        "final_is_rejected_candidate": artifacts.get("final_is_rejected_candidate", False),
+        "orientation": image_result.get("orientation"),
+        "instruction_details": image_result.get("instructionDetails"),
+        "regions": [
+            {
+                "id": region.get("id"),
+                "roi": region.get("roi"),
+                "auto": region.get("auto", False),
+                "source_text": region.get("sourceText"),
+                "target_text": region.get("targetText"),
+                "accepted": region.get("accepted"),
+                "target_roi": (region.get("summary") or {}).get("plan", {}).get("target_roi"),
+                "params": (region.get("summary") or {}).get("params"),
+                "vision": (region.get("summary") or {}).get("vision", {}),
+                "next_round_plan": ((region.get("summary") or {}).get("vision") or {}).get("next_round_plan"),
+            }
+            for region in image_result.get("regions", [])
+        ],
+    }
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -251,32 +286,7 @@ def main() -> None:
             Image.open(final_path).save(args.output)
             final_path = args.output
 
-        summary = {
-            "ok": image_result.get("ok"),
-            "accepted": image_result.get("accepted", False),
-            "applied": image_result.get("applied", False),
-            "error": image_result.get("error"),
-            "run_dir": response.get("runDir"),
-            "final_image": str(final_path) if final_path else None,
-            "applied_image": artifacts.get("applied"),
-            "final_is_rejected_candidate": artifacts.get("final_is_rejected_candidate", False),
-            "orientation": image_result.get("orientation"),
-            "regions": [
-                {
-                    "id": region.get("id"),
-                    "roi": region.get("roi"),
-                    "auto": region.get("auto", False),
-                    "source_text": region.get("sourceText"),
-                    "target_text": region.get("targetText"),
-                    "accepted": region.get("accepted"),
-                    "target_roi": (region.get("summary") or {}).get("plan", {}).get("target_roi"),
-                    "params": (region.get("summary") or {}).get("params"),
-                    "vision": (region.get("summary") or {}).get("vision", {}),
-                    "next_round_plan": ((region.get("summary") or {}).get("vision") or {}).get("next_round_plan"),
-                }
-                for region in image_result.get("regions", [])
-            ],
-        }
+        summary = build_process_summary(response, image_result, final_path)
         if args.as_json:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
         else:

@@ -1759,6 +1759,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                 {
                     "image_id": image_id,
                     "filename": filename,
+                    "instruction_details": instruction_details,
                     "source_text": source_text,
                     "target_text": target_text,
                     "pipeline_profile": pipeline_profile,
@@ -1885,6 +1886,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "accepted": image_accepted,
                     "applied": image_accepted,
                     "filename": filename,
+                    "instructionDetails": instruction_details,
                     "sourceDataUrl": image_to_data_url(original_image),
                     "resultDataUrl": image_to_data_url(result_image),
                     "candidates": candidates[:5],
