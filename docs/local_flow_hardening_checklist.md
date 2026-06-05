@@ -138,7 +138,7 @@
 - [ ] 可调参数必须限定为小幅 blur、edge breakup、局部噪声、压缩质感、轻微 alpha 退化、局部残差回填；验证方式是 stage patcher allowed keys。
 - [ ] 目标必须是匹配原图拍照/扫描质感，不是把字弄糊；验证方式是报告同时记录 sharpness、breakup、noise、compression 指标。
 - [ ] 照片质感不能破坏已通过的黑灰和形态指标；验证方式是 photo candidate 记录前后 stage severity。
-- [ ] 文字过清晰、过干净、过糊、边缘无断裂必须进入 `photo_texture` 问题报告；验证方式是 issue type 枚举测试。
+- [x] 文字过清晰、过干净、过糊、边缘无断裂必须进入 `photo_texture` 问题报告；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_photo_texture_validation.py` 验证 `photo_texture_too_sharp`、`photo_texture_too_clean`、`photo_texture_too_blurry`、`photo_texture_edge_breakup_missing` 和 `photo_texture_not_applied` issue type，并验证无断裂问题会贡献 `photo_texture` stage severity。
 
 ### K. 背景处理拆分
 

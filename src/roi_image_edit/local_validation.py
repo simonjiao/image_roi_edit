@@ -39,6 +39,17 @@ from roi_image_edit.roi_locator import (
 from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
 
+PHOTO_TEXTURE_ISSUE_TYPES = frozenset(
+    {
+        "photo_texture_not_applied",
+        "photo_texture_too_sharp",
+        "photo_texture_too_clean",
+        "photo_texture_too_blurry",
+        "photo_texture_edge_breakup_missing",
+    }
+)
+
+
 def text_complexity_ratio(plan: RenderPlan, params: CandidateParams) -> float:
     source_text = plan.source_text or ""
     target_text = plan.target_text or ""
@@ -1002,6 +1013,16 @@ def local_photo_texture_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "old_edge_laplacian_mean": round(old_edge_mean, 3),
             }
         )
+    if source_photo_like and edge_breakup < 0.004 and texture_strength < 0.035:
+        issues.append(
+            {
+                "type": "photo_texture_edge_breakup_missing",
+                "edge_breakup": round(edge_breakup, 4),
+                "texture_strength": round(texture_strength, 4),
+                "old_residual_mean": round(old_residual_mean, 3),
+                "old_edge_laplacian_mean": round(old_edge_mean, 3),
+            }
+        )
     if source_photo_like and edge_ratio > 1.85 and blur < 0.22:
         issues.append(
             {
@@ -1479,6 +1500,11 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
                     severity += max(0.0, 0.42 - float(issue.get("residual_ratio") or 0.0)) * 420.0
                 elif issue_type == "photo_texture_too_blurry":
                     severity += max(0.0, 0.18 - float(issue.get("edge_laplacian_ratio") or 0.0)) * 520.0
+                elif issue_type == "photo_texture_edge_breakup_missing":
+                    severity += max(0.0, 0.004 - float(issue.get("edge_breakup") or 0.0)) * 9000.0
+                    severity += max(0.0, 0.035 - float(issue.get("texture_strength") or 0.0)) * 1200.0
+                elif issue_type == "photo_texture_not_applied":
+                    severity += max(0.0, 0.018 - float(issue.get("texture_strength") or 0.0)) * 1400.0
                 else:
                     severity += 90.0
             except (TypeError, ValueError):
