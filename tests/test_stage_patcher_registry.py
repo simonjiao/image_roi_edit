@@ -151,6 +151,55 @@ class StagePatcherRegistryTest(unittest.TestCase):
             audit = patch_key_audit_for_stage_patcher("photo_texture", patch)
             self.assertTrue(audit["declared"], audit)
 
+    def test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core(self) -> None:
+        too_black = dispatch_revision_patches(
+            self.params,
+            {"visual_findings": {"darkness": "too_dark"}},
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [{"type": "changed_char_core_too_black"}],
+            },
+        )
+        self.assertEqual(too_black["patcher_stage"], "ink_gray_balance")
+        black_patches = too_black["patches"]
+        self.assertTrue(any(float(patch.get("opacity_delta") or 0.0) < 0 for patch in black_patches))
+        self.assertTrue(
+            any(
+                float(patch.get("core_ink_gain_delta") or 0.0) < 0
+                or float(patch.get("core_darken_strength_delta") or 0.0) < 0
+                for patch in black_patches
+            )
+        )
+
+        too_light = dispatch_revision_patches(
+            self.params,
+            {"visual_findings": {"darkness": "too_light"}},
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [{"type": "core_mean_gray_too_light"}],
+            },
+        )
+        self.assertEqual(too_light["patcher_stage"], "ink_gray_balance")
+        light_patches = too_light["patches"]
+        self.assertTrue(any(float(patch.get("opacity_delta") or 0.0) > 0 for patch in light_patches))
+        self.assertTrue(
+            any(
+                float(patch.get("alpha_contrast_delta") or 0.0) > 0
+                or float(patch.get("core_darken_strength_delta") or 0.0) > 0
+                for patch in light_patches
+            )
+        )
+        self.assertFalse(
+            any(
+                float(patch.get("opacity_delta") or 0.0) < 0
+                or float(patch.get("core_ink_gain_delta") or 0.0) < 0
+                or float(patch.get("core_darken_strength_delta") or 0.0) < 0
+                for patch in light_patches
+            )
+        )
+
     def test_legacy_revision_entry_delegates_to_dispatcher(self) -> None:
         source = inspect.getsource(revision_patches_for_round)
         self.assertIn("dispatch_revision_patches", source)

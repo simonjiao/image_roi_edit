@@ -51,7 +51,7 @@
 - [x] `font_structure` 必须映射到 `text_shape.font_style_search`、`font_size_search`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证映射，`tests/test_stage_contracts.py::StageContractsTest.test_font_structure_failure_blocks_ink_gray_primary_patches` 验证字体失败时 blocking stage 为 `text_shape` 且 `opacity_delta` 这类 ink patch 被拒绝。
 - [ ] `pose_geometry` 必须映射到 `text_shape.pose_shear_search`，且不能固化某张图的左倾/右倾；验证方式是姿态报告来自旧槽位、邻字或局部投影指标。
 - [x] `stroke_body` 必须映射到 `text_shape.stroke_body_search`，且在真实笔画体量未过时不能被 `edge_quality` 或 `photo_texture` 抢先处理；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证映射，`tests/test_stage_contracts.py::StageContractsTest.test_stroke_body_failure_blocks_gray_cleanup_and_photo_noise` 验证笔画体量失败时 blocking stage 为 `text_shape`，`background_cleanup` 和 `photo_texture` 补丁被拒绝。
-- [ ] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；验证方式是黑芯过量和核心不足分别生成相反方向候选。
+- [x] `tone_gray` 必须映射到 `ink_gray_balance.core_black_search`、`mid_gray_body_search`、`opacity_search`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证映射，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core` 验证黑芯过量和核心偏浅生成相反方向候选。
 - [x] `edge_quality` 必须拆到 `ink_gray_balance.outer_gray_control` 和 `photo_texture.edge_breakup_match`，并记录拆分依据；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_font_stroke_tone_and_edge_concerns_map_to_named_within_stage_steps` 验证拆分映射，`tests/test_stage_contracts.py::StageContractsTest.test_ink_gray_stage_rejects_photo_noise_as_primary_fix` 验证灰边/黑灰阶段不会用 photo noise 作为主修复。
 - [x] `photo_texture` 必须映射到 `photo_texture.blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_concerns.py::StageConcernMappingTest.test_photo_texture_concern_maps_to_named_within_stage_steps` 验证五个阶段内步骤映射，`tests/test_stage_contracts.py::StageContractsTest.test_photo_texture_blocks_only_after_shape_and_ink_pass` 验证只有形态和黑灰通过后才由 `photo_texture` 阻塞。
 - [ ] 更新所有 prompt、report、UI 文案中的旧 stage 名引用；验证方式是公开输出不再把旧 7 类诊断关注点当成本地 gate。
@@ -127,7 +127,7 @@
 
 - [ ] `ink_gray_balance` 只在形态 top candidates 上执行；验证方式是 ink candidate 的 parent shape candidate id 可追溯。
 - [ ] 黑灰报告必须分开记录 `<55`、`<70`、`70-120`、`120-165`；验证方式是 hard report 字段。
-- [ ] 核心太黑时，必须生成降低 `opacity`、`core_ink_gain` 或 `core_darken_strength` 的候选；验证方式是黑芯过量 fixture。
+- [x] 核心太黑时，必须生成降低 `opacity`、`core_ink_gain` 或 `core_darken_strength` 的候选；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_ink_gray_dispatch_generates_opposite_directions_for_black_core_and_light_core` 验证 `changed_char_core_too_black` 进入 `ink_gray_balance` patcher，并生成负向 `opacity_delta`、`core_ink_gain_delta` 或 `core_darken_strength_delta`。
 - [ ] 核心不足但灰边多时，不能继续加 blur 或扩大灰边，必须恢复核心密度并收紧外灰；验证方式是核心不足+灰边多 fixture。
 - [ ] 旧字和邻字指标冲突时，必须记录仲裁，并优先同一行邻字作为风格上限；验证方式是 conflict report 字段。
 - [ ] 黑灰阶段不能改变已经通过的字体、槽位和基线，除非重新回到 `text_shape`；验证方式是 candidate parent/rollback 记录。
