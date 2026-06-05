@@ -288,6 +288,20 @@ def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
 
     _append_path_entry(
         reports,
+        key="slot_quality_report",
+        path=artifacts.get("slot_quality_report"),
+        purpose="File copy of the old source slot completeness and protected-text safety gate.",
+        required=False,
+    )
+    _append_path_entry(
+        reports,
+        key="pre_candidate_gate_report",
+        path=artifacts.get("pre_candidate_gate_report"),
+        purpose="File copy of the pre-candidate gate status for this region.",
+        required=False,
+    )
+    _append_path_entry(
+        reports,
         key="stage_evidence_summary",
         path=stage_evidence.get("summary"),
         purpose="Per-stage top candidate evidence index for this region.",
@@ -427,8 +441,32 @@ def _collect_image_explanation(image: dict[str, Any]) -> dict[str, Any]:
         candidate_images,
         key="auto_roi_overlay",
         path=artifacts.get("auto_roi_overlay")
-        or ((stage_evidence.get("auto_roi") or {}).get("overlay_path") if isinstance(stage_evidence.get("auto_roi"), dict) else None),
+        or (
+            (stage_evidence.get("auto_roi") or {}).get("overlay_path")
+            if isinstance(stage_evidence.get("auto_roi"), dict)
+            else None
+        ),
         purpose="Search/edit ROI overlay used to explain automatic region selection.",
+        required=False,
+    )
+    auto_roi_evidence = (
+        stage_evidence.get("auto_roi")
+        if isinstance(stage_evidence.get("auto_roi"), dict)
+        else {}
+    )
+    _append_path_entry(
+        reports,
+        key="auto_orientation_report",
+        path=artifacts.get("auto_orientation_report")
+        or auto_roi_evidence.get("orientation_report_path"),
+        purpose="Automatic orientation attempts, target-field quality, and selected orientation reason.",
+        required=False,
+    )
+    _append_path_entry(
+        reports,
+        key="auto_roi_evidence_report",
+        path=artifacts.get("auto_roi_evidence_report") or auto_roi_evidence.get("report_path"),
+        purpose="Automatic search/edit ROI evidence and overlay path.",
         required=False,
     )
     _append_path_entry(

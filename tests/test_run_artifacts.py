@@ -216,9 +216,13 @@ class RunArtifactsTest(unittest.TestCase):
             result_path = self._touch(run_dir / "result.json")
             progress_path = self._touch(run_dir / "progress.jsonl")
             final_path = self._touch(run_dir / "final.png")
+            orientation_report = self._touch(run_dir / "auto_orientation_report.json")
+            auto_roi_evidence_report = self._touch(run_dir / "auto_roi_evidence.json")
             auto_overlay = self._touch(run_dir / "auto_roi_overlay.png")
             selected_candidate = self._touch(run_dir / "r1" / "selected_candidate.png")
             selected_compare = self._touch(run_dir / "r1" / "selected_compare.png")
+            slot_quality_report = self._touch(run_dir / "r1" / "slot_quality_report.json")
+            pre_candidate_gate_report = self._touch(run_dir / "r1" / "pre_candidate_gate_report.json")
             candidate_sheet = self._touch(run_dir / "r1" / "vision_candidate_sheet.png")
             final_compare = self._touch(run_dir / "r1" / "vision_final_compare.png")
             iter_compare = self._touch(run_dir / "r1" / "vision_final_compare_iter01.png")
@@ -237,11 +241,17 @@ class RunArtifactsTest(unittest.TestCase):
                         "applied": False,
                         "artifacts": {
                             "final": str(final_path),
+                            "auto_orientation_report": str(orientation_report),
+                            "auto_roi_evidence_report": str(auto_roi_evidence_report),
                             "auto_roi_overlay": str(auto_overlay),
                             "final_is_rejected_candidate": True,
                         },
                         "stage_evidence": {
-                            "auto_roi": {"overlay_path": str(auto_overlay)},
+                            "auto_roi": {
+                                "overlay_path": str(auto_overlay),
+                                "orientation_report_path": str(orientation_report),
+                                "report_path": str(auto_roi_evidence_report),
+                            },
                         },
                         "regions": [
                             {
@@ -268,6 +278,8 @@ class RunArtifactsTest(unittest.TestCase):
                                     "artifacts": {
                                         "selected_candidate": str(selected_candidate),
                                         "selected_compare": str(selected_compare),
+                                        "slot_quality_report": str(slot_quality_report),
+                                        "pre_candidate_gate_report": str(pre_candidate_gate_report),
                                         "stage_evidence": {
                                             "summary": str(summary_path),
                                             "stages": {
@@ -309,6 +321,10 @@ class RunArtifactsTest(unittest.TestCase):
         report_keys = [item["key"] for item in image["reports"]]
         image_keys = [item["key"] for item in image["candidate_images"]]
         embedded_keys = [item["key"] for item in image["embedded_reports"]]
+        self.assertIn("auto_orientation_report", report_keys)
+        self.assertIn("auto_roi_evidence_report", report_keys)
+        self.assertIn("slot_quality_report", report_keys)
+        self.assertIn("pre_candidate_gate_report", report_keys)
         self.assertIn("stage_evidence_summary", report_keys)
         self.assertIn("text_shape_top_report", report_keys)
         self.assertIn("selected_candidate", image_keys)

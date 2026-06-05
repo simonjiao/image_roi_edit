@@ -1392,6 +1392,7 @@ def process_region(
     progress: ProgressCallback | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
     region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
+    region_dir.mkdir(parents=True, exist_ok=True)
     plan = build_region_plan(
         original,
         roi,
@@ -1406,8 +1407,11 @@ def process_region(
         regions=[{"id": region_id, "roi": list(roi)}],
         slot_quality_report=slot_report,
     )
+    slot_quality_report_path = region_dir / "slot_quality_report.json"
+    pre_candidate_gate_report_path = region_dir / "pre_candidate_gate_report.json"
+    write_json(slot_quality_report_path, slot_report)
+    write_json(pre_candidate_gate_report_path, pre_candidate_report)
     if source_count and not slot_report.get("pass", False):
-        region_dir.mkdir(parents=True, exist_ok=True)
         rejected_compare_path = region_dir / "slot_quality_rejected_compare.png"
         compare_region_preview(original, original, roi).save(rejected_compare_path)
         if progress:
@@ -1490,6 +1494,8 @@ def process_region(
             "artifacts": {
                 "selected_candidate": None,
                 "selected_compare": str(rejected_compare_path),
+                "slot_quality_report": str(slot_quality_report_path),
+                "pre_candidate_gate_report": str(pre_candidate_gate_report_path),
                 "display_image_is_candidate": True,
             },
             "rejected_fonts": [],
@@ -1928,6 +1934,8 @@ def process_region(
             "artifacts": {
                 "selected_candidate": str(selected_candidate_path),
                 "selected_compare": str(selected_compare_path),
+                "slot_quality_report": str(slot_quality_report_path),
+                "pre_candidate_gate_report": str(pre_candidate_gate_report_path),
                 "stage_evidence": stage_evidence,
                 "display_image_is_candidate": not accepted,
             },
@@ -1974,9 +1982,11 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     for image_item in payload.get("images", []):
         image_id = str(image_item.get("id") or "")
         filename = str(image_item.get("filename") or "image.png")
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(filename).stem)[:80] or image_id or "image"
         instruction_details: dict[str, Any] | None = None
         failure_image: Image.Image | None = None
         pre_candidate_report: dict[str, Any] | None = None
+        orientation_summary: dict[str, Any] | None = None
         try:
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
@@ -1997,7 +2007,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             image = image_from_data_url(str(image_item.get("dataUrl") or ""))
             failure_image = image.copy()
             original_image = image.copy()
-            orientation_summary: dict[str, Any] = {
+            orientation_summary = {
                 "applied": False,
                 "orientation": "none",
                 "attempts": [],
@@ -2120,16 +2130,21 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             if not region_results:
                 raise ValueError("no valid rectangles")
 
-            safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(filename).stem)[:80] or image_id or "image"
             auto_roi_evidence = auto_roi_evidence_payload(regions)
             auto_roi_overlay_path: Path | None = None
             if auto_roi_evidence["region_count"]:
                 auto_roi_overlay_path = run_dir / f"{safe_stem}_auto_roi_overlay.png"
                 save_auto_roi_overlay(original_image, regions, auto_roi_overlay_path)
+            auto_orientation_report_path = run_dir / f"{safe_stem}_auto_orientation_report.json"
+            auto_roi_evidence_report_path = run_dir / f"{safe_stem}_auto_roi_evidence.json"
             auto_roi_stage_evidence = {
                 **auto_roi_evidence,
                 "overlay_path": str(auto_roi_overlay_path) if auto_roi_overlay_path else None,
+                "orientation_report_path": str(auto_orientation_report_path),
+                "report_path": str(auto_roi_evidence_report_path),
             }
+            write_json(auto_orientation_report_path, orientation_summary)
+            write_json(auto_roi_evidence_report_path, auto_roi_stage_evidence)
             original_path = run_dir / f"{safe_stem}_original.png"
             final_path = run_dir / f"{safe_stem}_final.png"
             applied_path = run_dir / f"{safe_stem}_applied.png"
@@ -2158,6 +2173,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "original": str(original_path),
                         "final": str(final_path),
                         "applied": str(applied_path),
+                        "auto_orientation_report": str(auto_orientation_report_path),
+                        "auto_roi_evidence_report": str(auto_roi_evidence_report_path),
                         "auto_roi_overlay": str(auto_roi_overlay_path) if auto_roi_overlay_path else None,
                         "final_is_rejected_candidate": not image_accepted,
                     },
@@ -2185,6 +2202,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     image=failure_image,
                     instruction_details=instruction_details,
                     pre_candidate_gate_report=pre_candidate_report,
+                    orientation_summary=orientation_summary,
                 )
             )
     response = {

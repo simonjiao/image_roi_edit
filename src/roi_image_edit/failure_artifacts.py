@@ -22,12 +22,17 @@ def failed_image_result(
     image: Image.Image | None,
     instruction_details: dict[str, Any] | None,
     pre_candidate_gate_report: dict[str, Any] | None = None,
+    orientation_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_stem = safe_image_stem(filename, image_id)
     rejected_input_path: Path | None = None
     if image is not None:
         rejected_input_path = run_dir / f"{safe_stem}_rejected_input.png"
         image.save(rejected_input_path)
+    orientation_report_path: Path | None = None
+    if orientation_summary is not None:
+        orientation_report_path = run_dir / f"{safe_stem}_auto_orientation_report.json"
+        write_json(orientation_report_path, orientation_summary)
     report = {
         "image_id": image_id,
         "filename": filename,
@@ -39,6 +44,7 @@ def failed_image_result(
         "failure_stage": "pre_candidate_generation",
         "reason": "image_processing_failed_before_candidate_generation",
         "pre_candidate_gate_report": pre_candidate_gate_report,
+        "orientation_summary": orientation_summary,
     }
     report_path = run_dir / f"{safe_stem}_failure_report.json"
     write_json(report_path, report)
@@ -57,11 +63,13 @@ def failed_image_result(
                 **report,
                 "report_path": str(report_path),
                 "rejected_input": str(rejected_input_path) if rejected_input_path else None,
+                "orientation_report": str(orientation_report_path) if orientation_report_path else None,
             },
         },
         "artifacts": {
             "rejected_input": str(rejected_input_path) if rejected_input_path else None,
             "failure_report": str(report_path),
+            "auto_orientation_report": str(orientation_report_path) if orientation_report_path else None,
             "final_is_rejected_candidate": True,
         },
     }

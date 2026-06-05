@@ -81,7 +81,15 @@ class SlotQualityGateTest(unittest.TestCase):
             self.assertEqual(events[1][0], "slot_quality_failed")
             self.assertEqual(events[1][1]["slot_quality_report"]["issues"][0]["type"], "slot_bottom_overflow")
             self.assertEqual(summary["trace"]["pre_candidate_gate_report"]["failed_gate"], "slot_quality_gate")
-            self.assertTrue((Path(tmp) / "regions" / "r1" / "slot_quality_rejected_compare.png").exists())
+            region_dir = Path(tmp) / "regions" / "r1"
+            self.assertTrue((region_dir / "slot_quality_rejected_compare.png").exists())
+            self.assertTrue((region_dir / "slot_quality_report.json").exists())
+            self.assertTrue((region_dir / "pre_candidate_gate_report.json").exists())
+            self.assertEqual(summary["artifacts"]["slot_quality_report"], str(region_dir / "slot_quality_report.json"))
+            self.assertEqual(
+                summary["artifacts"]["pre_candidate_gate_report"],
+                str(region_dir / "pre_candidate_gate_report.json"),
+            )
 
     def test_protected_text_guard_failure_stops_before_candidate_generation(self) -> None:
         original = Image.new("RGB", (48, 28), (210, 210, 210))
