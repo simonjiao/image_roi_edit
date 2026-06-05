@@ -2024,6 +2024,77 @@ def shape_change_report(
     }
 
 
+def placement_strategy_report(
+    plan: RenderPlan,
+    alignment_metrics: dict[str, Any],
+    alignment_issues: list[dict[str, Any]],
+    *,
+    max_char_center_dx: float,
+    max_char_center_dy: float,
+    max_char_center_distance_delta: float,
+    max_replacement_center_y_range: float,
+) -> dict[str, Any]:
+    source_count = len(text_chars(plan.source_text or ""))
+    target_count = len(text_chars(plan.target_text))
+    if source_count and target_count > source_count:
+        length_change = "longer"
+    elif source_count and target_count < source_count:
+        length_change = "shorter"
+    elif source_count and target_count:
+        length_change = "same"
+    else:
+        length_change = "unknown"
+    slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
+    per_char = alignment_metrics.get("per_char") if isinstance(alignment_metrics, dict) else []
+    if not isinstance(per_char, list):
+        per_char = []
+    center_dx_values = [
+        abs(float(item.get("center_dx")))
+        for item in per_char
+        if isinstance(item, dict) and item.get("center_dx") is not None
+    ]
+    center_dy_values = [
+        abs(float(item.get("center_dy")))
+        for item in per_char
+        if isinstance(item, dict) and item.get("center_dy") is not None
+    ]
+    slot_quality_pass = slot_report.get("pass")
+    return {
+        "strategy": plan.placement_strategy,
+        "reason": plan.placement_strategy_reason,
+        "pass": not alignment_issues and slot_quality_pass is not False,
+        "conditions": {
+            "source_count": source_count,
+            "target_count": target_count,
+            "length_change": length_change,
+            "draw_mode": plan.draw_mode,
+            "is_cjk": is_mostly_cjk((plan.source_text or "") + plan.target_text),
+            "slot_count": len(plan.slot_boxes),
+            "slot_quality_pass": slot_quality_pass,
+        },
+        "constraints": {
+            "max_char_center_dx": max_char_center_dx,
+            "max_char_center_dy": max_char_center_dy,
+            "max_char_center_distance_delta": max_char_center_distance_delta,
+            "max_replacement_center_y_range": max_replacement_center_y_range,
+        },
+        "actual_errors": {
+            "alignment_metrics_enabled": bool(alignment_metrics.get("enabled"))
+            if isinstance(alignment_metrics, dict)
+            else False,
+            "max_abs_center_dx": round(max(center_dx_values), 3) if center_dx_values else None,
+            "max_abs_center_dy": round(max(center_dy_values), 3) if center_dy_values else None,
+            "center_distance_delta": alignment_metrics.get("center_distance_delta")
+            if isinstance(alignment_metrics, dict)
+            else None,
+            "candidate_center_y_range": alignment_metrics.get("candidate_center_y_range")
+            if isinstance(alignment_metrics, dict)
+            else None,
+        },
+        "issues": alignment_issues,
+    }
+
+
 def candidate_report(
     original: Image.Image,
     candidate: Image.Image,
@@ -2071,14 +2142,18 @@ def candidate_report(
     )
     cleanup_metrics = extra_source_slot_cleanup_metrics(original, candidate, plan, params)
     cleanup_issues = extra_source_slot_cleanup_issues(cleanup_metrics)
+    max_char_center_dx = 2.0
+    max_char_center_dy = 2.5
+    max_char_center_distance_delta = 2.0
+    max_replacement_center_y_range = 2.0
     alignment_metrics, alignment_issues = char_alignment_gate(
         original.size,
         plan,
         params,
-        max_char_center_dx=2.0,
-        max_char_center_distance_delta=2.0,
-        max_char_center_dy=2.5,
-        max_replacement_center_y_range=2.0,
+        max_char_center_dx=max_char_center_dx,
+        max_char_center_distance_delta=max_char_center_distance_delta,
+        max_char_center_dy=max_char_center_dy,
+        max_replacement_center_y_range=max_replacement_center_y_range,
     )
     font_style = font_style_gate(
         original,
@@ -2106,6 +2181,15 @@ def candidate_report(
     report["background_texture_metrics"] = background_texture_metrics(original, candidate, plan, params)
     report["extra_source_slot_cleanup_metrics"] = cleanup_metrics
     report["char_alignment_metrics"] = alignment_metrics
+    report["placement_strategy_report"] = placement_strategy_report(
+        plan,
+        alignment_metrics,
+        alignment_issues,
+        max_char_center_dx=max_char_center_dx,
+        max_char_center_dy=max_char_center_dy,
+        max_char_center_distance_delta=max_char_center_distance_delta,
+        max_replacement_center_y_range=max_replacement_center_y_range,
+    )
     report["shape_change_report"] = shape_report
     report["font_style_gate"] = font_style
     report["strict_gate"] = {
@@ -2116,10 +2200,10 @@ def candidate_report(
         "max_edge_mean_gray_delta": 16.0,
         "max_core_lighten_delta": round(float(max_core_lighten_delta), 3),
         "max_edge_lighten_delta": max_edge_lighten_delta,
-        "max_char_center_dx": 2.0,
-        "max_char_center_dy": 2.5,
-        "max_replacement_center_y_range": 2.0,
-        "max_char_center_distance_delta": 2.0,
+        "max_char_center_dx": max_char_center_dx,
+        "max_char_center_dy": max_char_center_dy,
+        "max_replacement_center_y_range": max_replacement_center_y_range,
+        "max_char_center_distance_delta": max_char_center_distance_delta,
         "max_font_style_score_ratio": 1.25,
         "pass": not strict_issues
         and not cleanup_issues

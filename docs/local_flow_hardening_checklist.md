@@ -91,7 +91,7 @@
 
 ### F. 放置策略选择
 
-- [ ] `placement_strategy` 和选择原因必须有 schema 和多场景 fixture 断言；验证方式是同字数、字数增减、日期/年龄、手动 ROI 都记录 strategy reason。
+- [x] `placement_strategy` 和选择原因必须有 schema 和多场景 fixture 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_placement_strategy.py::PlacementStrategyTest.test_strategy_reason_is_declared_for_core_scenarios` 覆盖同字数 CJK、字数增加、字数减少、日期/年龄类非 CJK、手动 ROI 无旧值策略和 reason，`test_placement_report_schema_records_conditions_constraints_errors_and_pass` 验证 report schema 记录条件、约束、实际误差和 pass。
 - [ ] 同字数 CJK 且字形变化小：必须验证 `top_left_anchor` 或等价策略，约束中心误差、字距、基线；验证方式是同字数小变化 fixture。
 - [ ] 同字数 CJK 且字形变化大：必须验证 `center_primary`，约束左边界、基线、字距；验证方式是同字数大变化 fixture。
 - [ ] 字数减少：目标字按旧值整体跨度排布，并清理多余旧槽位；验证方式是 3 字变 2 字 fixture。
