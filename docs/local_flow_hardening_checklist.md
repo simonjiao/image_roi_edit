@@ -188,7 +188,7 @@
 - [ ] prompt 只能针对当前 `blocking_stage` 给建议；验证方式是建议 patch 经过 stage filter 并记录 rejected suggestion。
 - [ ] prompt 不能建议当前阶段禁止参数；验证方式是 forbidden suggestion fixture 或 mock response。
 - [ ] 如果模型认为前置阶段已通过，必须说明依据；验证方式是 response schema 包含 `basis` 或等价字段。
-- [ ] 如果模型建议 deliver 但本地 `blocking_stage` 不为空，本地必须改为 revise；验证方式是 mock acceptance 单测。
+- [x] 如果模型建议 deliver 但本地 `blocking_stage` 不为空，本地必须改为 revise；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
 - [ ] 视觉模型建议必须转成本地候选或记录不可转化原因；验证方式是 attempt record。
 
 ### P. 进度、UI 和失败产物
@@ -210,7 +210,7 @@
 ### R. 反模式门禁
 
 - [ ] 一个问题失败后不能把所有补丁族混合评分；验证方式是候选生成报告只显示当前 blocking stage 主导 patch。
-- [ ] 视觉模型说 `ok` 不能覆盖本地阶段失败；验证方式是 mock response 单测。
+- [x] 视觉模型说 `ok` 不能覆盖本地阶段失败；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_local_acceptance_gate.py::LocalAcceptanceGateTest.test_local_blocking_stage_overrides_visual_deliver`。
 - [x] 字体没过时不能调 blur；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_contracts.py::StageContractsTest.test_text_shape_stage_rejects_photo_or_background_primary_patches`。
 - [ ] 粗细没过时不能先清灰边；验证方式是粗细失败 fixture。
 - [ ] 灰边过多时不能继续加 photo_noise 制造灰雾；验证方式是 edge/gray fixture。
