@@ -216,7 +216,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 | 阶段门禁 | `stage_gate_for_report`, `stage_selection_penalty`, `report_stage_pass` | `stage_gate` |
 | 运行产物结构 | `request_audit_payload`, `result_audit_payload`, `stage_progress_fields`, `model_stage_context`, `attach_stage_context_to_rank_report` in `run_artifacts.py` | `request.json`, `result.json`, `progress.jsonl`, `stage_context_by_candidate` |
 | 形态重搜 | `text_shape_reset_candidates`, `shape_font_items`, `normalized_offset_candidates` | `revision_attempts[].origin=shape_reset`, `revision_rounds[].shape_reset_count` |
-| 迭代补丁 | `STAGE_PATCHER_SPECS`, `stage_patcher_registry_report`, `revision_patches_for_round`, `black_core_reduction_patches`, `gray_stroke_recovery_patches` | `revision_rounds`, `revision_attempts`, `stage_optimization_policy`, `rejected_local_patches` |
+| 迭代补丁 | `STAGE_PATCHER_SPECS`, `stage_patcher_registry_report`, `stage_patch_filter_report`, `revision_patches_for_round`, `black_core_reduction_patches`, `gray_stroke_recovery_patches` | `revision_rounds`, `revision_attempts`, `stage_optimization_policy`, `stage_filter_report`, `rejected_local_patches` |
 | 最终验收 | `evaluate_final`, `apply_local_acceptance_gate` | `final_acceptance` |
 
 ## 回归检查建议

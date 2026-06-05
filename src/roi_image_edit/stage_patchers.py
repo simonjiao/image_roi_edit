@@ -202,11 +202,56 @@ def dedupe_patches(patches: list[dict[str, Any]], limit: int) -> list[dict[str, 
 def patch_allowed_for_stage(patch: dict[str, Any] | None, stage_id: str | None) -> dict[str, Any]:
     audit = optimization_policy_audit(stage_id, patch)
     steps = optimization_steps_for_patch(patch)
+    primary_steps = list(audit.get("primary_optimization_steps") or [])
+    secondary_steps = [step for step in steps if step not in primary_steps]
     return {
         **audit,
         "stage_id": stage_id,
+        "primary_stage": stage_id,
         "patch": patch or {},
         "optimization_steps": steps,
+        "secondary_optimization_steps": secondary_steps,
+        "decision": "accepted" if audit.get("allowed") else "rejected",
+        "decision_basis": (
+            "primary optimization stays in current stage"
+            if audit.get("allowed") and not secondary_steps
+            else "secondary effects are declared and current stage remains primary"
+            if audit.get("allowed")
+            else audit.get("rejection_reason")
+        ),
+    }
+
+
+def stage_patch_filter_report(
+    patches: list[dict[str, Any]],
+    stage_id: str | None,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
+    spec = stage_patcher_spec(stage_id)
+    for patch in dedupe_patches(patches, 128):
+        audit = patch_allowed_for_stage(patch, stage_id)
+        if audit["allowed"]:
+            accepted.append(patch)
+            decisions.append(audit)
+        else:
+            rejected.append(audit)
+            decisions.append(audit)
+        if len(accepted) >= limit:
+            break
+    return {
+        "stage_id": stage_id,
+        "primary_stage": stage_id,
+        "patcher": spec.as_report() if spec is not None else None,
+        "limit": limit,
+        "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+        "accepted_patches": accepted,
+        "rejected_patches": rejected,
+        "decisions": decisions,
     }
 
 
@@ -216,16 +261,9 @@ def filter_patches_for_stage(
     *,
     limit: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    accepted: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
-    for patch in dedupe_patches(patches, 128):
-        audit = patch_allowed_for_stage(patch, stage_id)
-        if audit["allowed"]:
-            accepted.append(patch)
-        else:
-            rejected.append(audit)
-        if len(accepted) >= limit:
-            break
+    report = stage_patch_filter_report(patches, stage_id, limit=limit)
+    accepted = [patch for patch in report["accepted_patches"] if isinstance(patch, dict)]
+    rejected = [patch for patch in report["rejected_patches"] if isinstance(patch, dict)]
     return accepted, rejected
 
 

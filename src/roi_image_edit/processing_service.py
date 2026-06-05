@@ -69,6 +69,7 @@ from roi_image_edit.stage_patchers import (
     model_patch_records,
     params_signature,
     patch_signature,
+    stage_patch_filter_report,
     revision_patches_for_round,
 )
 from roi_image_edit.run_artifacts import (
@@ -409,23 +410,21 @@ def run_region_vision_checks(
                 else:
                     model_conflicts.append(record)
             round_patches.extend(allowed_model_patches)
-            filtered_patches: list[dict[str, Any]] = []
-            rejected_local_patches: list[dict[str, Any]] = []
-            for patch in dedupe_patches(round_patches, 24):
-                policy_audit = optimization_policy_audit(
-                    str(basis_blocking_stage) if basis_blocking_stage else None,
-                    patch,
-                )
-                if policy_audit["allowed"]:
-                    filtered_patches.append(patch)
-                else:
-                    rejected_local_patches.append(
-                        {
-                            "patch": patch,
-                            "optimization_policy": policy_audit,
-                        }
-                    )
-            round_patches = dedupe_patches(filtered_patches, 12)
+            local_stage_filter_report = stage_patch_filter_report(
+                round_patches,
+                str(basis_blocking_stage) if basis_blocking_stage else None,
+                limit=12,
+            )
+            round_patches = [
+                patch
+                for patch in local_stage_filter_report.get("accepted_patches", [])
+                if isinstance(patch, dict)
+            ]
+            rejected_local_patches = [
+                patch
+                for patch in local_stage_filter_report.get("rejected_patches", [])
+                if isinstance(patch, dict)
+            ]
             shape_reset_params = text_shape_reset_candidates(
                 current_params,
                 font_style_reference,
@@ -445,6 +444,7 @@ def run_region_vision_checks(
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
                 "stage_optimization_policy": basis_stage_optimization_policy,
                 "stage_evidence": stage_progress_fields(current_report),
+                "stage_filter_report": local_stage_filter_report,
                 "model_suggestions": model_records,
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,

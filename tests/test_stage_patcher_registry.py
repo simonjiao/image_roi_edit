@@ -6,6 +6,7 @@ from roi_image_edit.iterative_pipeline import CandidateParams
 from roi_image_edit.stage_patchers import (
     patch_key_audit_for_stage_patcher,
     revision_patches_for_round,
+    stage_patch_filter_report,
     stage_patcher_registry_report,
     stage_patcher_specs,
 )
@@ -100,6 +101,36 @@ class StagePatcherRegistryTest(unittest.TestCase):
             self.assertNotIn("opacity_delta", patch)
             audit = patch_key_audit_for_stage_patcher("photo_texture", patch)
             self.assertTrue(audit["declared"], audit)
+
+    def test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary(self) -> None:
+        report = stage_patch_filter_report(
+            [
+                {"font_size_delta": 1, "blur_delta": 0.04},
+                {"mask_threshold_delta": -3},
+            ],
+            "text_shape",
+            limit=10,
+        )
+        self.assertEqual(report["stage_id"], "text_shape")
+        self.assertEqual(report["primary_stage"], "text_shape")
+        self.assertEqual(report["accepted_count"], 1)
+        self.assertEqual(report["rejected_count"], 1)
+
+        accepted = report["decisions"][0]
+        self.assertEqual(accepted["decision"], "accepted")
+        self.assertEqual(accepted["primary_stage"], "text_shape")
+        self.assertEqual(accepted["primary_optimization_steps"], ["text_shape"])
+        self.assertEqual(accepted["secondary_optimization_steps"], ["photo_texture"])
+        self.assertEqual(
+            accepted["decision_basis"],
+            "secondary effects are declared and current stage remains primary",
+        )
+
+        rejected = report["decisions"][1]
+        self.assertEqual(rejected["decision"], "rejected")
+        self.assertEqual(rejected["primary_stage"], "text_shape")
+        self.assertEqual(rejected["optimization_steps"], ["background_cleanup"])
+        self.assertIn("forbidden optimization steps", rejected["decision_basis"])
 
 
 if __name__ == "__main__":
