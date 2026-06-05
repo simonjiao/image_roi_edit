@@ -166,7 +166,7 @@
 - [x] 每个 stage patcher 必须声明 primary stage、allowed keys、blocked keys；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patchers_declare_primary_allowed_and_blocked_keys`。
 - [x] patcher 输出不能包含未声明参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patcher_outputs_do_not_contain_undeclared_keys`。
 - [x] 跨 stage patch 必须被拒绝或声明主阶段、次级影响和不破坏前置阶段的依据；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary`。
-- [ ] 新增 patch 必须进入某个 stage patcher，不能散落在全局候选生成函数；验证方式是代码搜索和单测。
+- [x] 新增 patch 必须进入某个 stage patcher，不能散落在全局候选生成函数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_revision_patch_entrypoints_are_registered_or_explicit_fallback` 和 `tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_runtime_code_uses_dispatcher_not_concrete_stage_patchers`。
 - [x] 旧入口只能调用 stage dispatcher，stage dispatcher 不能反向调用旧全局混合补丁；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_legacy_revision_entry_delegates_to_dispatcher`。
 - [ ] 临时双轨只允许用于同输入新旧结果差异验证，不能作为长期交付路径；验证方式是没有 runtime fallback 开关指向旧混合路径。
 - [ ] 每个阶段迁移必须包含 detector、patcher、allowed/blocked 参数、失败用例、通过用例和 stage evidence；验证方式是测试目录和 fixture 记录。
@@ -231,7 +231,7 @@
 - [x] request/result/progress/prompt stage context 的运行产物 helper 已从 `processing_service.py` 拆到 `src/roi_image_edit/run_artifacts.py`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_run_artifacts.py`。
 - [ ] `src/roi_image_edit/stages.py` 必须成为 stage contract 的唯一入口，承载 `StageSpec`、`StageResult`、detector mapping 和 prompt context；验证方式是 schema/unit test 与依赖方向检查。
 - [ ] `src/roi_image_edit/stage_profiles.py` 必须成为 profile 定义和加载的唯一入口；验证方式是 profile matrix smoke 和用户指定 profile 覆盖自动建议测试。
-- [ ] `src/roi_image_edit/stage_patchers.py` 必须成为 stage patcher filter/dispatch 的唯一入口；验证方式是 patcher registry 单测、allowed/blocked keys 单测和旧混合路径依赖检查。
+- [x] `src/roi_image_edit/stage_patchers.py` 必须成为 stage patcher filter/dispatch 的唯一入口；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py` 覆盖 registry、allowed/blocked keys、dispatcher 依赖、旧混合入口缩减和具体 patcher runtime 直调禁用。
 - [ ] `local_validation.py` 中的 `local_*_issues` 必须继续收敛为 detector 底层函数，不能直接承担 stage policy；验证方式是 stage policy 单测只通过 `stages.py` 调用 detector。
 - [ ] `revision_solver.py` 中的旧评分和候选选择逻辑必须继续收敛为 dispatcher/selector，不能重新生成跨阶段混合 patch；验证方式是代码搜索和 stage filter 单测。
 - [ ] `processing_service.py` 不能继续承载 ROI 定位、候选生成、验收评分、修订求解器的长期核心逻辑；验证方式是这些能力迁移到 `roi_locator.py`、stage modules、solver modules 或等价 core 模块。

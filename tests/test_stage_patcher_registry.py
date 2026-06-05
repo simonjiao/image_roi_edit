@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 import unittest
 
 from roi_image_edit.iterative_pipeline import CandidateParams
+import roi_image_edit.stage_patchers as stage_patchers_module
 from roi_image_edit.stage_patchers import (
     dispatch_revision_patches,
     patch_key_audit_for_stage_patcher,
@@ -43,6 +46,45 @@ class StagePatcherRegistryTest(unittest.TestCase):
             self.assertEqual(report["primary_stage"], spec.primary_stage)
             self.assertIsInstance(report["allowed_patch_keys"], list)
             self.assertIsInstance(report["blocked_patch_keys"], list)
+
+    def test_revision_patch_entrypoints_are_registered_or_explicit_fallback(self) -> None:
+        registered = {spec.patcher.__name__ for spec in stage_patcher_specs()}
+        allowed_fallbacks = {"final_acceptance_patches"}
+        allowed_dispatchers = {"dispatch_revision_patches"}
+        entrypoints: set[str] = set()
+
+        for name, value in vars(stage_patchers_module).items():
+            if not callable(value) or not name.endswith("_patches"):
+                continue
+            signature = inspect.signature(value)
+            params = tuple(signature.parameters)
+            if params[:3] == ("params", "acceptance", "report"):
+                entrypoints.add(name)
+
+        self.assertEqual(entrypoints, registered | allowed_fallbacks | allowed_dispatchers)
+
+    def test_runtime_code_uses_dispatcher_not_concrete_stage_patchers(self) -> None:
+        concrete_patchers = {spec.patcher.__name__ for spec in stage_patcher_specs()}
+        forbidden_calls: list[str] = []
+        src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
+
+        for path in src_root.glob("*.py"):
+            if path.name == "stage_patchers.py":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Name):
+                    call_name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    call_name = node.func.attr
+                else:
+                    continue
+                if call_name in concrete_patchers:
+                    forbidden_calls.append(f"{path.name}:{node.lineno}:{call_name}")
+
+        self.assertEqual(forbidden_calls, [])
 
     def test_registry_report_is_stable_and_explicit(self) -> None:
         report = stage_patcher_registry_report()
