@@ -102,13 +102,13 @@
 
 ### G. 单字形态变化检测
 
-- [ ] `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio` 必须有 schema 和 fixture 断言；验证方式是每个 changed char 都输出这些字段。
-- [ ] 每个 changed char 都必须生成旧槽位画像和新字候选画像；验证方式是 `shape_change_report.changed_chars[*]` 含 source/target image metrics。
-- [ ] 增加 `row_projection_distance`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
-- [ ] 增加 `col_projection_distance`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
-- [ ] 增加 `margin_distribution_delta`；验证方式是报告字段存在并参与 `shape_change_large` 判定。
+- [x] `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio` 必须有 schema 和 fixture 断言；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证每个 changed char 输出这些字段。
+- [x] 每个 changed char 都必须生成旧槽位画像和新字候选画像；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证 `shape_change_report.changed_chars[*]` 含 `source_image_metrics` 和 `target_image_metrics`。
+- [x] 增加 `row_projection_distance`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证字段存在，并以 `row_projection_distance_large` 参与 `shape_change_large`。
+- [x] 增加 `col_projection_distance`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证字段存在，并以 `col_projection_distance_large` 参与 `shape_change_large`。
+- [x] 增加 `margin_distribution_delta`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证字段存在，并以 `margin_distribution_delta_large` 参与 `shape_change_large`。
 - [ ] 动态阈值必须来自旧槽位高度、邻字稳定性和字体候选分布；验证方式是报告写入每个阈值来源。
-- [ ] 固定数字阈值只能作为第一版保守起点，并必须写入报告；验证方式是任何固定默认都有 `threshold_source=default`。
+- [x] 固定数字阈值只能作为第一版保守起点，并必须写入报告；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_shape_change_report.py::ShapeChangeReportTest.test_changed_char_schema_records_bbox_projection_margin_and_threshold_sources` 验证 `thresholds.*.threshold_source=default` 且 issue 带 `threshold_source`。
 - [ ] 禁止用语义字表判断“单字变化大”；验证方式是形态检测代码没有目标字 hardcode，且测试覆盖不同字符。
 
 ### H. 字体形态联合搜索

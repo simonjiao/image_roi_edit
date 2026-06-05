@@ -36,6 +36,7 @@ from roi_image_edit.roi_locator import (
     text_chars,
     text_run_box,
 )
+from roi_image_edit.shape_metrics import box_metrics, default_shape_thresholds
 from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
 
@@ -1941,58 +1942,97 @@ def shape_change_report(
             issues.append(issue)
             continue
         x1, y1, x2, y2 = candidate_box
-        candidate_w = max(1.0, float(x2 - x1))
-        candidate_h = max(1.0, float(y2 - y1))
-        candidate_area = candidate_w * candidate_h
-        slot_cx = (slot.x1 + slot.x2) / 2.0
-        slot_cy = (slot.y1 + slot.y2) / 2.0
-        candidate_cx = (x1 + x2) / 2.0
-        candidate_cy = (y1 + y2) / 2.0
-        width_delta_ratio = (candidate_w - slot_w) / slot_w
-        height_delta_ratio = (candidate_h - slot_h) / slot_h
-        centroid_dx = candidate_cx - slot_cx
-        centroid_dy = candidate_cy - slot_cy
-        ink_area_ratio = candidate_area / slot_area
+        metrics = box_metrics((slot.x1, slot.y1, slot.x2, slot.y2), (int(x1), int(y1), int(x2), int(y2)))
+        delta = metrics["delta"]
+        thresholds = default_shape_thresholds(slot_h)
+        width_delta_ratio = float(delta["bbox_width_delta_ratio"])
+        height_delta_ratio = float(delta["bbox_height_delta_ratio"])
+        centroid_dx = float(delta["centroid_dx"])
+        centroid_dy = float(delta["centroid_dy"])
+        ink_area_ratio = float(delta["ink_area_ratio"])
+        row_projection_distance = float(delta["row_projection_distance"])
+        col_projection_distance = float(delta["col_projection_distance"])
+        margin_distribution_delta = float(delta["margin_distribution_delta"])
         char_issues: list[dict[str, Any]] = []
         if source_char != target_char:
-            if abs(width_delta_ratio) > 0.30:
+            width_limit = float(thresholds["bbox_width_delta_ratio"]["limit"])
+            height_limit = float(thresholds["bbox_height_delta_ratio"]["limit"])
+            centroid_dx_limit = float(thresholds["centroid_dx"]["limit"])
+            centroid_dy_limit = float(thresholds["centroid_dy"]["limit"])
+            ink_range = thresholds["ink_area_ratio"]["range"]
+            row_projection_limit = float(thresholds["row_projection_distance"]["limit"])
+            col_projection_limit = float(thresholds["col_projection_distance"]["limit"])
+            margin_distribution_limit = float(thresholds["margin_distribution_delta"]["limit"])
+            if abs(width_delta_ratio) > width_limit:
                 char_issues.append(
                     {
                         "type": "bbox_width_delta_ratio_large",
                         "actual": round(float(width_delta_ratio), 4),
-                        "limit": 0.30,
+                        "limit": width_limit,
+                        "threshold_source": thresholds["bbox_width_delta_ratio"]["threshold_source"],
                     }
                 )
-            if abs(height_delta_ratio) > 0.24:
+            if abs(height_delta_ratio) > height_limit:
                 char_issues.append(
                     {
                         "type": "bbox_height_delta_ratio_large",
                         "actual": round(float(height_delta_ratio), 4),
-                        "limit": 0.24,
+                        "limit": height_limit,
+                        "threshold_source": thresholds["bbox_height_delta_ratio"]["threshold_source"],
                     }
                 )
-            if abs(centroid_dx) > max(2.0, slot_h * 0.16):
+            if abs(centroid_dx) > centroid_dx_limit:
                 char_issues.append(
                     {
                         "type": "centroid_dx_large",
                         "actual": round(float(centroid_dx), 3),
-                        "limit": round(float(max(2.0, slot_h * 0.16)), 3),
+                        "limit": centroid_dx_limit,
+                        "threshold_source": thresholds["centroid_dx"]["threshold_source"],
                     }
                 )
-            if abs(centroid_dy) > max(2.0, slot_h * 0.16):
+            if abs(centroid_dy) > centroid_dy_limit:
                 char_issues.append(
                     {
                         "type": "centroid_dy_large",
                         "actual": round(float(centroid_dy), 3),
-                        "limit": round(float(max(2.0, slot_h * 0.16)), 3),
+                        "limit": centroid_dy_limit,
+                        "threshold_source": thresholds["centroid_dy"]["threshold_source"],
                     }
                 )
-            if ink_area_ratio < 0.42 or ink_area_ratio > 1.95:
+            if ink_area_ratio < float(ink_range[0]) or ink_area_ratio > float(ink_range[1]):
                 char_issues.append(
                     {
                         "type": "ink_area_ratio_outside_range",
                         "actual": round(float(ink_area_ratio), 4),
-                        "range": [0.42, 1.95],
+                        "range": ink_range,
+                        "threshold_source": thresholds["ink_area_ratio"]["threshold_source"],
+                    }
+                )
+            if row_projection_distance > row_projection_limit:
+                char_issues.append(
+                    {
+                        "type": "row_projection_distance_large",
+                        "actual": round(float(row_projection_distance), 4),
+                        "limit": row_projection_limit,
+                        "threshold_source": thresholds["row_projection_distance"]["threshold_source"],
+                    }
+                )
+            if col_projection_distance > col_projection_limit:
+                char_issues.append(
+                    {
+                        "type": "col_projection_distance_large",
+                        "actual": round(float(col_projection_distance), 4),
+                        "limit": col_projection_limit,
+                        "threshold_source": thresholds["col_projection_distance"]["threshold_source"],
+                    }
+                )
+            if margin_distribution_delta > margin_distribution_limit:
+                char_issues.append(
+                    {
+                        "type": "margin_distribution_delta_large",
+                        "actual": round(float(margin_distribution_delta), 4),
+                        "limit": margin_distribution_limit,
+                        "threshold_source": thresholds["margin_distribution_delta"]["threshold_source"],
                     }
                 )
         per_char.append(
@@ -2007,6 +2047,12 @@ def shape_change_report(
                 "centroid_dx": round(float(centroid_dx), 3),
                 "centroid_dy": round(float(centroid_dy), 3),
                 "ink_area_ratio": round(float(ink_area_ratio), 4),
+                "row_projection_distance": round(float(row_projection_distance), 4),
+                "col_projection_distance": round(float(col_projection_distance), 4),
+                "margin_distribution_delta": round(float(margin_distribution_delta), 4),
+                "source_image_metrics": metrics["source"],
+                "target_image_metrics": metrics["target"],
+                "thresholds": thresholds,
                 "issues": char_issues,
             }
         )
@@ -2020,6 +2066,7 @@ def shape_change_report(
         "placement_strategy_reason": plan.placement_strategy_reason,
         "shape_change_large": bool(issues),
         "per_char": per_char,
+        "changed_chars": [item for item in per_char if item.get("source_char") != item.get("target_char")],
         "issues": issues,
     }
 
