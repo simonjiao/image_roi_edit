@@ -8,6 +8,109 @@ from roi_image_edit.stages import prompt_stage_context, stage_gate_for_report
 
 VISION_CANDIDATE_MIN_LIMIT = 3
 VISION_CANDIDATE_MAX_LIMIT = 8
+EXTERNAL_ARTIFACT_SCHEMA_VERSION = 1
+
+
+def external_artifact_schema_report() -> dict[str, Any]:
+    return {
+        "artifact_schema_version": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
+        "result_json": {
+            "root_required": [
+                "artifactSchemaVersion",
+                "ok",
+                "runDir",
+                "profile",
+                "profileResolution",
+                "images",
+            ],
+            "image_required": [
+                "id",
+                "ok",
+                "accepted",
+                "applied",
+                "instructionDetails",
+                "candidates",
+                "stage_evidence",
+                "regions",
+                "artifacts",
+            ],
+            "candidate_required": [
+                "id",
+                "stage_context",
+                "blocking_stage",
+                "patch",
+                "model_suggestions",
+                "rejection_reason",
+            ],
+            "region_summary_required": [
+                "plan",
+                "hard_check",
+                "vision",
+                "trace",
+                "artifacts",
+            ],
+            "vision_required": [
+                "candidate_rank",
+                "final_acceptance",
+                "revision_attempts",
+                "revision_rounds",
+            ],
+            "rejection_required": [
+                "accepted",
+                "applied",
+                "final_is_rejected_candidate",
+                "final_blocking_stage",
+                "last_round_stop_reason",
+            ],
+        },
+        "progress_jsonl": {
+            "record_required": [
+                "artifactSchemaVersion",
+                "time",
+                "event",
+            ],
+            "stage_fields": [
+                "pipeline_profile",
+                "stage_order",
+                "stage_status",
+                "blocking_stage",
+                "blocking_stage_reason",
+                "allowed_patch_keys",
+                "blocked_patch_keys",
+            ],
+            "candidate_fields": [
+                "candidate_count",
+                "rendered",
+                "best_score",
+                "stage_evidence",
+            ],
+            "patch_fields": [
+                "stage_filter_report",
+                "selected_optimization_step",
+                "revision_continuation_contract",
+            ],
+            "vision_suggestion_fields": [
+                "model_suggestion_filter",
+                "model_stage_response_contract",
+                "revision_attempts",
+            ],
+            "rejection_reason_fields": [
+                "error",
+                "stop_reason",
+                "missing_direction_reason",
+                "rejection_reason",
+            ],
+        },
+    }
+
+
+def progress_record(event: str, fields: dict[str, Any] | None, *, timestamp: str) -> dict[str, Any]:
+    return {
+        "artifactSchemaVersion": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
+        "time": timestamp,
+        "event": event,
+        **(fields or {}),
+    }
 
 
 def normalize_vision_candidate_limit(requested_limit: int | None, total_candidate_count: int) -> int:
@@ -55,6 +158,7 @@ def result_audit_payload(response: dict[str, Any]) -> dict[str, Any]:
         ]
         images.append(image_record)
     return {
+        "artifactSchemaVersion": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
         "ok": response.get("ok"),
         "runDir": response.get("runDir"),
         "profile": response.get("profile"),

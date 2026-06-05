@@ -5,8 +5,11 @@ import unittest
 
 import roi_image_edit.processing_service as processing_service
 from roi_image_edit.run_artifacts import (
+    EXTERNAL_ARTIFACT_SCHEMA_VERSION,
     attach_stage_context_to_rank_report,
+    external_artifact_schema_report,
     model_stage_context,
+    progress_record,
     request_audit_payload,
     result_audit_payload,
     revision_round_continuation_contract,
@@ -100,6 +103,10 @@ class RunArtifactsTest(unittest.TestCase):
                             "id": "c1",
                             "dataUrl": "data:image/png;base64,candidate",
                             "stage_context": {"blocking_stage": "text_shape"},
+                            "blocking_stage": "text_shape",
+                            "patch": {"font_size_delta": 1},
+                            "model_suggestions": [{"parameter": "font_size", "delta": 1}],
+                            "rejection_reason": "text_shape_not_yet_passed",
                         }
                     ],
                     "regions": [
@@ -129,6 +136,7 @@ class RunArtifactsTest(unittest.TestCase):
             ],
         }
         audit = result_audit_payload(response)
+        self.assertEqual(audit["artifactSchemaVersion"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
         self.assertEqual(audit["profile"], "clean_digital")
         self.assertEqual(audit["profileResolution"]["source"], "explicit_request")
         self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
@@ -137,6 +145,10 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertNotIn("resultDataUrl", image)
         self.assertNotIn("dataUrl", image["candidates"][0])
         self.assertEqual(image["candidates"][0]["stage_context"]["blocking_stage"], "text_shape")
+        self.assertEqual(image["candidates"][0]["blocking_stage"], "text_shape")
+        self.assertEqual(image["candidates"][0]["patch"], {"font_size_delta": 1})
+        self.assertEqual(image["candidates"][0]["model_suggestions"][0]["parameter"], "font_size")
+        self.assertEqual(image["candidates"][0]["rejection_reason"], "text_shape_not_yet_passed")
         self.assertEqual(image["autoRoiEvidence"]["regions"][0]["search_roi"], [2, 4, 46, 26])
         self.assertEqual(image["autoRoiEvidence"]["regions"][0]["edit_roi"], [10, 8, 32, 22])
         self.assertEqual(image["stage_evidence"]["auto_roi"]["regions"][0]["search_roi"], [2, 4, 46, 26])
@@ -159,6 +171,52 @@ class RunArtifactsTest(unittest.TestCase):
             image["regions"][0]["summary"]["vision"]["revision_attempts"][0]["optimization_step"],
             "stroke_body_shape",
         )
+
+    def test_external_artifact_schema_covers_result_progress_and_explanations(self) -> None:
+        schema = external_artifact_schema_report()
+
+        self.assertEqual(schema["artifact_schema_version"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
+        result_schema = schema["result_json"]
+        self.assertIn("profileResolution", result_schema["root_required"])
+        self.assertIn("stage_evidence", result_schema["image_required"])
+        self.assertIn("stage_context", result_schema["candidate_required"])
+        self.assertIn("patch", result_schema["candidate_required"])
+        self.assertIn("model_suggestions", result_schema["candidate_required"])
+        self.assertIn("rejection_reason", result_schema["candidate_required"])
+        self.assertIn("final_acceptance", result_schema["vision_required"])
+        self.assertIn("revision_attempts", result_schema["vision_required"])
+        self.assertIn("final_is_rejected_candidate", result_schema["rejection_required"])
+
+        progress_schema = schema["progress_jsonl"]
+        self.assertIn("artifactSchemaVersion", progress_schema["record_required"])
+        self.assertIn("blocking_stage", progress_schema["stage_fields"])
+        self.assertIn("stage_evidence", progress_schema["candidate_fields"])
+        self.assertIn("stage_filter_report", progress_schema["patch_fields"])
+        self.assertIn("model_suggestion_filter", progress_schema["vision_suggestion_fields"])
+        self.assertIn("rejection_reason", progress_schema["rejection_reason_fields"])
+
+    def test_progress_record_adds_stable_schema_version(self) -> None:
+        record = progress_record(
+            "revision_round_finished",
+            {
+                "blocking_stage": "ink_gray_balance",
+                "stage_filter_report": {"stage_id": "ink_gray_balance"},
+                "model_suggestion_filter": {"attempt_records": [{"rejection_reason": "forbidden"}]},
+                "stop_reason": "no_ink_gray_balance_severity_improvement",
+            },
+            timestamp="2026-06-05T12:00:00+0800",
+        )
+
+        self.assertEqual(record["artifactSchemaVersion"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
+        self.assertEqual(record["time"], "2026-06-05T12:00:00+0800")
+        self.assertEqual(record["event"], "revision_round_finished")
+        self.assertEqual(record["blocking_stage"], "ink_gray_balance")
+        self.assertEqual(record["stage_filter_report"]["stage_id"], "ink_gray_balance")
+        self.assertEqual(
+            record["model_suggestion_filter"]["attempt_records"][0]["rejection_reason"],
+            "forbidden",
+        )
+        self.assertEqual(record["stop_reason"], "no_ink_gray_balance_severity_improvement")
 
     def test_stage_progress_fields_expose_stable_stage_keys(self) -> None:
         report = {"pass": False, "pipeline_profile": "photo_scan", "issues": [{"type": "roi_outside"}]}

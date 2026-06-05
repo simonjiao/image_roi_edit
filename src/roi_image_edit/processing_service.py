@@ -83,6 +83,7 @@ from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
     model_stage_context,
     normalize_vision_candidate_limit,
+    progress_record,
     request_audit_payload,
     result_audit_payload,
     revision_round_continuation_contract,
@@ -1928,11 +1929,11 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     pipeline_profile = str(profile_resolution["id"])
 
     def emit(event: str, fields: dict[str, Any] | None = None) -> None:
-        record = {
-            "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "event": event,
-            **(fields or {}),
-        }
+        record = progress_record(
+            event,
+            fields,
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        )
         with progress_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         if progress:
