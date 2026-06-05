@@ -234,6 +234,18 @@ function progressEventText(record) {
       return `第 ${record.round ?? "-"} 轮完成：${record.accepted ? "通过" : "未通过"}，${
         record.blocking_stage || record.current_blocking_stage || "pass"
       }`;
+    case "finalist_revision_started":
+      return `终检候选开始：${record.candidate_count ?? 0} 个`;
+    case "finalist_revision_candidate_started":
+      return `终检候选 ${record.index ?? "-"}/${record.total ?? "-"}：${
+        record.font_name || "font"
+      } ${record.font_size || ""}px`;
+    case "finalist_revision_candidate_finished":
+      return `终检候选 ${record.index ?? "-"}/${record.total ?? "-"} 完成：${
+        record.accepted ? "通过" : "未通过"
+      }，${record.blocking_stage || record.final_decision || "revise"}`;
+    case "finalist_revision_finished":
+      return `终检候选结束：${record.accepted ? "通过" : "未通过"}`;
     case "region_finished":
       return `区域完成：${record.accepted ? "通过" : "未通过"}，迭代 ${
         record.revision_rounds ?? 0
@@ -493,6 +505,7 @@ async function processAll() {
 
   const payload = {
     maxCandidates: 120,
+    maxRevisionRounds: 12,
     images: processable.map((item) => ({
       id: item.id,
       filename: item.filename,

@@ -376,17 +376,20 @@ def auto_orient_for_instruction(
         )
 
     if successes:
-        successes.sort(key=lambda item: (item[0], item[1]))
+        successes.sort(key=lambda item: (item[1], item[0]))
         selected_direction_key, selected_score, _orientation_index, orientation, candidate, regions, selected_attempt = successes[0]
-        margin = None
+        selection_margin = None
+        direction_margin = None
         if len(successes) > 1:
-            margin = round(float(successes[1][0] - selected_direction_key), 3)
+            selection_margin = round(float(successes[1][1] - selected_score), 3)
+            direction_margin = round(float(successes[1][0] - selected_direction_key), 3)
         return candidate, regions, {
             "applied": orientation != "none",
             "orientation": orientation,
             "attempts": attempts,
             "selected_score": round(float(selected_score), 3),
-            "direction_margin": margin,
+            "selection_margin": selection_margin,
+            "direction_margin": direction_margin,
             "selected_attempt": selected_attempt,
         }
 
@@ -460,6 +463,7 @@ def cleanup_instruction_part(value: str) -> str:
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("姓名", "名字", "患者姓名", "姓名名", "name"),
+    "department": ("科室", "科别", "就诊科室", "就诊科别", "department", "dept"),
     "receive_time": ("接收时间", "接受时间", "采样时间", "收样时间", "receive time"),
     "date": ("日期", "时间", "检查日期", "报告日期", "出生日期", "date"),
     "age": ("年龄", "岁数", "age"),
@@ -483,7 +487,8 @@ def strip_field_prefix(value: str) -> str:
         reverse=True,
     )
     for alias in compact_aliases:
-        pattern = rf"^\s*(?:字段|field)?\s*{re.escape(alias)}\s*[:：,，;；-]*\s*"
+        alias_pattern = r"\s*".join(re.escape(char) for char in alias)
+        pattern = rf"^\s*(?:字段|field)?\s*{alias_pattern}\s*[:：,，;；-]*\s*"
         stripped = re.sub(pattern, "", text, flags=re.IGNORECASE)
         if stripped != text:
             return stripped
@@ -1217,6 +1222,80 @@ def expand_auto_search_roi(
     return clamp_box((roi[0], roi[1], new_x2, new_y2), img.size)
 
 
+def auto_edit_roi_from_plan(
+    img: Image.Image,
+    roi: tuple[int, int, int, int],
+    plan: RenderPlan,
+    *,
+    source_text: str,
+    target_text: str,
+    field_key: str | None,
+) -> tuple[int, int, int, int]:
+    if not plan.slot_boxes:
+        return roi
+    if field_key == "name":
+        return expand_auto_search_roi(
+            img,
+            roi,
+            plan,
+            source_text=source_text,
+            target_text=target_text,
+        )
+
+    source_count = len(text_chars(source_text))
+    target_count = len(text_chars(target_text))
+    if source_count <= 0:
+        return roi
+
+    slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1)[:source_count])
+    if not slots:
+        return roi
+    value_box = slots_roi(slots, img.size) or plan.target_roi
+    slot_widths = [max(1, slot.x2 - slot.x1) for slot in slots]
+    slot_heights = [max(1, slot.y2 - slot.y1) for slot in slots]
+    median_width = float(np.median(slot_widths)) if slot_widths else max(1, value_box[2] - value_box[0])
+    median_height = float(np.median(slot_heights)) if slot_heights else max(1, value_box[3] - value_box[1])
+    left_pad = max(3, int(round(median_width * 0.16)))
+    right_pad = max(8, int(round(median_width * (0.75 if target_count <= source_count else 1.35))))
+    vertical_pad = max(7, int(round(median_height * 0.38)))
+
+    row = (value_box[0], value_box[1], value_box[2], value_box[3])
+    right_limit = roi[2]
+    for box in plan.protected_boxes:
+        if box[0] <= value_box[2]:
+            continue
+        if not protected_box_overlaps_row(box, row):
+            continue
+        right_limit = min(right_limit, box[0] - 2)
+    if right_limit <= value_box[2]:
+        right_limit = value_box[2] + right_pad
+
+    desired_right = value_box[2] + right_pad
+    if target_count > source_count:
+        desired_width = int(round((value_box[2] - value_box[0]) * target_count / source_count + median_width * 0.5))
+        desired_right = max(desired_right, value_box[0] + desired_width)
+
+    top_limit = 0
+    bottom_limit = img.size[1]
+    for run in page_text_components(img):
+        horizontal_gap = max(value_box[0] - run.x2, run.x1 - value_box[2], 0)
+        if horizontal_gap > max(80.0, median_width * max(2, source_count) * 0.80):
+            continue
+        if run.y2 <= value_box[1] - 3:
+            top_limit = max(top_limit, run.y2 + 1)
+        elif run.y1 >= value_box[3] + 3:
+            bottom_limit = min(bottom_limit, run.y1 - 1)
+    return clamp_box(
+        (
+            max(roi[0], value_box[0] - left_pad),
+            max(top_limit, value_box[1] - vertical_pad),
+            min(right_limit, desired_right),
+            min(bottom_limit, value_box[3] + vertical_pad),
+        ),
+        img.size,
+    )
+
+
 def slots_roi(
     slots: tuple[TextRun, ...],
     image_size: tuple[int, int],
@@ -1366,6 +1445,33 @@ def non_cjk_value_slot_after_label(
     return (best_line_fallback[1],) if best_line_fallback is not None else ()
 
 
+def split_cjk_value_cluster(
+    img: Image.Image,
+    runs: tuple[TextRun, ...],
+    *,
+    desired_count: int,
+    threshold: int,
+    median_h: float,
+) -> tuple[TextRun, ...]:
+    if desired_count <= 0 or not runs:
+        return ()
+    value = merge_text_runs(tuple(sorted(runs, key=lambda item: item.x1)))
+    if value is None:
+        return ()
+    value_w = value.x2 - value.x1
+    if value_w < max(12.0, median_h * desired_count * 0.62):
+        return tuple(sorted(runs[:desired_count], key=lambda item: item.x1))
+    split = split_run_by_projection(
+        img,
+        value,
+        parts=desired_count,
+        threshold=threshold,
+    )
+    if len(split) >= desired_count:
+        return tuple(sorted(split[:desired_count], key=lambda item: item.x1))
+    return tuple(sorted(runs[:desired_count], key=lambda item: item.x1))
+
+
 def cjk_value_slots_after_colon(
     img: Image.Image,
     roi: tuple[int, int, int, int],
@@ -1409,10 +1515,14 @@ def cjk_value_slots_after_colon(
                     continue
                 value_runs.append(run)
                 last_x2 = run.x2
-                if len(value_runs) >= desired_count:
-                    break
             if len(value_runs) >= desired_count:
-                return tuple(value_runs[:desired_count])
+                return split_cjk_value_cluster(
+                    img,
+                    tuple(value_runs),
+                    desired_count=desired_count,
+                    threshold=threshold,
+                    median_h=median_h,
+                )
             if len(value_runs) == 1:
                 value = value_runs[0]
                 value_w = value.x2 - value.x1
@@ -1425,6 +1535,59 @@ def cjk_value_slots_after_colon(
                     )
                     if len(split) >= desired_count:
                         return tuple(sorted(split[:desired_count], key=lambda item: item.x1))
+    return ()
+
+
+def cjk_value_slots_without_label(
+    img: Image.Image,
+    roi: tuple[int, int, int, int],
+    *,
+    source_text: str,
+    target_text: str,
+) -> tuple[TextRun, ...]:
+    basis_text = source_text or target_text
+    desired_count = len(text_chars(source_text)) or len(text_chars(target_text))
+    if desired_count < 2 or not is_mostly_cjk(basis_text):
+        return ()
+
+    roi_w = max(1, roi[2] - roi[0])
+    for threshold in (150, 135, 120, 165):
+        components = merge_overlapping_text_components(
+            tuple(
+                sorted(
+                    dominant_text_line(component_text_runs(img, roi, threshold=threshold), roi),
+                    key=lambda item: item.x1,
+                )
+            )
+        )
+        if not components:
+            continue
+        heights = [text_run_height(run) for run in components]
+        median_h = float(np.median(heights)) if heights else 1.0
+        if any(is_colon_like_run(run, median_h) for run in components):
+            continue
+        glyphs = tuple(
+            run
+            for run in components
+            if text_run_height(run) >= max(8.0, median_h * 0.45)
+        )
+        if not glyphs:
+            continue
+        value = merge_text_runs(glyphs)
+        if value is None:
+            continue
+        value_w = value.x2 - value.x1
+        if value_w < median_h * desired_count * 0.62:
+            continue
+        if value.x1 > roi[0] + roi_w * 0.32:
+            continue
+        return split_cjk_value_cluster(
+            img,
+            glyphs,
+            desired_count=desired_count,
+            threshold=threshold,
+            median_h=median_h,
+        )
     return ()
 
 
@@ -1448,6 +1611,14 @@ def component_slots_for_region(
     )
     if non_cjk_slot:
         return non_cjk_slot
+    cjk_unlabeled_slots = cjk_value_slots_without_label(
+        img,
+        roi,
+        source_text=source_text,
+        target_text=target_text,
+    )
+    if cjk_unlabeled_slots:
+        return cjk_unlabeled_slots
     cjk_after_colon_slots = cjk_value_slots_after_colon(
         img,
         roi,
@@ -2066,6 +2237,7 @@ def auto_region_score(
     source_text: str,
     target_text: str,
     field_key: str | None,
+    image_size: tuple[int, int],
     source_shape_score: float | None = None,
 ) -> float | None:
     source_count = len(text_chars(source_text))
@@ -2103,6 +2275,18 @@ def auto_region_score(
         score -= 8.0
     if field_key == "name" and left_context:
         score -= 12.0
+    if field_key == "department":
+        image_w, image_h = image_size
+        target_center_x = (plan.target_roi[0] + plan.target_roi[2]) / 2.0
+        target_center_y = (plan.target_roi[1] + plan.target_roi[3]) / 2.0
+        score += abs(target_center_y - image_h * 0.11) * 1.0
+        score += abs(target_center_x - image_w * 0.36) * 0.20
+        if target_center_y > image_h * 0.22:
+            score += 260.0
+        if target_center_x > image_w * 0.62:
+            score += 180.0
+        if target_center_x < image_w * 0.18:
+            score += 80.0
     if source_shape_score is not None:
         score += source_shape_score * 1.7
     return score
@@ -2184,6 +2368,7 @@ def auto_select_regions_for_instruction(
                 source_text=effective_source,
                 target_text=target_text,
                 field_key=field_key,
+                image_size=img.size,
                 source_shape_score=shape_score,
             )
             if score is None:
@@ -2224,13 +2409,14 @@ def auto_select_regions_for_instruction(
             "请手动画一个只包含旧文字和少量右侧空白的矩形，或把指令写成“字段 旧文字调整为新文字”。"
         )
 
-    selected_score, roi, selected_plan, selected_source_text = min(candidates, key=lambda item: item[0])
-    roi = expand_auto_search_roi(
+    selected_score, search_roi, selected_plan, selected_source_text = min(candidates, key=lambda item: item[0])
+    roi = auto_edit_roi_from_plan(
         img,
-        roi,
+        search_roi,
         selected_plan,
         source_text=selected_source_text,
         target_text=target_text,
+        field_key=field_key,
     )
     x1, y1, x2, y2 = roi
     return [
@@ -2242,6 +2428,7 @@ def auto_select_regions_for_instruction(
             "targetText": target_text,
             "_autoScore": round(float(selected_score), 3),
             "_autoTargetRoi": list(selected_plan.target_roi),
+            "_autoSearchRoi": list(search_roi),
         }
     ]
 
@@ -2307,11 +2494,15 @@ def build_region_plan(
     )
     target_roi = slots_roi(slots, img.size) or roi
     target_roi = clamp_box_to_container(target_roi, roi)
-    if slots and not is_mostly_cjk(source_text or target_text):
+    if slots:
         slot_widths = [max(1, slot.x2 - slot.x1) for slot in slots]
         slot_heights = [max(1, slot.y2 - slot.y1) for slot in slots]
-        pad_x = max(3, int(round(float(np.median(slot_widths)) * 0.035)))
-        pad_y = max(2, int(round(float(np.median(slot_heights)) * 0.12)))
+        if is_mostly_cjk(source_text or target_text):
+            pad_x = max(2, int(round(float(np.median(slot_widths)) * 0.07)))
+            pad_y = max(6, int(round(float(np.median(slot_heights)) * 0.30)))
+        else:
+            pad_x = max(3, int(round(float(np.median(slot_widths)) * 0.035)))
+            pad_y = max(2, int(round(float(np.median(slot_heights)) * 0.12)))
         target_roi = clamp_box_to_container(
             (
                 min(slot.x1 for slot in slots) - pad_x,
@@ -6497,6 +6688,7 @@ def run_region_vision_checks(
     prompts: tuple[str, str, str],
     candidate_limit: int,
     font_style_reference: dict[str, Any],
+    max_revision_rounds: int = 8,
     progress: ProgressCallback | None = None,
 ) -> tuple[CandidateParams | None, dict[str, Any]]:
     if not rendered:
@@ -6646,7 +6838,7 @@ def run_region_vision_checks(
         current_acceptance = final_acceptance_json
         seen_params: set[str] = {params_signature(current_params)}
         rank_patch = candidate_rank_json.get("suggested_patch")
-        max_revision_rounds = 8
+        max_revision_rounds = max(1, int(max_revision_rounds))
         for round_idx in range(1, max_revision_rounds + 1):
             basis_stage_gate = stage_gate_for_report(current_report) if isinstance(current_report, dict) else {}
             basis_blocking_stage, basis_stage_is_local = effective_blocking_stage(current_report, current_acceptance)
@@ -7064,14 +7256,39 @@ def run_region_vision_checks(
                 break
 
     if report_strict_pass(final_report) and not accepted:
-        for alt_idx, alt_params in enumerate(
-            final_font_revision_candidates(final_params, font_style_reference, plan, final_report),
-            start=len(revision_attempts) + 1,
-        ):
+        final_font_candidates = final_font_revision_candidates(
+            final_params,
+            font_style_reference,
+            plan,
+            final_report,
+        )
+        if progress and final_font_candidates:
+            progress(
+                "finalist_revision_started",
+                {
+                    "candidate_count": len(final_font_candidates),
+                    "basis_candidate_id": final_params.candidate_id,
+                    "basis_blocking_stage": (final_report.get("stage_gate") or {}).get("blocking_stage"),
+                },
+            )
+        base_alt_index = len(revision_attempts) + 1
+        for finalist_index, alt_params in enumerate(final_font_candidates, start=1):
+            alt_idx = base_alt_index + finalist_index - 1
             alt_params = mutate_params(
                 alt_params,
                 candidate_id=f"{final_params.candidate_id}_f{alt_idx:02d}",
             )
+            if progress:
+                progress(
+                    "finalist_revision_candidate_started",
+                    {
+                        "index": finalist_index,
+                        "total": len(final_font_candidates),
+                        "candidate_id": alt_params.candidate_id,
+                        "font_name": alt_params.font_name,
+                        "font_size": alt_params.font_size,
+                    },
+                )
             alt_image = render_candidate(original, plan, alt_params)
             alt_report = candidate_report(
                 original,
@@ -7092,6 +7309,19 @@ def run_region_vision_checks(
             if not alt_strict:
                 attempt_record["strict_gate"] = alt_report.get("strict_gate")
                 revision_attempts.append(attempt_record)
+                if progress:
+                    progress(
+                        "finalist_revision_candidate_finished",
+                        {
+                            "index": finalist_index,
+                            "total": len(final_font_candidates),
+                            "candidate_id": alt_params.candidate_id,
+                            "strict_pass": False,
+                            "accepted": False,
+                            "blocking_stage": (alt_report.get("stage_gate") or {}).get("blocking_stage"),
+                            "score": round(float(alt_score), 3),
+                        },
+                    )
                 continue
 
             alt_context_path = region_dir / f"vision_final_context_f{alt_idx:02d}.png"
@@ -7107,7 +7337,24 @@ def run_region_vision_checks(
             )
             attempt_record["final_acceptance"] = alt_acceptance
             revision_attempts.append(attempt_record)
-            if final_acceptance_delivers(alt_acceptance):
+            alt_delivered = final_acceptance_delivers(alt_acceptance)
+            if progress:
+                progress(
+                    "finalist_revision_candidate_finished",
+                    {
+                        "index": finalist_index,
+                        "total": len(final_font_candidates),
+                        "candidate_id": alt_params.candidate_id,
+                        "strict_pass": True,
+                        "accepted": alt_delivered,
+                        "acceptance_level": alt_acceptance.get("acceptance_level"),
+                        "final_decision": alt_acceptance.get("final_decision"),
+                        "blocking_stage": alt_acceptance.get("blocking_stage")
+                        or (alt_report.get("stage_gate") or {}).get("blocking_stage"),
+                        "score": round(float(alt_score), 3),
+                    },
+                )
+            if alt_delivered:
                 final_params = alt_params
                 final_image = alt_image
                 final_report = alt_report
@@ -7118,6 +7365,16 @@ def run_region_vision_checks(
                 write_json(region_dir / "final_acceptance.json", final_acceptance_json)
                 accepted = True
                 break
+        if progress and final_font_candidates:
+            progress(
+                "finalist_revision_finished",
+                {
+                    "candidate_count": len(final_font_candidates),
+                    "accepted": accepted,
+                    "final_candidate_id": final_params.candidate_id,
+                    "blocking_stage": (final_report.get("stage_gate") or {}).get("blocking_stage"),
+                },
+            )
 
     final_stage_gate = final_report.get("stage_gate") if isinstance(final_report, dict) else {}
     if not isinstance(final_stage_gate, dict):
@@ -7259,6 +7516,7 @@ def process_region(
     prompts: tuple[str, str, str],
     max_candidates: int = 120,
     vision_candidate_limit: int = 8,
+    max_revision_rounds: int = 8,
     progress: ProgressCallback | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
     plan = build_region_plan(
@@ -7507,6 +7765,10 @@ def process_region(
             },
         )
     region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
+    def vision_progress(event: str, fields: dict[str, Any]) -> None:
+        if progress:
+            progress(event, {"region_id": region_id, **(fields or {})})
+
     chosen_params, vision_summary = run_region_vision_checks(
         original=original,
         rendered=rendered,
@@ -7516,7 +7778,8 @@ def process_region(
         prompts=prompts,
         candidate_limit=vision_candidate_limit,
         font_style_reference=font_style_reference,
-        progress=progress,
+        max_revision_rounds=max_revision_rounds,
+        progress=vision_progress,
     )
     if chosen_params is not None:
         best_params = chosen_params
@@ -7842,6 +8105,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     prompts=prompts,
                     max_candidates=int(payload.get("maxCandidates") or 120),
                     vision_candidate_limit=int(payload.get("visionCandidateLimit") or 8),
+                    max_revision_rounds=int(payload.get("maxRevisionRounds") or 8),
                     progress=region_progress,
                 )
                 display_image = image.copy() if accepted else region_display_image.copy()

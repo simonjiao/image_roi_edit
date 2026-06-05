@@ -111,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     process.add_argument("--max-candidates", type=int, default=130)
     process.add_argument("--vision-candidate-limit", type=int, default=8)
+    process.add_argument("--max-revision-rounds", type=int, default=12)
     process.add_argument("--output", type=Path, default=None, help="Optional path to copy the final image.")
     process.add_argument("--json", action="store_true", dest="as_json")
 
@@ -163,6 +164,7 @@ def main() -> None:
         payload = {
             "maxCandidates": args.max_candidates,
             "visionCandidateLimit": args.vision_candidate_limit,
+            "maxRevisionRounds": args.max_revision_rounds,
             "images": [
                 {
                     "id": "cli_image",
@@ -203,6 +205,8 @@ def main() -> None:
                 "region_started",
                 "region_candidates_finished",
                 "region_initial_acceptance",
+                "finalist_revision_started",
+                "finalist_revision_finished",
                 "region_finished",
                 "image_finished",
             }:
@@ -212,6 +216,24 @@ def main() -> None:
                     if key not in {"time", "event"}
                 )
                 print(f"[progress] {event} {detail}".rstrip(), flush=True)
+            elif event == "finalist_revision_candidate_started":
+                print(
+                    "[progress] "
+                    f"finalist {record.get('index')}/{record.get('total')} "
+                    f"start candidate={record.get('candidate_id')} "
+                    f"font={record.get('font_name')} size={record.get('font_size')}",
+                    flush=True,
+                )
+            elif event == "finalist_revision_candidate_finished":
+                print(
+                    "[progress] "
+                    f"finalist {record.get('index')}/{record.get('total')} "
+                    f"accepted={record.get('accepted')} "
+                    f"decision={record.get('final_decision')} "
+                    f"blocking_stage={record.get('blocking_stage')} "
+                    f"score={record.get('score')}",
+                    flush=True,
+                )
 
         response = process_payload(payload, progress=print_progress)
         image_result = response["images"][0]
