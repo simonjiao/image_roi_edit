@@ -82,6 +82,7 @@ from roi_image_edit.stage_patchers import (
 )
 from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
+    delivery_artifact_manifest,
     model_stage_context,
     normalize_vision_candidate_limit,
     progress_record,
@@ -2189,10 +2190,28 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     response = {
         "ok": True,
         "runDir": str(run_dir),
+        "artifactManifest": str(run_dir / "artifact_manifest.json"),
         "profile": pipeline_profile,
         "profileResolution": profile_resolution,
         "images": results,
     }
-    write_json(run_dir / "result.json", result_audit_payload(response))
-    emit("run_finished", {"ok": True})
+    result_path = run_dir / "result.json"
+    artifact_manifest_path = run_dir / "artifact_manifest.json"
+    write_json(result_path, result_audit_payload(response))
+    manifest = delivery_artifact_manifest(
+        response,
+        run_dir=run_dir,
+        result_path=result_path,
+        progress_path=progress_path,
+    )
+    write_json(artifact_manifest_path, manifest)
+    emit(
+        "run_finished",
+        {
+            "ok": True,
+            "artifact_manifest": str(artifact_manifest_path),
+            "all_explainable": manifest.get("all_explainable"),
+            "missing_required": manifest.get("missing_required"),
+        },
+    )
     return response

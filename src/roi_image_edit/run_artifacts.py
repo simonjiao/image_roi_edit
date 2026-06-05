@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from roi_image_edit.stage_policy import STAGE_ORDER, stage_optimization_summary
@@ -19,6 +20,7 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "artifactSchemaVersion",
                 "ok",
                 "runDir",
+                "artifactManifest",
                 "profile",
                 "profileResolution",
                 "images",
@@ -101,6 +103,29 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "rejection_reason",
             ],
         },
+        "artifact_manifest": {
+            "root_required": [
+                "artifactSchemaVersion",
+                "manifest_type",
+                "run_dir",
+                "global_artifacts",
+                "images",
+                "all_explainable",
+                "missing_required",
+            ],
+            "image_required": [
+                "id",
+                "status",
+                "accepted",
+                "applied",
+                "blocking_stage",
+                "reports",
+                "candidate_images",
+                "stage_evidence",
+                "explainable",
+                "missing_required",
+            ],
+        },
     }
 
 
@@ -161,9 +186,371 @@ def result_audit_payload(response: dict[str, Any]) -> dict[str, Any]:
         "artifactSchemaVersion": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
         "ok": response.get("ok"),
         "runDir": response.get("runDir"),
+        "artifactManifest": response.get("artifactManifest"),
         "profile": response.get("profile"),
         "profileResolution": response.get("profileResolution"),
         "images": images,
+    }
+
+
+def _artifact_path_entry(
+    *,
+    key: str,
+    path: Any,
+    purpose: str,
+    required: bool,
+) -> dict[str, Any]:
+    path_str = str(path) if path else None
+    exists = bool(path_str and Path(path_str).exists())
+    return {
+        "key": key,
+        "path": path_str,
+        "purpose": purpose,
+        "required": bool(required),
+        "exists": exists,
+    }
+
+
+def _append_path_entry(
+    target: list[dict[str, Any]],
+    *,
+    key: str,
+    path: Any,
+    purpose: str,
+    required: bool = False,
+) -> None:
+    if not path:
+        if required:
+            target.append(
+                _artifact_path_entry(
+                    key=key,
+                    path=None,
+                    purpose=purpose,
+                    required=True,
+                )
+            )
+        return
+    target.append(
+        _artifact_path_entry(
+            key=key,
+            path=path,
+            purpose=purpose,
+            required=required,
+        )
+    )
+
+
+def _missing_required(entries: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(entry.get("key") or "")
+        for entry in entries
+        if entry.get("required") and not entry.get("exists")
+    ]
+
+
+def _status_for_image(image: dict[str, Any]) -> str:
+    if not image.get("ok"):
+        return "failed"
+    if image.get("accepted") and image.get("applied"):
+        return "accepted"
+    return "rejected"
+
+
+def _region_blocking_stage(region: dict[str, Any]) -> str | None:
+    summary = region.get("summary") if isinstance(region.get("summary"), dict) else {}
+    trace = summary.get("trace") if isinstance(summary.get("trace"), dict) else {}
+    if trace.get("final_blocking_stage"):
+        return str(trace.get("final_blocking_stage"))
+    hard_check = summary.get("hard_check") if isinstance(summary.get("hard_check"), dict) else {}
+    stage_gate = hard_check.get("stage_gate") if isinstance(hard_check.get("stage_gate"), dict) else {}
+    blocking_stage = stage_gate.get("blocking_stage")
+    return str(blocking_stage) if blocking_stage else None
+
+
+def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
+    summary = region.get("summary") if isinstance(region.get("summary"), dict) else {}
+    plan = summary.get("plan") if isinstance(summary.get("plan"), dict) else {}
+    vision = summary.get("vision") if isinstance(summary.get("vision"), dict) else {}
+    vision_artifacts = (
+        vision.get("artifacts")
+        if isinstance(vision.get("artifacts"), dict)
+        else {}
+    )
+    artifacts = summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    stage_evidence = (
+        artifacts.get("stage_evidence")
+        if isinstance(artifacts.get("stage_evidence"), dict)
+        else {}
+    )
+    reports: list[dict[str, Any]] = []
+    candidate_images: list[dict[str, Any]] = []
+    embedded_reports: list[dict[str, Any]] = []
+
+    _append_path_entry(
+        reports,
+        key="stage_evidence_summary",
+        path=stage_evidence.get("summary"),
+        purpose="Per-stage top candidate evidence index for this region.",
+        required=False,
+    )
+    _append_path_entry(
+        candidate_images,
+        key="selected_candidate",
+        path=artifacts.get("selected_candidate"),
+        purpose="Final local candidate image selected for this region, even when rejected.",
+        required=False,
+    )
+    _append_path_entry(
+        candidate_images,
+        key="selected_compare",
+        path=artifacts.get("selected_compare"),
+        purpose="Magnified comparison of original and selected region candidate.",
+        required=bool(region),
+    )
+    _append_path_entry(
+        candidate_images,
+        key="vision_candidate_sheet",
+        path=vision_artifacts.get("candidate_sheet"),
+        purpose="Vision-stage sheet containing the local top candidates.",
+        required=False,
+    )
+    _append_path_entry(
+        candidate_images,
+        key="vision_final_compare",
+        path=vision_artifacts.get("final_compare"),
+        purpose="Final visual acceptance comparison image.",
+        required=False,
+    )
+
+    for preview in vision_artifacts.get("revision_previews") or []:
+        if not isinstance(preview, dict):
+            continue
+        _append_path_entry(
+            candidate_images,
+            key=f"revision_preview_round_{preview.get('round')}",
+            path=preview.get("path"),
+            purpose="Selected revision-round comparison candidate.",
+            required=False,
+        )
+
+    stage_records = (
+        stage_evidence.get("stages")
+        if isinstance(stage_evidence.get("stages"), dict)
+        else {}
+    )
+    stage_top_candidates: list[dict[str, Any]] = []
+    for stage_id in STAGE_ORDER:
+        stage_record = stage_records.get(stage_id)
+        if not isinstance(stage_record, dict):
+            continue
+        record = {
+            "stage_id": stage_id,
+            "available": bool(stage_record.get("available")),
+            "reason": stage_record.get("reason"),
+        }
+        if stage_record.get("available"):
+            _append_path_entry(
+                candidate_images,
+                key=f"{stage_id}_top_compare",
+                path=stage_record.get("compare_path"),
+                purpose=f"Top local candidate comparison blocked at {stage_id}.",
+                required=False,
+            )
+            _append_path_entry(
+                reports,
+                key=f"{stage_id}_top_report",
+                path=stage_record.get("report_path"),
+                purpose=f"Hard/local report for the top {stage_id} candidate.",
+                required=False,
+            )
+            record["compare_path"] = stage_record.get("compare_path")
+            record["report_path"] = stage_record.get("report_path")
+        stage_top_candidates.append(record)
+
+    if isinstance(plan.get("slot_quality_report"), dict):
+        embedded_reports.append(
+            {
+                "key": "slot_quality_report",
+                "purpose": "Old source slot completeness and protected-text safety gate.",
+                "available": True,
+                "pass": plan["slot_quality_report"].get("pass"),
+            }
+        )
+
+    local_missing = _missing_required(reports + candidate_images)
+    return {
+        "id": region.get("id"),
+        "accepted": bool(region.get("accepted")),
+        "blocking_stage": _region_blocking_stage(region),
+        "reports": reports,
+        "candidate_images": candidate_images,
+        "embedded_reports": embedded_reports,
+        "stage_top_candidates": stage_top_candidates,
+        "missing_required": local_missing,
+        "explainable": not local_missing
+        and (
+            bool(reports)
+            or bool(candidate_images)
+            or bool(embedded_reports)
+            or bool(stage_top_candidates)
+        ),
+    }
+
+
+def _collect_image_explanation(image: dict[str, Any]) -> dict[str, Any]:
+    reports: list[dict[str, Any]] = []
+    candidate_images: list[dict[str, Any]] = []
+    embedded_reports: list[dict[str, Any]] = []
+    stage_evidence = (
+        image.get("stage_evidence")
+        if isinstance(image.get("stage_evidence"), dict)
+        else {}
+    )
+    artifacts = image.get("artifacts") if isinstance(image.get("artifacts"), dict) else {}
+    status = _status_for_image(image)
+
+    _append_path_entry(
+        candidate_images,
+        key="final_image",
+        path=artifacts.get("final"),
+        purpose="Displayed final image for this task.",
+        required=status != "failed",
+    )
+    _append_path_entry(
+        candidate_images,
+        key="applied_image",
+        path=artifacts.get("applied"),
+        purpose="Actually applied image. For rejected tasks this remains the original edit state.",
+        required=False,
+    )
+    _append_path_entry(
+        candidate_images,
+        key="auto_roi_overlay",
+        path=artifacts.get("auto_roi_overlay")
+        or ((stage_evidence.get("auto_roi") or {}).get("overlay_path") if isinstance(stage_evidence.get("auto_roi"), dict) else None),
+        purpose="Search/edit ROI overlay used to explain automatic region selection.",
+        required=False,
+    )
+    _append_path_entry(
+        candidate_images,
+        key="rejected_input",
+        path=artifacts.get("rejected_input"),
+        purpose="Original input preserved when processing fails before candidate generation.",
+        required=status == "failed",
+    )
+    _append_path_entry(
+        reports,
+        key="failure_report",
+        path=artifacts.get("failure_report"),
+        purpose="Failure report for tasks that stop before candidate generation.",
+        required=status == "failed",
+    )
+
+    failure = stage_evidence.get("failure") if isinstance(stage_evidence.get("failure"), dict) else None
+    if failure and isinstance(failure.get("pre_candidate_gate_report"), dict):
+        embedded_reports.append(
+            {
+                "key": "pre_candidate_gate_report",
+                "purpose": "Pre-candidate gate failure reason and gate order.",
+                "available": True,
+                "failed_gate": failure["pre_candidate_gate_report"].get("failed_gate"),
+            }
+        )
+
+    regions = [
+        _collect_region_explanation(region)
+        for region in image.get("regions", [])
+        if isinstance(region, dict)
+    ]
+    for region in regions:
+        reports.extend(region.get("reports") or [])
+        candidate_images.extend(region.get("candidate_images") or [])
+        embedded_reports.extend(region.get("embedded_reports") or [])
+
+    blocking_stages = [
+        region.get("blocking_stage")
+        for region in regions
+        if region.get("blocking_stage")
+    ]
+    failure_stage = failure.get("failure_stage") if isinstance(failure, dict) else None
+    missing = _missing_required(reports + candidate_images)
+    if status == "failed" and not embedded_reports and not reports:
+        missing.append("failure_explanation")
+    if status != "failed" and not regions:
+        missing.append("region_explanation")
+    has_candidate_evidence = bool(candidate_images) or status == "failed"
+    has_report_evidence = bool(reports) or bool(embedded_reports)
+    return {
+        "id": image.get("id"),
+        "status": status,
+        "ok": bool(image.get("ok")),
+        "accepted": bool(image.get("accepted")),
+        "applied": bool(image.get("applied")),
+        "blocking_stage": blocking_stages[0] if blocking_stages else failure_stage,
+        "reports": reports,
+        "candidate_images": candidate_images,
+        "embedded_reports": embedded_reports,
+        "stage_evidence": {
+            "auto_roi": stage_evidence.get("auto_roi"),
+            "failure": failure,
+            "regions": regions,
+        },
+        "explanation_sources": [
+            source
+            for source, available in (
+                ("result_json", True),
+                ("progress_jsonl", True),
+                ("stage_evidence", bool(stage_evidence) or bool(regions)),
+                ("candidate_images", has_candidate_evidence),
+                ("reports", has_report_evidence),
+            )
+            if available
+        ],
+        "missing_required": sorted(set(item for item in missing if item)),
+        "explainable": not missing and has_candidate_evidence and has_report_evidence,
+    }
+
+
+def delivery_artifact_manifest(
+    response: dict[str, Any],
+    *,
+    run_dir: Path,
+    result_path: Path,
+    progress_path: Path,
+) -> dict[str, Any]:
+    global_artifacts = [
+        _artifact_path_entry(
+            key="result_json",
+            path=result_path,
+            purpose="Stable task result and per-image acceptance/rejection summary.",
+            required=True,
+        ),
+        _artifact_path_entry(
+            key="progress_jsonl",
+            path=progress_path,
+            purpose="Stable progress stream showing stage rounds, failures, and stop reasons.",
+            required=True,
+        ),
+    ]
+    image_records = [
+        _collect_image_explanation(image)
+        for image in response.get("images", [])
+        if isinstance(image, dict)
+    ]
+    missing = _missing_required(global_artifacts)
+    for image in image_records:
+        if not image.get("explainable"):
+            missing.append(f"image:{image.get('id')}:explanation")
+        for item in image.get("missing_required") or []:
+            missing.append(f"image:{image.get('id')}:{item}")
+    return {
+        "artifactSchemaVersion": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
+        "manifest_type": "delivery_explanation",
+        "run_dir": str(run_dir),
+        "global_artifacts": global_artifacts,
+        "images": image_records,
+        "all_explainable": not missing,
+        "missing_required": sorted(set(item for item in missing if item)),
     }
 
 

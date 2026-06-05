@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
+import tempfile
 import unittest
 
 import roi_image_edit.processing_service as processing_service
 from roi_image_edit.run_artifacts import (
     EXTERNAL_ARTIFACT_SCHEMA_VERSION,
     attach_stage_context_to_rank_report,
+    delivery_artifact_manifest,
     external_artifact_schema_report,
     model_stage_context,
     progress_record,
@@ -28,6 +31,11 @@ EXPECTED_STAGE_ORDER = [
 
 
 class RunArtifactsTest(unittest.TestCase):
+    def _touch(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        return path
+
     def test_request_audit_payload_keeps_runtime_limits_and_strips_image_data(self) -> None:
         payload = {
             "profile": "photo_scan",
@@ -177,6 +185,7 @@ class RunArtifactsTest(unittest.TestCase):
 
         self.assertEqual(schema["artifact_schema_version"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
         result_schema = schema["result_json"]
+        self.assertIn("artifactManifest", result_schema["root_required"])
         self.assertIn("profileResolution", result_schema["root_required"])
         self.assertIn("stage_evidence", result_schema["image_required"])
         self.assertIn("stage_context", result_schema["candidate_required"])
@@ -194,6 +203,121 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("stage_filter_report", progress_schema["patch_fields"])
         self.assertIn("model_suggestion_filter", progress_schema["vision_suggestion_fields"])
         self.assertIn("rejection_reason", progress_schema["rejection_reason_fields"])
+
+        manifest_schema = schema["artifact_manifest"]
+        self.assertIn("global_artifacts", manifest_schema["root_required"])
+        self.assertIn("all_explainable", manifest_schema["root_required"])
+        self.assertIn("candidate_images", manifest_schema["image_required"])
+        self.assertIn("stage_evidence", manifest_schema["image_required"])
+
+    def test_delivery_artifact_manifest_explains_rejected_region_with_stage_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            result_path = self._touch(run_dir / "result.json")
+            progress_path = self._touch(run_dir / "progress.jsonl")
+            final_path = self._touch(run_dir / "final.png")
+            auto_overlay = self._touch(run_dir / "auto_roi_overlay.png")
+            selected_candidate = self._touch(run_dir / "r1" / "selected_candidate.png")
+            selected_compare = self._touch(run_dir / "r1" / "selected_compare.png")
+            candidate_sheet = self._touch(run_dir / "r1" / "vision_candidate_sheet.png")
+            final_compare = self._touch(run_dir / "r1" / "vision_final_compare.png")
+            iter_compare = self._touch(run_dir / "r1" / "vision_final_compare_iter01.png")
+            shape_compare = self._touch(run_dir / "r1" / "stage_evidence" / "text_shape_top_compare.png")
+            shape_report = self._touch(run_dir / "r1" / "stage_evidence" / "text_shape_top_report.json")
+            summary_path = self._touch(run_dir / "r1" / "stage_evidence" / "summary.json")
+            response = {
+                "ok": True,
+                "runDir": str(run_dir),
+                "artifactManifest": str(run_dir / "artifact_manifest.json"),
+                "images": [
+                    {
+                        "id": "img1",
+                        "ok": True,
+                        "accepted": False,
+                        "applied": False,
+                        "artifacts": {
+                            "final": str(final_path),
+                            "auto_roi_overlay": str(auto_overlay),
+                            "final_is_rejected_candidate": True,
+                        },
+                        "stage_evidence": {
+                            "auto_roi": {"overlay_path": str(auto_overlay)},
+                        },
+                        "regions": [
+                            {
+                                "id": "r1",
+                                "accepted": False,
+                                "summary": {
+                                    "trace": {"final_blocking_stage": "text_shape"},
+                                    "plan": {
+                                        "slot_quality_report": {
+                                            "pass": True,
+                                            "source_count": 2,
+                                            "target_count": 2,
+                                        }
+                                    },
+                                    "vision": {
+                                        "artifacts": {
+                                            "candidate_sheet": str(candidate_sheet),
+                                            "final_compare": str(final_compare),
+                                            "revision_previews": [
+                                                {"round": 1, "path": str(iter_compare)}
+                                            ],
+                                        }
+                                    },
+                                    "artifacts": {
+                                        "selected_candidate": str(selected_candidate),
+                                        "selected_compare": str(selected_compare),
+                                        "stage_evidence": {
+                                            "summary": str(summary_path),
+                                            "stages": {
+                                                "text_shape": {
+                                                    "available": True,
+                                                    "compare_path": str(shape_compare),
+                                                    "report_path": str(shape_report),
+                                                },
+                                                "ink_gray_balance": {
+                                                    "available": False,
+                                                    "reason": "no_candidate_blocked_at_stage",
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+
+            manifest = delivery_artifact_manifest(
+                response,
+                run_dir=run_dir,
+                result_path=result_path,
+                progress_path=progress_path,
+            )
+
+        self.assertTrue(manifest["all_explainable"])
+        self.assertEqual(manifest["missing_required"], [])
+        image = manifest["images"][0]
+        self.assertEqual(image["status"], "rejected")
+        self.assertFalse(image["accepted"])
+        self.assertEqual(image["blocking_stage"], "text_shape")
+        self.assertTrue(image["explainable"])
+        self.assertIn("result_json", [item["key"] for item in manifest["global_artifacts"]])
+        self.assertIn("progress_jsonl", [item["key"] for item in manifest["global_artifacts"]])
+        report_keys = [item["key"] for item in image["reports"]]
+        image_keys = [item["key"] for item in image["candidate_images"]]
+        embedded_keys = [item["key"] for item in image["embedded_reports"]]
+        self.assertIn("stage_evidence_summary", report_keys)
+        self.assertIn("text_shape_top_report", report_keys)
+        self.assertIn("selected_candidate", image_keys)
+        self.assertIn("selected_compare", image_keys)
+        self.assertIn("vision_candidate_sheet", image_keys)
+        self.assertIn("vision_final_compare", image_keys)
+        self.assertIn("revision_preview_round_1", image_keys)
+        self.assertIn("text_shape_top_compare", image_keys)
+        self.assertIn("slot_quality_report", embedded_keys)
 
     def test_progress_record_adds_stable_schema_version(self) -> None:
         record = progress_record(

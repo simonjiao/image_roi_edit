@@ -64,16 +64,42 @@ class FailureArtifactsTest(unittest.TestCase):
             self.assertEqual(saved_report["applied"], False)
             result_path = Path(response["runDir"]) / "result.json"
             progress_path = Path(response["runDir"]) / "progress.jsonl"
+            artifact_manifest_path = Path(response["artifactManifest"])
             self.assertTrue(result_path.exists())
             self.assertTrue(progress_path.exists())
+            self.assertTrue(artifact_manifest_path.exists())
             result_json = read_json(result_path)
+            self.assertEqual(result_json["artifactManifest"], str(artifact_manifest_path))
             result_image = result_json["images"][0]
             self.assertFalse(result_image["applied"])
             self.assertEqual(result_image["stage_evidence"]["failure"]["candidate_count"], 0)
             self.assertEqual(result_image["artifacts"]["final_is_rejected_candidate"], True)
+            artifact_manifest = read_json(artifact_manifest_path)
+            self.assertTrue(artifact_manifest["all_explainable"])
+            self.assertEqual(artifact_manifest["missing_required"], [])
+            manifest_image = artifact_manifest["images"][0]
+            self.assertEqual(manifest_image["status"], "failed")
+            self.assertTrue(manifest_image["explainable"])
+            self.assertEqual(manifest_image["blocking_stage"], "pre_candidate_generation")
+            self.assertIn(
+                "failure_report",
+                [item["key"] for item in manifest_image["reports"]],
+            )
+            self.assertIn(
+                "rejected_input",
+                [item["key"] for item in manifest_image["candidate_images"]],
+            )
+            self.assertIn(
+                "pre_candidate_gate_report",
+                [item["key"] for item in manifest_image["embedded_reports"]],
+            )
             progress_lines = progress_path.read_text(encoding="utf-8").splitlines()
             self.assertTrue(any('"event": "image_failed"' in line for line in progress_lines))
+            self.assertTrue(any('"event": "run_finished"' in line for line in progress_lines))
             progress_records = [json.loads(line) for line in progress_lines]
+            run_finished = [record for record in progress_records if record.get("event") == "run_finished"][0]
+            self.assertEqual(run_finished["artifact_manifest"], str(artifact_manifest_path))
+            self.assertTrue(run_finished["all_explainable"])
             pre_candidate_events = [
                 record for record in progress_records if record.get("event") == "pre_candidate_gate_failed"
             ]
