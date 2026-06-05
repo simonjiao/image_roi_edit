@@ -1,0 +1,85 @@
+{
+  "case_id": "case_b_shorter_cleanup",
+  "case_label": "Case B",
+  "description": "Shorter replacement must clean extra source slots, preserve following protected text, and attribute residual old text outside photo_texture.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_b_source.png --instruction '姓名甲乙丙修改为丁戊' --output output/regression/case_b.png --profile photo_scan",
+  "instruction": "姓名甲乙丙修改为丁戊",
+  "profile": "photo_scan",
+  "source_text": "甲乙丙",
+  "target_text": "丁戊",
+  "roi": [0, 0, 80, 36],
+  "slots": [
+    [10, 10, 20, 24],
+    [26, 10, 36, 24],
+    [42, 10, 52, 24]
+  ],
+  "protected_boxes": [
+    [60, 10, 72, 24]
+  ],
+  "alignment_metrics": {
+    "enabled": true,
+    "left_boundary_dx": 0.25,
+    "span_width_delta": 1.0,
+    "char_spacing_delta": 0.5,
+    "baseline_dy": 0.25,
+    "protected_text_overlap_pixels": 0
+  },
+  "hard_report": {
+    "pass": true,
+    "outside_roi_changed_pixels": 0,
+    "border_changed_pixels": 0,
+    "protected_changed_pixels": 0
+  },
+  "residual_report": {
+    "pass": true,
+    "pipeline_profile": "photo_scan",
+    "strict_gate": {
+      "issues": [
+        {
+          "type": "extra_source_slot_residual",
+          "slot_index": 2
+        }
+      ]
+    }
+  },
+  "expected_report_fields": [
+    {
+      "path": "slot_quality.length_change_report.length_change",
+      "equals": "shorter"
+    },
+    {
+      "path": "slot_quality.length_change_report.cleanup_mask_report.enabled",
+      "equals": true
+    },
+    {
+      "path": "slot_quality.length_change_report.extra_source_slots_for_cleanup",
+      "equals": [
+        [42, 10, 52, 24]
+      ]
+    },
+    {
+      "path": "slot_quality.old_text_coverage_report.pass",
+      "equals": true
+    },
+    {
+      "path": "placement.strategy",
+      "equals": "left_anchor_span"
+    },
+    {
+      "path": "placement.actual_errors.extra_source_cleanup_enabled",
+      "equals": true
+    },
+    {
+      "path": "hard_report.protected_changed_pixels",
+      "equals": 0
+    },
+    {
+      "path": "residual_stage_gate.blocking_stage",
+      "equals": "background_cleanup"
+    },
+    {
+      "path": "residual_stage_gate.stage_status.photo_texture.pass",
+      "equals": true
+    }
+  ]
+}

@@ -27,6 +27,7 @@ from roi_image_edit.stage_policy import (
     optimization_steps_for_patch,
     patch_keys_for_steps,
 )
+from roi_image_edit.stage_profiles import stage_profile
 from roi_image_edit.stages import stage_gate_for_report
 
 
@@ -170,6 +171,85 @@ def effective_blocking_stage(
         return str(local_stage), True
     visual_stage = acceptance_blocking_stage(acceptance)
     return visual_stage, False
+
+
+def report_profile_id(report: dict[str, Any] | None) -> str:
+    if isinstance(report, dict):
+        profile_id = str(report.get("pipeline_profile") or report.get("profile") or "").strip()
+        if profile_id:
+            return stage_profile(profile_id).id
+    return stage_profile(None).id
+
+
+def disabled_patch_keys_for_profile(profile_id: str | None) -> frozenset[str]:
+    profile = stage_profile(profile_id)
+    disabled: set[str] = set()
+    if not profile.enable_photo_texture:
+        disabled.update(patch_keys_for_steps(("photo_texture",)))
+    if not profile.enable_photo_warp:
+        disabled.add("photo_warp_delta")
+    return frozenset(disabled)
+
+
+def profile_patch_filter_report(
+    patches: list[dict[str, Any]],
+    profile_id: str | None,
+) -> dict[str, Any]:
+    profile = stage_profile(profile_id)
+    disabled_keys = disabled_patch_keys_for_profile(profile.id)
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
+    removed_keys: set[str] = set()
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        patch_keys = {str(key) for key, value in patch.items() if value is not None}
+        disabled_hits = sorted(patch_keys & disabled_keys)
+        cleaned = {
+            key: value
+            for key, value in patch.items()
+            if value is not None and str(key) not in disabled_keys
+        }
+        if disabled_hits:
+            removed_keys.update(disabled_hits)
+            decision = {
+                "profile_id": profile.id,
+                "patch": patch,
+                "disabled_patch_keys": sorted(disabled_keys),
+                "removed_patch_keys": disabled_hits,
+                "cleaned_patch": cleaned,
+                "decision": "accepted_after_profile_filter" if cleaned else "rejected",
+                "rejection_reason": None if cleaned else "all patch keys are disabled by profile",
+            }
+            decisions.append(decision)
+            if cleaned:
+                accepted.append(cleaned)
+            else:
+                rejected.append(decision)
+            continue
+        accepted.append(patch)
+        decisions.append(
+            {
+                "profile_id": profile.id,
+                "patch": patch,
+                "disabled_patch_keys": sorted(disabled_keys),
+                "removed_patch_keys": [],
+                "cleaned_patch": patch,
+                "decision": "accepted",
+                "rejection_reason": None,
+            }
+        )
+    return {
+        "profile_id": profile.id,
+        "disabled_patch_keys": sorted(disabled_keys),
+        "removed_patch_keys": sorted(removed_keys),
+        "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+        "accepted_patches": accepted,
+        "rejected_patches": rejected,
+        "decisions": decisions,
+    }
 
 
 def acceptance_text_fragments(acceptance: dict[str, Any]) -> list[str]:
@@ -1398,8 +1478,20 @@ def select_stage_patcher(
     report: dict[str, Any] | None,
     acceptance: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    stage_gate = stage_gate_for_report(report) if isinstance(report, dict) else {}
-    blocking_stage = stage_gate.get("blocking_stage") or acceptance_blocking_stage(acceptance)
+    profile_id = report_profile_id(report)
+    profile = stage_profile(profile_id)
+    stage_gate = stage_gate_for_report(report, profile.id) if isinstance(report, dict) else {}
+    local_blocking_stage = stage_gate.get("blocking_stage")
+    visual_blocking_stage = acceptance_blocking_stage(acceptance)
+    disabled_visual_stage = None
+    if local_blocking_stage:
+        blocking_stage = local_blocking_stage
+    elif visual_blocking_stage and visual_blocking_stage in profile.enabled_stage_ids:
+        blocking_stage = visual_blocking_stage
+    else:
+        blocking_stage = None
+        if visual_blocking_stage:
+            disabled_visual_stage = visual_blocking_stage
     patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHER_SPECS else None
     selection_reason = "blocking_stage" if patcher_stage else "final_acceptance_fallback"
     if patcher_stage is None and report_has_excess_black_core(report):
@@ -1410,6 +1502,8 @@ def select_stage_patcher(
         selection_reason = "wider_gray_stroke_report"
     patcher_spec = stage_patcher_spec(patcher_stage)
     return {
+        "profile_id": profile.id,
+        "disabled_visual_stage": disabled_visual_stage,
         "blocking_stage": blocking_stage,
         "patcher_stage": patcher_stage,
         "selection_reason": selection_reason,
@@ -1431,14 +1525,23 @@ def dispatch_revision_patches(
     patcher = patcher_spec.patcher if patcher_spec is not None else final_acceptance_patches
     raw_patches = patcher(params, acceptance, report, rank_patch=rank_patch)
     raw_patches.extend(patch for patch in extra_patches or [] if isinstance(patch, dict))
-    filter_report = stage_patch_filter_report(
+    profile_filter = profile_patch_filter_report(
         raw_patches,
+        str(selection.get("profile_id") or report_profile_id(report)),
+    )
+    filter_report = stage_patch_filter_report(
+        [
+            patch
+            for patch in profile_filter.get("accepted_patches", [])
+            if isinstance(patch, dict)
+        ],
         str(patcher_stage) if patcher_stage else None,
         limit=12,
     )
     return {
         **selection,
         "raw_patch_count": len(raw_patches),
+        "profile_filter_report": profile_filter,
         "stage_filter_report": filter_report,
         "patches": [
             patch

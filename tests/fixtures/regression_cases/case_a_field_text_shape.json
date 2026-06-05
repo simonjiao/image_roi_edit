@@ -1,0 +1,122 @@
+{
+  "case_id": "case_a_field_text_shape",
+  "case_label": "Case A",
+  "description": "Field old-value to new-value edit must block in text_shape when stroke body is too thin, even if visual acceptance says deliver.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_a_source.png --instruction '姓名甲乙修改为丙丁' --output output/regression/case_a.png --profile photo_scan",
+  "instruction": "姓名甲乙修改为丙丁",
+  "profile": "photo_scan",
+  "local_report": {
+    "pass": true,
+    "pipeline_profile": "photo_scan",
+    "strict_gate": {
+      "issues": [
+        {
+          "type": "ink_area_ratio_too_low",
+          "char_index": 1,
+          "actual": 0.71,
+          "limit": 0.86
+        }
+      ]
+    },
+    "reference_profile": {
+      "dynamic_ink": {
+        "core_density_min": 0.31,
+        "outer_gray_max": 0.27
+      }
+    },
+    "char_gray_band_metrics": {
+      "enabled": true,
+      "thresholds": {
+        "core_density_min": 0.31,
+        "outer_gray_max": 0.27
+      },
+      "per_char": [
+        {
+          "char_index": 0,
+          "core_density": 0.33,
+          "outer_120_165_share": 0.21
+        },
+        {
+          "char_index": 1,
+          "core_density": 0.24,
+          "outer_120_165_share": 0.34
+        }
+      ]
+    },
+    "local_photo_texture_issues": [
+      {
+        "type": "photo_texture_too_clean"
+      }
+    ]
+  },
+  "visual_acceptance": {
+    "pass": true,
+    "acceptance_level": "pass",
+    "final_decision": "deliver",
+    "reason": "visual judge would deliver without local gates",
+    "visual_findings": {
+      "font_similarity": "ok",
+      "darkness": "ok",
+      "sharpness": "ok"
+    }
+  },
+  "candidate_patches": [
+    {
+      "stroke_opacity_delta": 0.04
+    },
+    {
+      "mask_threshold_delta": -3
+    },
+    {
+      "photo_noise_delta": 0.02
+    }
+  ],
+  "expected_report_fields": [
+    {
+      "path": "instruction_details.field",
+      "equals": "name"
+    },
+    {
+      "path": "instruction_details.old_value",
+      "equals": "甲乙"
+    },
+    {
+      "path": "instruction_details.new_value",
+      "equals": "丙丁"
+    },
+    {
+      "path": "local_report.reference_profile.dynamic_ink.core_density_min",
+      "greater_equal": 0.3
+    },
+    {
+      "path": "local_report.reference_profile.dynamic_ink.outer_gray_max",
+      "less_equal": 0.29
+    },
+    {
+      "path": "stage_gate.blocking_stage",
+      "equals": "text_shape"
+    },
+    {
+      "path": "stage_gate.stage_status.text_shape.reason",
+      "equals": "ink_area_ratio_too_low"
+    },
+    {
+      "path": "visual_gate.pass",
+      "equals": false
+    },
+    {
+      "path": "visual_gate.final_decision",
+      "equals": "revise"
+    },
+    {
+      "path": "patch_filter.accepted_patches",
+      "contains": {
+        "stroke_opacity_delta": 0.04
+      }
+    },
+    {
+      "path": "patch_filter.rejected_count",
+      "greater_equal": 2
+    }
+  ]
+}

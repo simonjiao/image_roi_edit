@@ -1,0 +1,76 @@
+{
+  "case_id": "case_c_longer_protected",
+  "case_label": "Case C",
+  "description": "Longer replacement may expand ROI only under protected text limits and must solve shape or spacing before color tuning.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_c_source.png --instruction '姓名甲乙修改为丙丁戊' --output output/regression/case_c.png --profile photo_scan",
+  "instruction": "姓名甲乙修改为丙丁戊",
+  "profile": "photo_scan",
+  "source_text": "甲乙",
+  "target_text": "丙丁戊",
+  "roi": [0, 0, 72, 36],
+  "slots": [
+    [10, 10, 20, 24],
+    [26, 10, 36, 24]
+  ],
+  "protected_boxes": [
+    [38, 9, 54, 25]
+  ],
+  "shape_report": {
+    "pass": true,
+    "pipeline_profile": "photo_scan",
+    "strict_gate": {
+      "issues": [
+        {
+          "type": "font_style_score_too_high",
+          "actual": 0.41,
+          "limit": 0.28
+        }
+      ]
+    }
+  },
+  "candidate_patches": [
+    {
+      "font_size_delta": 1
+    },
+    {
+      "opacity_delta": 0.04
+    }
+  ],
+  "expected_report_fields": [
+    {
+      "path": "slot_quality.length_change_report.length_change",
+      "equals": "longer"
+    },
+    {
+      "path": "slot_quality.length_change_report.right_boundary.limited_by_protected_text",
+      "equals": true
+    },
+    {
+      "path": "slot_quality.length_change_report.right_boundary.pass",
+      "equals": false
+    },
+    {
+      "path": "slot_quality.issues",
+      "contains": {
+        "type": "right_boundary_too_close_to_protected_text"
+      }
+    },
+    {
+      "path": "stage_gate.blocking_stage",
+      "equals": "text_shape"
+    },
+    {
+      "path": "patch_filter.accepted_patches",
+      "contains": {
+        "font_size_delta": 1
+      }
+    },
+    {
+      "path": "patch_filter.rejected_patches",
+      "contains_path": {
+        "path": "optimization_steps",
+        "equals": ["ink_gray_balance"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "case_id": "case_d_clean_digital_number",
+  "case_label": "Case D",
+  "description": "Clean digital number edits must use clean_digital profile, avoid photo noise, and keep clean edges.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_d_source.png --instruction '编号12修改为34' --output output/regression/case_d.png --profile clean_digital",
+  "instruction": "编号12修改为34",
+  "profile": "clean_digital",
+  "local_report": {
+    "pass": true,
+    "pipeline_profile": "clean_digital",
+    "local_photo_texture_issues": [
+      {
+        "type": "photo_texture_too_sharp"
+      }
+    ]
+  },
+  "visual_acceptance": {
+    "pass": false,
+    "acceptance_level": "marginal",
+    "final_decision": "revise",
+    "visual_findings": {
+      "sharpness": "too_sharp"
+    },
+    "parameter_suggestions": [
+      {
+        "name": "photo_noise",
+        "delta": 0.04
+      }
+    ]
+  },
+  "expected_report_fields": [
+    {
+      "path": "instruction_details.field",
+      "equals": "number"
+    },
+    {
+      "path": "profile.id",
+      "equals": "clean_digital"
+    },
+    {
+      "path": "profile.enable_photo_texture",
+      "equals": false
+    },
+    {
+      "path": "profile.enable_photo_warp",
+      "equals": false
+    },
+    {
+      "path": "profile.edge_policy",
+      "equals": "clean_edges_no_photo_warp"
+    },
+    {
+      "path": "stage_gate.order",
+      "not_contains": "photo_texture"
+    },
+    {
+      "path": "prompt_context.profile_constraints.enable_photo_texture",
+      "equals": false
+    },
+    {
+      "path": "dispatch.profile_filter_report.removed_patch_keys",
+      "contains": "photo_noise_delta"
+    },
+    {
+      "path": "dispatch.patches",
+      "no_patch_keys": ["photo_noise_delta", "edge_breakup_delta", "jpeg_quality_delta", "photo_warp_delta"]
+    }
+  ]
+}
