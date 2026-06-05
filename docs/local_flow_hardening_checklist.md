@@ -228,6 +228,7 @@
 
 ### T. 代码落点和模块边界
 
+- [x] request/result/progress/prompt stage context 的运行产物 helper 已从 `processing_service.py` 拆到 `src/roi_image_edit/run_artifacts.py`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_run_artifacts.py`。
 - [ ] `src/roi_image_edit/stages.py` 必须成为 stage contract 的唯一入口，承载 `StageSpec`、`StageResult`、detector mapping 和 prompt context；验证方式是 schema/unit test 与依赖方向检查。
 - [ ] `src/roi_image_edit/stage_profiles.py` 必须成为 profile 定义和加载的唯一入口；验证方式是 profile matrix smoke 和用户指定 profile 覆盖自动建议测试。
 - [ ] `src/roi_image_edit/stage_patchers.py` 必须成为 stage patcher filter/dispatch 的唯一入口；验证方式是 patcher registry 单测、allowed/blocked keys 单测和旧混合路径依赖检查。

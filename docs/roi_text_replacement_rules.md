@@ -214,6 +214,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 | 照片质感 | `photo_texture_metrics`, `local_photo_texture_issues`, `photo_texture_recovery_patches`, `apply_photo_alpha_warp`, `apply_scan_edge_breakup`, `apply_photo_text_texture` | `photo_texture_metrics`, `local_photo_texture_issues` |
 | 姿态继承 | `estimate_slot_edge_shear`, `reference_slot_shear`, `apply_char_slot_shear` | `char_pose_metrics` |
 | 阶段门禁 | `stage_gate_for_report`, `stage_selection_penalty`, `report_stage_pass` | `stage_gate` |
+| 运行产物结构 | `request_audit_payload`, `result_audit_payload`, `stage_progress_fields`, `model_stage_context`, `attach_stage_context_to_rank_report` in `run_artifacts.py` | `request.json`, `result.json`, `progress.jsonl`, `stage_context_by_candidate` |
 | 形态重搜 | `text_shape_reset_candidates`, `shape_font_items`, `normalized_offset_candidates` | `revision_attempts[].origin=shape_reset`, `revision_rounds[].shape_reset_count` |
 | 迭代补丁 | `revision_patches_for_round`, `black_core_reduction_patches`, `gray_stroke_recovery_patches` | `revision_rounds`, `revision_attempts` |
 | 最终验收 | `evaluate_final`, `apply_local_acceptance_gate` | `final_acceptance` |

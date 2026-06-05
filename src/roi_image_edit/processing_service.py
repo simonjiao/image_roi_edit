@@ -71,8 +71,14 @@ from roi_image_edit.stage_patchers import (
     patch_signature,
     revision_patches_for_round,
 )
+from roi_image_edit.run_artifacts import (
+    attach_stage_context_to_rank_report,
+    model_stage_context,
+    request_audit_payload,
+    result_audit_payload,
+    stage_progress_fields,
+)
 from roi_image_edit.stage_profiles import stage_profile
-from roi_image_edit.stages import prompt_stage_context
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
     build_region_plan,
@@ -93,44 +99,6 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "output" / "web"
 ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
-
-
-def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "profile": payload.get("profile"),
-        "maxCandidates": payload.get("maxCandidates"),
-        "images": [
-            {
-                "id": str(item.get("id") or ""),
-                "filename": str(item.get("filename") or ""),
-                "instruction": str(item.get("instruction") or ""),
-                "regions": [
-                    {
-                        "id": str(region.get("id") or ""),
-                        "rect": region.get("rect") or {},
-                    }
-                    for region in item.get("regions", [])
-                ],
-            }
-            for item in payload.get("images", [])
-        ],
-    }
-
-
-def result_audit_payload(response: dict[str, Any]) -> dict[str, Any]:
-    images: list[dict[str, Any]] = []
-    for item in response.get("images", []):
-        image_record = {
-            key: value
-            for key, value in item.items()
-            if key not in {"sourceDataUrl", "resultDataUrl", "candidates"}
-        }
-        image_record["candidates"] = [
-            {key: value for key, value in candidate.items() if key != "dataUrl"}
-            for candidate in item.get("candidates", [])
-        ]
-        images.append(image_record)
-    return {"ok": response.get("ok"), "runDir": response.get("runDir"), "images": images}
 
 
 def load_processing_prompts() -> tuple[str, str, str]:
@@ -176,85 +144,6 @@ def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | 
         "- 如果 hard_check_report 或当前阶段上下文给出 blocking_stage，视觉建议必须只围绕该阶段允许的参数族；禁止建议 blocked_patch_keys。\n"
         f"{stage_context_text}"
     )
-
-
-def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(report, dict):
-        return {}
-    stage_gate = report.get("stage_gate")
-    if not isinstance(stage_gate, dict):
-        stage_gate = stage_gate_for_report(report)
-    blocking_stage = stage_gate.get("blocking_stage") if isinstance(stage_gate, dict) else None
-    blocking_status = (
-        (stage_gate.get("stage_status") or {}).get(blocking_stage)
-        if isinstance(stage_gate.get("stage_status"), dict) and blocking_stage
-        else None
-    )
-    return {
-        "pipeline_profile": report.get("pipeline_profile") or stage_gate.get("profile"),
-        "stage_order": stage_gate.get("order"),
-        "stage_status": stage_gate.get("stage_status"),
-        "blocking_stage": blocking_stage,
-        "blocking_stage_reason": (
-            blocking_status.get("reason")
-            if isinstance(blocking_status, dict)
-            else None
-        ),
-        "allowed_patch_keys": (
-            blocking_status.get("allowed_patch_keys")
-            if isinstance(blocking_status, dict)
-            else []
-        ),
-        "blocked_patch_keys": (
-            blocking_status.get("blocked_patch_keys")
-            if isinstance(blocking_status, dict)
-            else []
-        ),
-    }
-
-
-def model_stage_context(report: dict[str, Any] | None, pipeline_profile: str) -> dict[str, Any]:
-    if not isinstance(report, dict):
-        return {
-            "pipeline_profile": pipeline_profile,
-            "stage_order": list(STAGE_ORDER),
-            "blocking_stage": None,
-            "stage_status": {},
-            "allowed_patch_keys": [],
-            "blocked_patch_keys": [],
-        }
-    context = prompt_stage_context(report, pipeline_profile)
-    blocking_stage = context.get("blocking_stage")
-    context["optimization_policy"] = stage_optimization_summary(
-        str(blocking_stage) if blocking_stage else None
-    )
-    return context
-
-
-def attach_stage_context_to_rank_report(
-    hard_reports: dict[str, Any],
-    *,
-    pipeline_profile: str,
-) -> dict[str, Any]:
-    enriched = dict(hard_reports)
-    candidates = hard_reports.get("candidates")
-    stage_context_by_candidate: dict[str, Any] = {}
-    if isinstance(candidates, dict):
-        for candidate_id, candidate in candidates.items():
-            if not isinstance(candidate, dict):
-                continue
-            report = candidate.get("hard_check")
-            stage_context_by_candidate[str(candidate_id)] = model_stage_context(
-                report if isinstance(report, dict) else None,
-                pipeline_profile,
-            )
-    enriched["pipeline_profile"] = pipeline_profile
-    enriched["stage_context_by_candidate"] = stage_context_by_candidate
-    enriched["stage_filter_contract"] = {
-        "authoritative": "local_stage_filter",
-        "rule": "Vision suggestions may diagnose any issue, but executable patches must stay within the current blocking stage allowed_patch_keys.",
-    }
-    return enriched
 
 
 def image_to_data_url(img: Image.Image) -> str:
