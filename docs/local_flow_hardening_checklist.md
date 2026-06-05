@@ -78,7 +78,7 @@ PY
 
 - [x] 新增 `placement_strategy` 字段，至少支持 `top_left_anchor`、`center_primary`、`left_anchor_span`、`baseline_numeric`、`manual_fallback`。
 - [x] 新增单字形态变化检测，报告 `bbox_width_delta_ratio`、`bbox_height_delta_ratio`、`centroid_dx/dy`、`ink_area_ratio`。
-- [ ] 同字数 CJK 字形变化大时自动切到 `center_primary`，并记录选择原因。
+- [x] 同字数 CJK 旧字和新字不同时自动切到 `center_primary`，并记录选择原因；`shape_change_report` 继续逐字验收实际偏差。
 - [x] `text_shape` 未通过时，禁止 blur/noise/JPEG/background 成为主修复方向。
 
 验证：`candidate_report` 中必须能看到 `placement_strategy` 和 `shape_change_report`；当 `shape_change_large=true` 时，候选生成必须包含中心优先候选。

@@ -2372,6 +2372,8 @@ def choose_placement_strategy(
         return "baseline_numeric", "non_cjk_value_uses_baseline_priority"
     if not slot_report.get("pass"):
         return "top_left_anchor", "slot_quality_failed_keeps_original_anchor_for_rejection"
+    if source_text != target_text:
+        return "center_primary", "same_length_cjk_changed_chars_use_slot_center"
     heights = [max(1, slot.y2 - slot.y1) for slot in slots]
     widths = [max(1, slot.x2 - slot.x1) for slot in slots]
     if heights and max(heights) - min(heights) > max(2, float(np.median(heights)) * 0.18):
