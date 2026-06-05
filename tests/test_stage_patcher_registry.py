@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from roi_image_edit.iterative_pipeline import CandidateParams
 from roi_image_edit.stage_patchers import (
+    dispatch_revision_patches,
     patch_key_audit_for_stage_patcher,
     revision_patches_for_round,
+    select_stage_patcher,
     stage_patch_filter_report,
     stage_patcher_registry_report,
     stage_patcher_specs,
@@ -80,7 +83,7 @@ class StagePatcherRegistryTest(unittest.TestCase):
                 self.assertTrue(audit["declared"], audit)
 
     def test_photo_texture_dispatch_rejects_ink_gray_suggestions(self) -> None:
-        patches = revision_patches_for_round(
+        dispatch = dispatch_revision_patches(
             self.params,
             {
                 "visual_findings": {"darkness": "too_dark", "sharpness": "too_sharp"},
@@ -96,11 +99,47 @@ class StagePatcherRegistryTest(unittest.TestCase):
             },
             rank_patch={"opacity_delta": -0.10},
         )
+        self.assertEqual(dispatch["patcher_stage"], "photo_texture")
+        self.assertEqual(dispatch["selection_reason"], "blocking_stage")
+        self.assertIn("stage_filter_report", dispatch)
+        patches = dispatch["patches"]
         self.assertTrue(patches)
         for patch in patches:
             self.assertNotIn("opacity_delta", patch)
             audit = patch_key_audit_for_stage_patcher("photo_texture", patch)
             self.assertTrue(audit["declared"], audit)
+
+    def test_legacy_revision_entry_delegates_to_dispatcher(self) -> None:
+        source = inspect.getsource(revision_patches_for_round)
+        self.assertIn("dispatch_revision_patches", source)
+        self.assertNotIn("final_acceptance_patches", source)
+        self.assertNotIn("STAGE_PATCHER_SPECS", source)
+        self.assertNotIn("stage_patch_filter_report", source)
+
+        acceptance = {
+            "visual_findings": {"background": "patch_visible"},
+            "parameter_suggestions": [{"name": "mask_threshold", "delta": -4}],
+        }
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "local_background_texture_issues": [{"type": "background_patch_visible"}],
+        }
+        dispatch = dispatch_revision_patches(self.params, acceptance, report)
+        legacy = revision_patches_for_round(self.params, acceptance, report)
+        self.assertEqual(legacy, dispatch["patches"])
+
+    def test_select_stage_patcher_reports_selection_reason(self) -> None:
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "local_ink_balance_issues": [{"type": "ink_too_light"}],
+        }
+        selection = select_stage_patcher(report, None)
+        self.assertEqual(selection["blocking_stage"], "ink_gray_balance")
+        self.assertEqual(selection["patcher_stage"], "ink_gray_balance")
+        self.assertEqual(selection["selection_reason"], "blocking_stage")
+        self.assertEqual(selection["patcher"]["primary_stage"], "ink_gray_balance")
 
     def test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary(self) -> None:
         report = stage_patch_filter_report(

@@ -167,7 +167,7 @@
 - [x] patcher 输出不能包含未声明参数；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patcher_outputs_do_not_contain_undeclared_keys`。
 - [x] 跨 stage patch 必须被拒绝或声明主阶段、次级影响和不破坏前置阶段的依据；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary`。
 - [ ] 新增 patch 必须进入某个 stage patcher，不能散落在全局候选生成函数；验证方式是代码搜索和单测。
-- [ ] 旧入口只能调用 stage dispatcher，stage dispatcher 不能反向调用旧全局混合补丁；验证方式是依赖方向检查或代码搜索。
+- [x] 旧入口只能调用 stage dispatcher，stage dispatcher 不能反向调用旧全局混合补丁；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_legacy_revision_entry_delegates_to_dispatcher`。
 - [ ] 临时双轨只允许用于同输入新旧结果差异验证，不能作为长期交付路径；验证方式是没有 runtime fallback 开关指向旧混合路径。
 - [ ] 每个阶段迁移必须包含 detector、patcher、allowed/blocked 参数、失败用例、通过用例和 stage evidence；验证方式是测试目录和 fixture 记录。
 

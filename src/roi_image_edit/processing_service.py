@@ -64,13 +64,11 @@ from roi_image_edit.revision_solver import (
 )
 from roi_image_edit.stage_patchers import (
     acceptance_blocking_stage,
-    dedupe_patches,
+    dispatch_revision_patches,
     effective_blocking_stage,
     model_patch_records,
     params_signature,
     patch_signature,
-    stage_patch_filter_report,
-    revision_patches_for_round,
 )
 from roi_image_edit.run_artifacts import (
     attach_stage_context_to_rank_report,
@@ -374,12 +372,6 @@ def run_region_vision_checks(
                         **stage_progress_fields(current_report),
                     },
                 )
-            round_patches = revision_patches_for_round(
-                current_params,
-                current_acceptance,
-                current_report,
-                rank_patch=rank_patch if round_idx == 1 and isinstance(rank_patch, dict) else None,
-            )
             model_records: list[dict[str, Any]] = []
             if round_idx == 1:
                 model_records.extend(
@@ -409,17 +401,19 @@ def run_region_vision_checks(
                     allowed_model_patches.append(patch)
                 else:
                     model_conflicts.append(record)
-            round_patches.extend(allowed_model_patches)
-            local_stage_filter_report = stage_patch_filter_report(
-                round_patches,
-                str(basis_blocking_stage) if basis_blocking_stage else None,
-                limit=12,
+            patch_dispatch_report = dispatch_revision_patches(
+                current_params,
+                current_acceptance,
+                current_report,
+                rank_patch=rank_patch if round_idx == 1 and isinstance(rank_patch, dict) else None,
+                extra_patches=allowed_model_patches,
             )
             round_patches = [
                 patch
-                for patch in local_stage_filter_report.get("accepted_patches", [])
+                for patch in patch_dispatch_report.get("patches", [])
                 if isinstance(patch, dict)
             ]
+            local_stage_filter_report = patch_dispatch_report.get("stage_filter_report") or {}
             rejected_local_patches = [
                 patch
                 for patch in local_stage_filter_report.get("rejected_patches", [])
@@ -444,6 +438,11 @@ def run_region_vision_checks(
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
                 "stage_optimization_policy": basis_stage_optimization_policy,
                 "stage_evidence": stage_progress_fields(current_report),
+                "stage_patcher_dispatch": {
+                    key: value
+                    for key, value in patch_dispatch_report.items()
+                    if key not in {"patches", "stage_filter_report"}
+                },
                 "stage_filter_report": local_stage_filter_report,
                 "model_suggestions": model_records,
                 "model_conflicts": model_conflicts,

@@ -1315,6 +1315,60 @@ def patch_key_audit_for_stage_patcher(
     }
 
 
+def select_stage_patcher(
+    report: dict[str, Any] | None,
+    acceptance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    stage_gate = stage_gate_for_report(report) if isinstance(report, dict) else {}
+    blocking_stage = stage_gate.get("blocking_stage") or acceptance_blocking_stage(acceptance)
+    patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHER_SPECS else None
+    selection_reason = "blocking_stage" if patcher_stage else "final_acceptance_fallback"
+    if patcher_stage is None and report_has_excess_black_core(report):
+        patcher_stage = "ink_gray_balance"
+        selection_reason = "excess_black_core_report"
+    if patcher_stage is None and report_needs_wider_gray_strokes(report):
+        patcher_stage = "text_shape"
+        selection_reason = "wider_gray_stroke_report"
+    patcher_spec = stage_patcher_spec(patcher_stage)
+    return {
+        "blocking_stage": blocking_stage,
+        "patcher_stage": patcher_stage,
+        "selection_reason": selection_reason,
+        "patcher": patcher_spec.as_report() if patcher_spec is not None else None,
+    }
+
+
+def dispatch_revision_patches(
+    params: CandidateParams,
+    acceptance: dict[str, Any],
+    report: dict[str, Any] | None = None,
+    *,
+    rank_patch: dict[str, Any] | None = None,
+    extra_patches: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selection = select_stage_patcher(report, acceptance)
+    patcher_stage = selection.get("patcher_stage")
+    patcher_spec = stage_patcher_spec(str(patcher_stage) if patcher_stage else None)
+    patcher = patcher_spec.patcher if patcher_spec is not None else final_acceptance_patches
+    raw_patches = patcher(params, acceptance, report, rank_patch=rank_patch)
+    raw_patches.extend(patch for patch in extra_patches or [] if isinstance(patch, dict))
+    filter_report = stage_patch_filter_report(
+        raw_patches,
+        str(patcher_stage) if patcher_stage else None,
+        limit=12,
+    )
+    return {
+        **selection,
+        "raw_patch_count": len(raw_patches),
+        "stage_filter_report": filter_report,
+        "patches": [
+            patch
+            for patch in filter_report.get("accepted_patches", [])
+            if isinstance(patch, dict)
+        ],
+    }
+
+
 def revision_patches_for_round(
     params: CandidateParams,
     acceptance: dict[str, Any],
@@ -1322,18 +1376,13 @@ def revision_patches_for_round(
     *,
     rank_patch: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    stage_gate = stage_gate_for_report(report) if isinstance(report, dict) else {}
-    blocking_stage = stage_gate.get("blocking_stage") or acceptance_blocking_stage(acceptance)
-    patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHER_SPECS else None
-    if patcher_stage is None and report_has_excess_black_core(report):
-        patcher_stage = "ink_gray_balance"
-    if patcher_stage is None and report_needs_wider_gray_strokes(report):
-        patcher_stage = "text_shape"
-    patcher_spec = stage_patcher_spec(patcher_stage)
-    patcher = patcher_spec.patcher if patcher_spec is not None else final_acceptance_patches
-    patches = patcher(params, acceptance, report, rank_patch=rank_patch)
-    accepted, _rejected = filter_patches_for_stage(patches, patcher_stage, limit=12)
-    return accepted
+    dispatch = dispatch_revision_patches(
+        params,
+        acceptance,
+        report,
+        rank_patch=rank_patch,
+    )
+    return [patch for patch in dispatch.get("patches", []) if isinstance(patch, dict)]
 
 
 def final_revision_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
