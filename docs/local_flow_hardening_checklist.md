@@ -257,7 +257,7 @@
 本地流程不能宣称完善完成，除非以下全部满足：
 
 - [ ] “设计目标转换情况”中的所有 `[ ]` 项全部关闭。
-- [ ] A-T 中保留的每个 `[x]` 都有同条或相邻说明中的当前证据，证据不足时必须降级为 `[ ]`。
+- [x] A-T 中保留的每个 `[x]` 都有同条或相邻说明中的当前证据，证据不足时必须降级为 `[ ]`；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_checklist_integrity.py::ChecklistIntegrityTest.test_every_checked_item_has_current_evidence_marker` 验证每个 `[x]` 行必须包含 `证据：`，`test_checked_item_evidence_paths_exist` 验证证据中的 `tests/`、`scripts/`、`docs/`、`src/` 路径真实存在，`test_checked_items_use_current_verification_command_or_stable_artifact` 验证证据必须引用当前测试命令或稳定产物。
 - [ ] 回归 Case A-D 已转成可执行用例并通过。
 - [x] 每个 stage patcher 的声明参数和拒绝跨阶段参数测试通过；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_stage_patcher_registry.py::StagePatcherRegistryTest.test_stage_patchers_declare_primary_allowed_and_blocked_keys` 验证每个 stage patcher 声明 primary、allowed、blocked 且 allowed/blocked 不冲突，`test_stage_patcher_outputs_do_not_contain_undeclared_keys` 验证输出不含未声明参数，`test_filter_report_declares_secondary_impacts_and_rejects_cross_stage_primary` 验证跨阶段 patch 会被拒绝或声明次级影响。
 - [x] README、设计文档和 prompt 不再声称未验证能力已经完成；证据：`.venv/bin/python -m unittest discover -s tests`，`tests/test_completion_claims.py::CompletionClaimsTest.test_public_docs_and_prompts_do_not_claim_unverified_completion` 扫描 README、`docs/*.md` 和 packaged prompts，禁止无条件当前完成态措辞如 `local flow is complete`、`本地流程完善完成`、`所有设计目标已完成`，但允许 checklist 以否定或条件形式列出门槛。
