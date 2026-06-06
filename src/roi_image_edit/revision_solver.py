@@ -16,6 +16,7 @@ from roi_image_edit.local_validation import (
     report_has_outer_gray_halo,
     report_needs_thinner_strokes,
     report_needs_wider_gray_strokes,
+    stage_issue_severity,
     stage_issues,
 )
 from roi_image_edit.roi_locator import max_font_size_for_plan, text_chars
@@ -1381,6 +1382,102 @@ def photo_texture_candidate_grid(
     )
 
 
+
+
+def _current_stage_near_threshold(
+    report: dict[str, Any] | None, blocking_stage: str | None
+) -> bool:
+    if not blocking_stage:
+        return False
+    if blocking_stage == "ink_gray_balance":
+        micro = ink_gray_near_threshold_micro_tuning(report)
+        return bool(micro.get("enabled"))
+    if blocking_stage == "photo_texture":
+        issues = stage_issues(report, "photo_texture")
+        issue_types = {str(issue.get("type") or "") for issue in issues}
+        near_issues = issue_types & {
+            "photo_texture_too_sharp",
+            "photo_texture_too_clean",
+            "photo_texture_edge_breakup_missing",
+        }
+        return bool(near_issues) and not bool(
+            issue_types - near_issues
+        )
+    return False
+
+
+CONTROLLED_ESCAPE_LIMIT = 4
+
+
+def controlled_escape_candidate_grid(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+    blocking_stage: str | None,
+    *,
+    hard_boundary_passed: bool = True,
+    prior_stage_pass: bool = True,
+) -> dict[str, Any]:
+    if not blocking_stage or not _current_stage_near_threshold(report, blocking_stage):
+        return {
+            "enabled": False,
+            "reason": "blocking_stage_not_near_threshold",
+            "candidate_count": 0,
+        }
+    if not hard_boundary_passed:
+        return {
+            "enabled": False,
+            "reason": "hard_boundary_not_passed",
+            "candidate_count": 0,
+        }
+    if not prior_stage_pass:
+        return {
+            "enabled": False,
+            "reason": "prior_stage_regression_detected",
+            "candidate_count": 0,
+        }
+
+    candidates: list[CandidateParams] = []
+    secondary_stage: str | None = None
+    allowed_delta_bounds: dict[str, Any] = {}
+
+    if blocking_stage == "ink_gray_balance":
+        secondary_stage = "photo_texture"
+        allowed_delta_bounds = {
+            "blur": (-0.03, 0.03),
+            "alpha_contrast": (-0.02, 0.02),
+            "edge_breakup": (-0.003, 0.003),
+        }
+        candidates = [
+            mutate_params(params, blur=params.blur + 0.02),
+            mutate_params(params, blur=params.blur - 0.02),
+            mutate_params(params, alpha_contrast=params.alpha_contrast + 0.01),
+            mutate_params(params, edge_breakup=params.edge_breakup + 0.002),
+        ]
+    elif blocking_stage == "photo_texture":
+        secondary_stage = "background_cleanup"
+        allowed_delta_bounds = {"post_blend_strength": (-0.02, 0.02)}
+        candidates = []  # photo → bg cleanup escape would need bg cleanup params
+
+    candidates = candidates[:CONTROLLED_ESCAPE_LIMIT]
+    return {
+        "enabled": bool(candidates),
+        "reason": (
+            f"controlled_escape_from_{blocking_stage}_to_{secondary_stage}"
+            if candidates
+            else "no_viable_escape_candidates"
+        ),
+        "controlled_escape": True,
+        "primary_stage": blocking_stage,
+        "secondary_stage": secondary_stage,
+        "allowed_secondary_delta_bounds": allowed_delta_bounds,
+        "near_threshold": True,
+        "hard_boundary_passed": hard_boundary_passed,
+        "prior_stage_regression": not prior_stage_pass,
+        "escape_limit": CONTROLLED_ESCAPE_LIMIT,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "cross_stage_cartesian_disabled": True,
+    }
 
 
 def final_font_revision_candidates(

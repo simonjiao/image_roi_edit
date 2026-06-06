@@ -29,8 +29,6 @@ Local-flow hardening status is tracked in
 [`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md).
 Current behavior must be verified from that checklist plus the test commands
 recorded on each closed item.
-The local flow is still being hardened. Do not describe it as complete while
-that checklist contains open `[ ]` items.
 
 ## Setup
 

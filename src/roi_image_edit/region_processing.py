@@ -70,6 +70,7 @@ from roi_image_edit.revision_selector import (
 )
 from roi_image_edit.revision_solver import (
     InkGrayCandidateGrid,
+    controlled_escape_candidate_grid,
     final_font_revision_candidates,
     ink_gray_candidate_grid,
     layered_candidate_search_report,
@@ -298,7 +299,49 @@ def prior_stage_regression_report(
     }
 
 
+def build_candidate_rejection_table(
+    revision_attempts: list[dict[str, Any]],
+    current_blocking_stage: str | None,
+) -> list[dict[str, Any]]:
+    table: list[dict[str, Any]] = []
+    for attempt in revision_attempts:
+        if not isinstance(attempt, dict):
+            continue
+        rejection_reason = "selectable"
+        strict_pass = bool(attempt.get("strict_pass"))
+        stage_pass = bool(attempt.get("stage_pass"))
+        prior_regression = attempt.get("prior_stage_regression")
+        prior_pass = bool(prior_regression.get("pass")) if isinstance(prior_regression, dict) else True
+        if not strict_pass:
+            rejection_reason = "strict_gate_failed"
+        elif not stage_pass:
+            rejection_reason = "stage_gate_failed" if attempt.get("blocking_stage") else "stage_gate_blocked"
+        elif not prior_pass:
+            rejection_reason = "prior_stage_regression"
+        elif not (
+            attempt.get("progresses_past_text_shape")
+            or attempt.get("progresses_past_current_stage")
+            or attempt.get("improves_current_stage")
+            or (attempt.get("ink_guard") or {}).get("selectable")
+        ):
+            rejection_reason = "no_selectable_progress"
 
+        entry = {
+            "candidate_id": (attempt.get("params") or {}).get("candidate_id", ""),
+            "origin": attempt.get("origin", "unknown"),
+            "primary_stage": attempt.get("stage_id") or attempt.get("current_blocking_stage") or current_blocking_stage,
+            "optimization_step": attempt.get("optimization_step", ""),
+            "strict_pass": strict_pass,
+            "stage_pass": stage_pass,
+            "blocking_stage": attempt.get("blocking_stage"),
+            "current_stage_severity_before": attempt.get("current_stage_severity_before", 0),
+            "current_stage_severity_after": attempt.get("current_stage_severity_after", 0),
+            "prior_stage_regression": not prior_pass,
+            "selectable": rejection_reason == "selectable",
+            "rejection_reason": rejection_reason,
+        }
+        table.append(entry)
+    return table
 
 
 def run_region_vision_checks(
@@ -665,6 +708,21 @@ def run_region_vision_checks(
                 limit=6,
             )
             photo_texture_params = photo_candidate_grid.candidates
+            hard_boundary_passed = bool(
+                (current_report or {}).get("pass")
+                and (current_report or {}).get("stage_gate", {}).get("blocking_stage") != "hard_boundary"
+            )
+            prior_regression = prior_stage_regression_report(
+                current_report, current_report, basis_blocking_stage
+            ) if basis_blocking_stage else {"pass": True}
+            escape_grid = controlled_escape_candidate_grid(
+                current_params,
+                current_report,
+                basis_blocking_stage,
+                hard_boundary_passed=hard_boundary_passed,
+                prior_stage_pass=prior_regression.get("pass", True),
+            )
+            escape_candidates = escape_grid.get("candidates", []) if isinstance(escape_grid.get("candidates"), list) else []
             layered_search_report = layered_candidate_search_report(
                 shape_candidate_grid.report,
                 ink_candidate_grid.report,
@@ -681,6 +739,12 @@ def run_region_vision_checks(
                 "ink_gray_count": len(ink_gray_params),
                 "ink_guard_count": len(ink_guard_params),
                 "photo_texture_count": len(photo_texture_params),
+                "controlled_escape_count": len(escape_candidates),
+                "micro_tuning_count": (
+                    len(ink_gray_params)
+                    if (ink_candidate_grid.report.get("axes", {}).get("near_threshold_micro_tuning", {}).get("enabled"))
+                    else 0
+                ),
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -712,6 +776,16 @@ def run_region_vision_checks(
                 "model_suggestion_attempts": model_filter.get("attempt_records") or [],
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
+                "controlled_escape_grid": {
+                    "enabled": escape_grid.get("enabled"),
+                    "reason": escape_grid.get("reason"),
+                    "controlled_escape": escape_grid.get("controlled_escape"),
+                    "primary_stage": escape_grid.get("primary_stage"),
+                    "secondary_stage": escape_grid.get("secondary_stage"),
+                    "candidate_count": escape_grid.get("candidate_count"),
+                    "escape_limit": escape_grid.get("escape_limit"),
+                    "cross_stage_cartesian_disabled": escape_grid.get("cross_stage_cartesian_disabled"),
+                },
                 "forced_model_seed_count": forced_seed_report.get("forced_seed_count", 0),
                 "forced_model_seed_audit": forced_seed_report.get("audited_suggestions", []),
             }
@@ -730,6 +804,12 @@ def run_region_vision_checks(
                         "ink_gray_count": len(ink_gray_params),
                         "ink_guard_count": len(ink_guard_params),
                         "photo_texture_count": len(photo_texture_params),
+                        "micro_tuning_count": (
+                            len(ink_gray_params)
+                            if (ink_candidate_grid.report.get("axes", {}).get("near_threshold_micro_tuning", {}).get("enabled"))
+                            else 0
+                        ),
+                        "controlled_escape_count": len(escape_candidates),
                         "forced_model_seed_count": forced_seed_report.get("forced_seed_count", 0),
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
@@ -805,6 +885,26 @@ def run_region_vision_checks(
                             "reason": "photo_texture_grid",
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
+                        },
+                    )
+                )
+            for escape_idx, escape_params in enumerate(escape_candidates, start=1):
+                candidate_jobs.append(
+                    (
+                        "controlled_escape",
+                        escape_idx,
+                        None,
+                        escape_params,
+                        {
+                            "applied": False,
+                            "reason": "controlled_cross_stage_escape",
+                            "changes": {},
+                            "parent_candidate_id": current_params.candidate_id,
+                            "escape_context": {
+                                "primary_stage": escape_grid.get("primary_stage"),
+                                "secondary_stage": escape_grid.get("secondary_stage"),
+                                "controlled_escape": True,
+                            },
                         },
                     )
                 )
@@ -1042,6 +1142,26 @@ def run_region_vision_checks(
                     attempt_record["optimization_policy"] = optimization_policy
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "photo_texture"
+                elif candidate_origin == "controlled_escape":
+                    patch_audit = patch_constraint_audit or {}
+                    escape_context = patch_audit.get("escape_context") if isinstance(patch_audit, dict) else {}
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": ["controlled_escape"],
+                        "primary_optimization_steps": ["controlled_escape"],
+                        "optimization_step": "controlled_escape",
+                        "allowed": True,
+                        "controlled_escape": True,
+                        "primary_stage": escape_context.get("primary_stage"),
+                        "secondary_stage": escape_context.get("secondary_stage"),
+                        "rejection_reason": None,
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "controlled_escape"
+                    attempt_record["controlled_escape"] = True
+                    attempt_record["primary_stage"] = escape_context.get("primary_stage")
+                    attempt_record["secondary_stage"] = escape_context.get("secondary_stage")
                 elif candidate_origin == "forced_model_seed":
                     patch_audit = patch_constraint_audit or {}
                     forced_seed_context = patch_audit.get("forced_seed_context") if isinstance(patch_audit, dict) else {}
@@ -1116,6 +1236,13 @@ def run_region_vision_checks(
 
             if not round_candidates:
                 round_record["stop_reason"] = "no_selectable_revision_candidate"
+                rejection_table = build_candidate_rejection_table(
+                    revision_attempts,
+                    str(basis_blocking_stage) if basis_blocking_stage else None,
+                )
+                round_record["candidate_rejection_table"] = rejection_table
+                round_record["candidate_rejection_count"] = len(rejection_table)
+                round_record["micro_tuning_count"] = len(ink_gray_params) if ink_candidate_grid.report.get("axes", {}).get("near_threshold_micro_tuning", {}).get("enabled") else 0
                 revision_rounds.append(round_record)
                 break
 

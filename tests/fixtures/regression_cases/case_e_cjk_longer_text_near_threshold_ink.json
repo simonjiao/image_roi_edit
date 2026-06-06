@@ -1,0 +1,59 @@
+{
+  "case_id": "case_e_cjk_longer_text_near_threshold_ink",
+  "case_label": "Case E",
+  "description": "CJK 2-char to 3-char replacement near-threshold overblack. Must use micro tuning and forced seed audit; if still rejected, must see micro tuning report, forced seed entries, and candidate rejection table.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_e_source.png --instruction '字段文字甲乙修改为丙丁戊' --output output/regression/case_e.png --profile photo_scan",
+  "instruction": "字段文字甲乙修改为丙丁戊",
+  "profile": "photo_scan",
+  "source_text": "甲乙",
+  "target_text": "丙丁戊",
+  "roi": [0, 0, 72, 36],
+  "slots": [
+    [10, 10, 20, 24],
+    [26, 10, 36, 24]
+  ],
+  "protected_boxes": [
+    [38, 9, 54, 25]
+  ],
+  "shape_report": {
+    "pass": true,
+    "pipeline_profile": "photo_scan",
+    "local_ink_balance_issues": [
+      {
+        "type": "roi_core_too_black",
+        "actual": 51.0,
+        "limit": 48.0
+      }
+    ]
+  },
+  "expected_report_fields": [
+    {
+      "path": "micro_tuning_report.enabled",
+      "comment": "overblack near-threshold micro tuning should fire when core black gap is small"
+    },
+    {
+      "path": "micro_tuning_report.family",
+      "equals": "core_only_micro_reduction"
+    },
+    {
+      "path": "forced_model_seed_audit",
+      "comment": "forced seed audit must track model suggestion conversions and rejections"
+    },
+    {
+      "path": "candidate_rejection_table",
+      "comment": "rejection table must list all rendered candidates with reasons"
+    },
+    {
+      "path": "complexity_normalization.enabled",
+      "equals": true
+    },
+    {
+      "path": "complexity_normalization.hard_boundary_not_relaxed",
+      "equals": true
+    },
+    {
+      "path": "complexity_normalization.protected_text_not_relaxed",
+      "equals": true
+    }
+  ]
+}
