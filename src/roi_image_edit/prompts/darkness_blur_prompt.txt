@@ -21,7 +21,7 @@
 3. 新字边缘是否过锐，像后贴上去的；
 4. 新字是否过糊，导致可读性下降；
 5. 新字边缘灰度是否接近原图扫描/拍照效果；
-6. 新字是否与左侧“名：”的黑度协调；
+6. 新字是否与 source_text 旧槽位、同一行参考文字、字段标签或 protected_texts 的黑度协调；
 7. 背景中是否存在旧字残影。
 
 不要选择纯黑、最清楚的版本。
@@ -32,8 +32,8 @@
 {
   "blocking_stage": "ink_gray_balance / photo_texture",
   "direction": "reduce_true_black_core / recover_core_black / trim_outer_gray_halo / add_photo_texture",
-  "best_opacity": 0.86,
-  "best_blur": 0.5,
+  "best_opacity": "候选 opacity 参数",
+  "best_blur": "候选 blur 参数",
   "reason": "为什么选择该透明度和模糊半径",
   "visual_findings": {
     "darkness": "ok / too_dark / too_light",
@@ -42,7 +42,7 @@
     "integration": "ok / looks_pasted"
   },
   "suggested_next": {
-    "opacity": 0.86,
-    "blur": 0.5
+    "opacity": "候选 opacity 参数",
+    "blur": "候选 blur 参数"
   }
 }

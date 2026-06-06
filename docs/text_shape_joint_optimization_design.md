@@ -73,6 +73,8 @@ background_cleanup 内部：
 
 所有视觉 prompt 都以 `master_prompt.txt` 作为 system prompt。Web 路径当前加载 `candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt`；CLI 迭代路径还会加载 `tuning_prompt.txt`。`font_size_prompt.txt` 和 `darkness_blur_prompt.txt` 是保留的专项诊断 prompt 资产，不能替代阶段门禁。
 
+视觉 prompt 的字段上下文必须由运行时动态注入：`field_key`、`field_label_text`、`field_separator_text`、`protected_texts` 和 `protected_boxes`。静态 prompt 不允许写死某个字段标签、默认参考字、固定字号枚举或固定候选参数值；字段标签和标点只来自指令解析、自动 ROI evidence 或后续 OCR/检测结果。
+
 ## 实施策略
 
 ### 1. 方向、字段和旧值 ROI

@@ -92,7 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--font-ranking", choices=("style", "document"), default="style")
     run.add_argument("--font-style-min-size", type=int, default=16)
     run.add_argument("--font-style-max-size", type=int, default=28)
-    run.add_argument("--style-reference-text", default="名")
+    run.add_argument("--style-reference-text", default=None)
     run.add_argument("--prefer-serif-fonts", action=argparse.BooleanOptionalAction, default=True)
     run.add_argument("--enforce-font-similarity", action=argparse.BooleanOptionalAction, default=True)
     run.add_argument("--use-tuning-prompt", action=argparse.BooleanOptionalAction, default=True)

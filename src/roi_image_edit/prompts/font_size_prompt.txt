@@ -17,10 +17,10 @@
 
 判断重点：
 1. 字体结构是否接近原图；
-2. 是否接近打印宋体/仿宋风格；
+2. 是否接近 source_text 旧字和同一行参考文字的字体结构；
 3. 是否过于现代、过于黑体化、过于规整；
 4. 字号是否接近 source_text 旧文字的实际视觉高度；
-5. 新字是否与左侧“名：”比例协调；
+5. 新字是否与同一行未修改参考文字、字段标签或 protected_texts 的比例协调；
 6. 笔画粗细是否接近原字；
 7. 小尺寸下是否自然。
 
@@ -34,20 +34,16 @@
   "blocking_stage": "text_shape",
   "direction": "fix_text_shape",
   "best_font": "字体名称",
-  "best_font_size": 26,
+  "best_font_size": "候选字号参数",
   "reason": "为什么选择该字体和字号",
   "font_rejections": {
     "字体名称": "主要问题"
   },
   "font_size_findings": {
-    "24": "too_small / ok / too_large",
-    "25": "too_small / ok / too_large",
-    "26": "too_small / ok / too_large",
-    "27": "too_small / ok / too_large",
-    "28": "too_small / ok / too_large"
+    "候选标签或字号": "too_small / ok / too_large"
   },
   "suggested_next": {
     "font": "字体名称",
-    "font_size": 26
+    "font_size": "候选字号参数"
   }
 }

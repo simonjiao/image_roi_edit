@@ -160,6 +160,7 @@ def load_processing_prompts() -> tuple[str, str, str]:
 
 def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | None = None) -> str:
     target_chars = [ch for ch in plan.target_text if not ch.isspace()]
+    protected_texts = [text for text in plan.protected_texts if text]
     stage_context_text = (
         "\n当前阶段上下文 JSON：\n"
         f"{json.dumps(stage_context, ensure_ascii=False, indent=2)}\n"
@@ -168,18 +169,23 @@ def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | 
     )
     return (
         "\n\n动态任务补充：\n"
+        f"- 字段 key field_key: {plan.field_key or ''}\n"
+        f"- 本次字段标签 field_label_text: {plan.field_label_text or ''}\n"
+        f"- 本次字段分隔符 field_separator_text: {plan.field_separator_text or ''}\n"
+        f"- 本次受保护文本 protected_texts: {protected_texts}\n"
         f"- 旧文字 source_text: {plan.source_text or ''}\n"
         f"- 新文字 target_text: {plan.target_text}\n"
         f"- 本次真实目标字符序列: {target_chars}\n"
-        "- prompt 模板不得假设固定姓名；本次必须按 source_text 和 target_text 的真实字符逐个判断。\n"
+        "- prompt 模板不得假设固定字段、固定标签或固定字数；本次必须按 field context、source_text 和 target_text 的真实内容逐个判断。\n"
         f"- 用户画出的 search_roi: {list(plan.search_roi)}\n"
         f"- 本地脚本选择的 target_roi: {list(plan.target_roi)}\n"
         f"- 本地估计的局部文字倾角 text_angle_degrees: {round(float(plan.text_angle_degrees), 3)}\n"
         f"- 必须保持不变的 protected_boxes: {[list(box) for box in plan.protected_boxes]}\n"
+        "- field_label_text、field_separator_text、protected_texts 和 protected_boxes 是本次实际任务上下文；如果为空，不能自行补全成某个固定字段标签。\n"
         "- 必须按阶段验收：先看字体/字号/字槽/基线/笔画粗细/局部倾斜姿态，再看黑度和灰边，再看照片质感和背景修补。\n"
         "- 如果 text_shape 阶段未通过，不能用降黑、加模糊、加噪声或背景解释来判定通过。\n"
-        "- 必须检查 target_roi 是否覆盖完整旧文字，而不是覆盖“姓名:”标签或冒号碎片。\n"
-        "- 如果 source_text 和 target_text 字数不同，也只能改 source_text 的姓名区域以及可用空白，不能改名前标签或名后其它文字。\n"
+        "- 必须检查 target_roi 是否覆盖完整旧文字，而不是覆盖字段标签、字段分隔符或 protected text 碎片。\n"
+        "- 如果 source_text 和 target_text 字数不同，也只能改 source_text 所在字段值区域以及必要空白，不能改旧值前后的未修改文字。\n"
         "- 如果旧字擦除后的底色明显发白、过于平滑、像涂抹补丁，必须 pass=false。\n"
         "- 如果旧文字没有被完整清除、仍有任何旧字残留，必须 pass=false。\n"
         "- 如果新文字不在旧文字原位置，而是偏到标签、冒号或其他字段位置，必须 pass=false。\n"
@@ -391,6 +397,10 @@ def run_region_vision_checks(
                 "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
+                "field_key": plan.field_key,
+                "field_label_text": plan.field_label_text,
+                "field_separator_text": plan.field_separator_text,
+                "protected_texts": list(plan.protected_texts),
                 "pipeline_profile": pipeline_profile,
                 "stage_context": model_stage_context(report, pipeline_profile),
             },
@@ -1430,6 +1440,7 @@ def process_region(
     max_revision_rounds: int = 8,
     pipeline_profile: str = "photo_scan",
     progress: ProgressCallback | None = None,
+    field_context: dict[str, Any] | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
     region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
     region_dir.mkdir(parents=True, exist_ok=True)
@@ -1438,6 +1449,10 @@ def process_region(
         roi,
         source_text=source_text,
         target_text=target_text,
+        field_key=str((field_context or {}).get("field_key") or (field_context or {}).get("field") or "") or None,
+        field_label_text=str((field_context or {}).get("field_label_text") or "") or None,
+        field_separator_text=str((field_context or {}).get("field_separator_text") or "") or None,
+        protected_texts=tuple(str(item) for item in ((field_context or {}).get("protected_texts") or []) if str(item)),
     )
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
@@ -1481,6 +1496,10 @@ def process_region(
                 "target_roi": list(plan.target_roi),
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
+                "field_key": plan.field_key,
+                "field_label_text": plan.field_label_text,
+                "field_separator_text": plan.field_separator_text,
+                "protected_texts": list(plan.protected_texts),
                 "draw_mode": plan.draw_mode,
                 "pipeline_profile": pipeline_profile,
                 "placement_strategy": plan.placement_strategy,
@@ -1565,6 +1584,10 @@ def process_region(
             placement_strategy=plan.placement_strategy,
             placement_strategy_reason=plan.placement_strategy_reason,
             slot_quality_report=plan.slot_quality_report,
+            field_key=plan.field_key,
+            field_label_text=plan.field_label_text,
+            field_separator_text=plan.field_separator_text,
+            protected_texts=plan.protected_texts,
         )
     font_style_reference = build_font_style_reference(
         original,
@@ -1946,6 +1969,10 @@ def process_region(
                 "target_roi": list(plan.target_roi),
                 "slot_boxes": [asdict(item) for item in plan.slot_boxes],
                 "protected_boxes": [list(item) for item in plan.protected_boxes],
+                "field_key": plan.field_key,
+                "field_label_text": plan.field_label_text,
+                "field_separator_text": plan.field_separator_text,
+                "protected_texts": list(plan.protected_texts),
                 "draw_mode": plan.draw_mode,
                 "pipeline_profile": pipeline_profile,
                 "stage_status": (best_report.get("stage_gate") or {}).get("stage_status"),

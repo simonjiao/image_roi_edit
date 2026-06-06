@@ -161,6 +161,27 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                 region_id = str(region.get("id") or f"region_{len(region_results) + 1}")
                 region_source_text = str(region.get("sourceText") or source_text)
                 region_target_text = str(region.get("targetText") or target_text)
+                protected_texts = [
+                    str(item)
+                    for item in (
+                        region.get("_autoProtectedTexts")
+                        or (instruction_details or {}).get("protected_texts")
+                        or []
+                    )
+                    if str(item)
+                ]
+                for key in ("_autoFieldLabelText", "_autoFieldSeparatorText"):
+                    value = str(region.get(key) or "")
+                    if value and value not in protected_texts:
+                        protected_texts.append(value)
+                field_context = {
+                    "field_key": region.get("_autoFieldKey") or (instruction_details or {}).get("field_key"),
+                    "field": region.get("_autoFieldKey") or (instruction_details or {}).get("field"),
+                    "field_label_text": region.get("_autoFieldLabelText") or (instruction_details or {}).get("field_label_text"),
+                    "field_separator_text": region.get("_autoFieldSeparatorText")
+                    or (instruction_details or {}).get("field_separator_text"),
+                    "protected_texts": protected_texts,
+                }
                 emit(
                     "region_started",
                     {
@@ -190,6 +211,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     max_revision_rounds=int(payload.get("maxRevisionRounds") or 8),
                     pipeline_profile=pipeline_profile,
                     progress=region_progress,
+                    field_context=field_context,
                 )
                 display_image = image.copy() if accepted else region_display_image.copy()
                 emit(

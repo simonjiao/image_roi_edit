@@ -336,10 +336,12 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
         confidence: float,
         failure_reason: str | None = None,
     ) -> dict[str, Any]:
+        field_context = instruction_field_context(raw, field_key)
         return {
             "raw": raw,
             "field_key": field_key,
             "field": field_key,
+            **field_context,
             "source_text": source_text,
             "target_text": target_text,
             "old_value": source_text,
@@ -427,6 +429,35 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "age": ("年龄", "岁数", "age"),
     "number": ("编号", "数字编号", "号码", "序号", "number"),
 }
+
+
+def field_label_hint(field_key: str | None) -> str | None:
+    aliases = FIELD_ALIASES.get(str(field_key or ""))
+    return aliases[0] if aliases else None
+
+
+def instruction_field_context(raw: str, field_key: str | None) -> dict[str, Any]:
+    label = None
+    separator = None
+    aliases = FIELD_ALIASES.get(str(field_key or ""), ())
+    for alias in sorted(aliases, key=len, reverse=True):
+        match = re.search(re.escape(alias), str(raw or ""), flags=re.IGNORECASE)
+        if not match:
+            continue
+        label = match.group(0)
+        suffix = str(raw or "")[match.end() :]
+        sep_match = re.match(r"\s*([:：])", suffix)
+        if sep_match:
+            separator = sep_match.group(1)
+        break
+    if label is None:
+        label = field_label_hint(field_key)
+    protected_texts = [value for value in (label, separator) if value]
+    return {
+        "field_label_text": label,
+        "field_separator_text": separator,
+        "protected_texts": protected_texts,
+    }
 
 
 def infer_instruction_field(value: str) -> str | None:
@@ -2335,6 +2366,10 @@ def auto_select_regions_for_instruction(
     target_text: str,
 ) -> list[dict[str, Any]]:
     field_key = infer_instruction_field(instruction)
+    field_context = instruction_field_context(instruction, field_key)
+    field_label_text = field_context.get("field_label_text")
+    field_separator_text = field_context.get("field_separator_text")
+    protected_texts = tuple(str(item) for item in (field_context.get("protected_texts") or []) if str(item))
     font_candidates = find_font_candidates(font_source="recommended")
     font_filter_text = source_text or target_text
     font_candidates, _rejected = filter_fonts_by_required_text(font_candidates, font_filter_text)
@@ -2353,6 +2388,10 @@ def auto_select_regions_for_instruction(
                     roi,
                     source_text=effective_source,
                     target_text=target_text,
+                    field_key=field_key,
+                    field_label_text=str(field_label_text or "") or None,
+                    field_separator_text=str(field_separator_text or "") or None,
+                    protected_texts=protected_texts,
                 )
             except ValueError:
                 continue
@@ -2404,9 +2443,7 @@ def auto_select_regions_for_instruction(
             ):
                 candidates.append((auto_score, auto_roi, plan, effective_source))
     else:
-        raise ValueError(
-            "自动选择 ROI 需要明确旧文字，或写明字段名称，例如：姓名旧值调整为新值、接收时间修改为新值。"
-        )
+        raise ValueError("自动选择 ROI 需要明确旧文字，或写明字段名称，例如：字段旧值调整为新值。")
 
     if not candidates:
         field_label = f"{field_key or '指定字段'}" if field_key else "指定字段"
@@ -2446,6 +2483,9 @@ def auto_select_regions_for_instruction(
             "targetText": target_text,
             "_autoScore": round(float(selected_score), 3),
             "_autoFieldKey": field_key,
+            "_autoFieldLabelText": field_label_text,
+            "_autoFieldSeparatorText": field_separator_text,
+            "_autoProtectedTexts": list(protected_texts),
             "_autoTargetRoi": list(selected_plan.target_roi),
             "_autoSearchRoi": list(reported_search_roi),
             "_autoEditRoi": [x1, y1, x2, y2],
@@ -2507,6 +2547,10 @@ def build_region_plan(
     source_text: str,
     target_text: str,
     threshold: int = 165,
+    field_key: str | None = None,
+    field_label_text: str | None = None,
+    field_separator_text: str | None = None,
+    protected_texts: tuple[str, ...] = (),
 ) -> RenderPlan:
     slots = slots_for_region(
         img,
@@ -2622,6 +2666,10 @@ def build_region_plan(
         placement_strategy=placement_strategy,
         placement_strategy_reason=placement_reason,
         slot_quality_report=slot_report,
+        field_key=field_key,
+        field_label_text=field_label_text,
+        field_separator_text=field_separator_text,
+        protected_texts=protected_texts,
     )
 
 

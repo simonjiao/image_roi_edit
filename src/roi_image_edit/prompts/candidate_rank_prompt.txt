@@ -28,11 +28,11 @@
 3. 字距是否自然；
 4. 新字字高是否接近原旧文字的实际视觉高度；
 5. 新字是否明显偏上、偏下、偏左或偏右；
-6. 字体结构是否接近原图的打印宋体感；
+6. 字体结构是否接近 source_text 旧字和同一行参考文字；
 7. 笔画粗细是否接近；
 8. 新字是否太黑、太浅、太锐或太糊；
 9. 背景是否有明显补丁、残影、涂抹感或接缝；
-10. “名：”区域是否保持原样。
+10. field_label_text、field_separator_text、protected_texts、protected_boxes 和其它非目标文字是否保持原样。
 
 注意：
 不要选择最漂亮、最清晰的版本。
@@ -87,7 +87,7 @@
     "blur_delta": 0
   },
   "parameter_suggestions": [
-    {"name": "opacity", "from": 0.76, "to": 0.72, "reason": "only if true-black core is too high"}
+    {"name": "opacity", "from": "current_value", "to": "suggested_value", "reason": "only if true-black core is too high"}
   ],
   "local_metric_conflicts": []
 }

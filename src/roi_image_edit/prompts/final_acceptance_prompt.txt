@@ -27,7 +27,7 @@
 1. 如果输出尺寸与原图尺寸不一致，必须 pass=false。
 2. 如果 ROI 外变化像素数不为 0，必须 pass=false。
 3. 如果边缘变化像素数不为 0，必须 pass=false。
-4. 如果“名：”区域被修改，必须 pass=false。
+4. 如果 field_label_text、field_separator_text、protected_texts、protected_boxes 或任何非目标文字被修改，必须 pass=false。
 5. 如果图片被拉伸、缩放、裁剪、重采样，必须 pass=false。
 6. 只有硬校验全部通过，才进入视觉验收。
 
@@ -102,7 +102,7 @@
     }
   ],
   "parameter_suggestions": [
-    {"name": "opacity", "from": 0.76, "to": 0.72, "reason": "only if true-black core is too high"}
+    {"name": "opacity", "from": "current_value", "to": "suggested_value", "reason": "only if true-black core is too high"}
   ],
   "local_metric_conflicts": [],
   "final_decision": "deliver / revise"

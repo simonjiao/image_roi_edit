@@ -20,6 +20,25 @@ FORBIDDEN_RUNTIME_FRAGMENTS = (
     "这个字",
     "目标字符必须右倾",
     "目标字符必须左倾",
+    "名：",
+    "姓名区域",
+    "名前",
+    "名后",
+    'default="名"',
+    'or "名"',
+)
+FORBIDDEN_PROMPT_FRAGMENTS = (
+    "左侧“",
+    "打印宋体",
+    "仿宋",
+    "宋体感",
+    "0.76",
+    "0.72",
+    '"24"',
+    '"25"',
+    '"26"',
+    '"27"',
+    '"28"',
 )
 
 
@@ -34,6 +53,17 @@ class NoHardcodedSpecialCasesTest(unittest.TestCase):
                 for fragment in FORBIDDEN_RUNTIME_FRAGMENTS:
                     if fragment in text:
                         violations.append(f"{path.relative_to(PROJECT_ROOT)} contains {fragment}")
+
+        self.assertEqual(violations, [])
+
+    def test_packaged_prompts_do_not_anchor_to_single_field_or_fixed_candidate_values(self) -> None:
+        violations: list[str] = []
+        prompt_root = PROJECT_ROOT / "src" / "roi_image_edit" / "prompts"
+        for path in prompt_root.glob("*.txt"):
+            text = path.read_text(encoding="utf-8")
+            for fragment in FORBIDDEN_PROMPT_FRAGMENTS:
+                if fragment in text:
+                    violations.append(f"{path.relative_to(PROJECT_ROOT)} contains {fragment}")
 
         self.assertEqual(violations, [])
 

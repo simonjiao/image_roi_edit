@@ -105,6 +105,10 @@ class RenderPlan:
     placement_strategy: str = "top_left_anchor"
     placement_strategy_reason: str = "default"
     slot_quality_report: dict[str, Any] | None = None
+    field_key: str | None = None
+    field_label_text: str | None = None
+    field_separator_text: str | None = None
+    protected_texts: tuple[str, ...] = ()
 
 
 def intersect_boxes(
@@ -3950,8 +3954,13 @@ def paste_crop(full_image: Image.Image, crop: Image.Image, split_box: tuple[int,
 def vision_task_context(plan: RenderPlan) -> str:
     source_chars = text_chars(plan.source_text)
     target_chars = text_chars(plan.target_text)
+    protected_texts = [text for text in plan.protected_texts if text]
     return (
         "\n\n动态任务上下文：\n"
+        f"- field_key: {plan.field_key or ''}\n"
+        f"- field_label_text: {plan.field_label_text or ''}\n"
+        f"- field_separator_text: {plan.field_separator_text or ''}\n"
+        f"- protected_texts: {protected_texts}\n"
         f"- source_text: {plan.source_text or ''}\n"
         f"- target_text: {plan.target_text}\n"
         f"- source_chars: {source_chars}\n"
@@ -3961,8 +3970,9 @@ def vision_task_context(plan: RenderPlan) -> str:
         f"- slot_boxes: {[asdict(slot) for slot in plan.slot_boxes]}\n"
         f"- protected_boxes: {[list(box) for box in plan.protected_boxes]}\n"
         f"- text_angle_degrees: {round(float(plan.text_angle_degrees), 3)}\n"
-        "- source_text 为空时，按 target_roi 内旧文字暗色组件作为旧槽位参照；不要补全成固定姓名。\n"
+        "- source_text 为空时，按 target_roi 内旧文字暗色组件作为旧槽位参照；不要补全成固定字段值。\n"
         "- source_text 和 target_text 字数不同时，只能使用旧文字区域及合理空白，不能覆盖前后不应修改文字。\n"
+        "- field_label_text、field_separator_text、protected_texts 和 protected_boxes 表示本次任务实际识别到或由指令提供的受保护上下文；这些内容必须保持不变。\n"
     )
 
 
@@ -4015,8 +4025,12 @@ def build_task_from_metadata(
         protected_boxes=protected_boxes,
         source_reference_box=target_roi,
         style_reference_box=protected_box,
-        style_reference_text=style_reference_text or edit.get("style_reference_text") or "名",
+        style_reference_text=style_reference_text or edit.get("style_reference_text") or None,
         draw_mode="auto",
+        field_key=edit.get("field_key") or edit.get("field"),
+        field_label_text=edit.get("field_label_text"),
+        field_separator_text=edit.get("field_separator_text"),
+        protected_texts=tuple(str(item) for item in (edit.get("protected_texts") or []) if str(item)),
     )
     context = {
         "metadata_path": str(metadata_path),
@@ -5106,7 +5120,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--font-ranking", choices=("style", "document"), default="style")
     parser.add_argument("--font-style-min-size", type=int, default=16)
     parser.add_argument("--font-style-max-size", type=int, default=28)
-    parser.add_argument("--style-reference-text", default="名")
+    parser.add_argument("--style-reference-text", default=None)
     parser.add_argument("--prefer-serif-fonts", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enforce-font-similarity", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-tuning-prompt", action=argparse.BooleanOptionalAction, default=True)

@@ -43,7 +43,7 @@
 1. 输出尺寸必须等于原图尺寸。
 2. ROI 外像素必须不变。
 3. 图片边缘必须不变。
-4. protected text 必须不变，例如 `姓名:`、`名:`、字段标签和后续未修改文字。
+4. protected text 必须不变，例如动态上下文里的 `field_label_text`、`field_separator_text`、`protected_texts`、字段标签和后续未修改文字。
 5. 目标 ROI 必须覆盖完整旧字，不能残留旧字笔画。
 6. 新字不能覆盖旧字后面的未修改内容。
 
