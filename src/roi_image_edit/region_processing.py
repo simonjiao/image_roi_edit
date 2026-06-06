@@ -55,6 +55,7 @@ from roi_image_edit.local_validation import (
     stage_issues,
 )
 
+from roi_image_edit.forced_model_seeds import forced_model_seed_audit
 from roi_image_edit.model_suggestions import (
     filter_model_patch_records,
     model_stage_response_contract,
@@ -615,6 +616,13 @@ def run_region_vision_checks(
                 for patch in local_stage_filter_report.get("rejected_patches", [])
                 if isinstance(patch, dict)
             ]
+            forced_seed_report = forced_model_seed_audit(
+                model_records,
+                allowed_model_patches,
+                seen_params,
+                local_stage_filter_report,
+            )
+            forced_seed_entries = forced_seed_report.get("forced_seeds", [])
             shape_candidate_grid = text_shape_reset_candidate_grid(
                 current_params,
                 font_style_reference,
@@ -704,6 +712,8 @@ def run_region_vision_checks(
                 "model_suggestion_attempts": model_filter.get("attempt_records") or [],
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
+                "forced_model_seed_count": forced_seed_report.get("forced_seed_count", 0),
+                "forced_model_seed_audit": forced_seed_report.get("audited_suggestions", []),
             }
             continuation_contract = revision_round_continuation_contract(
                 round_record,
@@ -720,6 +730,7 @@ def run_region_vision_checks(
                         "ink_gray_count": len(ink_gray_params),
                         "ink_guard_count": len(ink_guard_params),
                         "photo_texture_count": len(photo_texture_params),
+                        "forced_model_seed_count": forced_seed_report.get("forced_seed_count", 0),
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
@@ -813,6 +824,35 @@ def run_region_vision_checks(
                     current_acceptance,
                 )
                 candidate_jobs.append(("patch", patch_idx, patch, patched_params, audit))
+            for seed_idx, seed_entry in enumerate(forced_seed_entries, start=1):
+                seed_patch = seed_entry.get("converted_patch")
+                if not isinstance(seed_patch, dict):
+                    continue
+                raw_seed_params = apply_suggested_patch(current_params, seed_patch)
+                constrained_seed_params = constrained_revision_params(
+                    raw_seed_params,
+                    current_params,
+                    current_acceptance,
+                    current_report,
+                    round_idx=round_idx,
+                )
+                seed_audit = constraint_audit(
+                    raw_seed_params,
+                    constrained_seed_params,
+                    current_report,
+                    current_acceptance,
+                )
+                if seed_audit.get("applied"):
+                    seed_audit["alternative_candidate_id"] = ""
+                forced_seed_context = {
+                    "source": seed_entry.get("source"),
+                    "kind": seed_entry.get("kind"),
+                    "raw_suggestion": seed_entry.get("raw_suggestion"),
+                    "converted_patch": seed_patch,
+                    "constrained_patch": dict(seed_audit.get("changes") or {}),
+                    "constraint_reason": seed_audit.get("reason"),
+                }
+                candidate_jobs.append(("forced_model_seed", seed_idx, seed_patch, constrained_seed_params, {**seed_audit, "forced_seed_context": forced_seed_context}))
 
             for candidate_origin, candidate_idx, patch, patched_params, patch_constraint_audit in candidate_jobs:
                 suffix = "i"
@@ -1002,6 +1042,40 @@ def run_region_vision_checks(
                     attempt_record["optimization_policy"] = optimization_policy
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "photo_texture"
+                elif candidate_origin == "forced_model_seed":
+                    patch_audit = patch_constraint_audit or {}
+                    forced_seed_context = patch_audit.get("forced_seed_context") if isinstance(patch_audit, dict) else {}
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": ["model_suggestion_seed"],
+                        "primary_optimization_steps": ["model_suggestion_seed"],
+                        "optimization_step": "model_suggestion",
+                        "allowed": True,
+                        "rejection_reason": None,
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "model_suggestion"
+                    attempt_record["forced_model_seed"] = {
+                        "source": forced_seed_context.get("source"),
+                        "kind": forced_seed_context.get("kind"),
+                        "raw_suggestion": forced_seed_context.get("raw_suggestion"),
+                        "converted_patch": forced_seed_context.get("converted_patch"),
+                        "constrained_patch": forced_seed_context.get("constrained_patch"),
+                        "constraint_reason": forced_seed_context.get("constraint_reason"),
+                        "rendered": True,
+                        "selectable": patched_strict and report_stage_pass(patched_report) and prior_regression.get("pass"),
+                        "rejection_reason": (
+                            None
+                            if (patched_strict and report_stage_pass(patched_report) and prior_regression.get("pass"))
+                            else (
+                                "strict_gate_failed" if not patched_strict
+                                else "stage_gate_failed" if not report_stage_pass(patched_report)
+                                else "prior_stage_regression" if not prior_regression.get("pass")
+                                else "unknown"
+                            )
+                        ),
+                    }
                 else:
                     optimization_policy = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),

@@ -704,6 +704,52 @@ def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     }
 
 
+def _build_micro_tuning_report(
+    micro_tuning: dict[str, Any],
+    micro_variants: list[CandidateParams],
+    micro_candidate_ids: list[str],
+) -> dict[str, Any]:
+    enabled = bool(micro_tuning.get("enabled"))
+    family = micro_tuning.get("candidate_family", "")
+    report: dict[str, Any] = {
+        "enabled": enabled,
+        "family": family,
+        "stage_id": "ink_gray_balance",
+        "candidate_count": len(micro_variants) if enabled else 0,
+        "candidate_ids": micro_candidate_ids if enabled else [],
+    }
+    if enabled:
+        for field in ("metric", "actual", "limit_value", "gap", "gap_ratio"):
+            if field in micro_tuning:
+                key = "limit" if field == "limit_value" else field
+                report[key] = micro_tuning[field]
+    else:
+        report["disabled_reason"] = micro_tuning.get("reason", "unknown")
+    return report
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in stage_issues(report, "ink_gray_balance")
+        if isinstance(issue, dict)
+    }
+    return {
+        "excess_black_core": report_has_excess_black_core(report),
+        "outer_gray_halo": report_has_outer_gray_halo(report)
+        or "changed_char_neighbor_outer_gray_halo_too_high" in issue_types,
+        "needs_wider_gray_strokes": report_needs_wider_gray_strokes(report),
+        "needs_thinner_strokes": report_needs_thinner_strokes(report),
+        "fine_strokes_too_soft": report_has_fine_strokes_too_soft(report),
+        "core_too_light": bool(
+            issue_types
+            & {
+                "core_mean_gray_too_light",
+                "core_lighten_too_high",
+                "changed_char_core_too_light",
+                "ink_too_light",
+            }
+        ),
+    }
+
+
 def _numeric_issue_gap(issue: dict[str, Any]) -> float | None:
     try:
         actual = float(issue.get("actual"))
@@ -713,19 +759,18 @@ def _numeric_issue_gap(issue: dict[str, Any]) -> float | None:
     return actual - limit
 
 
-def ink_gray_near_threshold_micro_tuning(report: dict[str, Any] | None) -> dict[str, Any]:
-    issues = stage_issues(report, "ink_gray_balance")
-    if not issues:
-        return {"enabled": False, "reason": "no_ink_gray_issues"}
+def _core_light_near_threshold(report: dict[str, Any] | None) -> dict[str, Any]:
     allowed_issue_types = {"core_mean_gray_too_light", "core_lighten_too_high"}
+    issues = stage_issues(report, "ink_gray_balance")
     issue_types = {str(issue.get("type") or "") for issue in issues}
+    if not issue_types:
+        return {"enabled": False, "reason": "no_ink_gray_issues"}
     if issue_types - allowed_issue_types:
         return {
             "enabled": False,
             "reason": "other_ink_gray_issues_present",
             "issue_types": sorted(issue_types),
         }
-
     gaps: list[float] = []
     for issue in issues:
         gap = _numeric_issue_gap(issue)
@@ -736,39 +781,134 @@ def ink_gray_near_threshold_micro_tuning(report: dict[str, Any] | None) -> dict[
                 "issue_types": sorted(issue_types),
             }
         gaps.append(gap)
-
     max_gap = max(gaps)
-    if max_gap > 0.75:
+    near_threshold_limit = 0.75
+    if max_gap > near_threshold_limit:
         return {
             "enabled": False,
             "reason": "issue_gap_not_near_threshold",
             "max_gap": round(max_gap, 3),
-            "limit": 0.75,
+            "limit": near_threshold_limit,
             "issue_types": sorted(issue_types),
         }
-
     return {
         "enabled": True,
         "reason": "near_threshold_core_light_micro_tuning",
         "max_gap": round(max_gap, 3),
-        "limit": 0.75,
+        "limit": near_threshold_limit,
         "issue_types": sorted(issue_types),
         "candidate_family": "core_only_micro_recovery",
     }
 
 
-def ink_gray_micro_tuning_candidates(
-    params: CandidateParams,
-    report: dict[str, Any] | None,
-) -> list[CandidateParams]:
-    micro = ink_gray_near_threshold_micro_tuning(report)
-    if not micro.get("enabled"):
-        return []
+def _core_overblack_near_threshold(report: dict[str, Any] | None) -> dict[str, Any]:
+    allowed_issue_types = {"roi_core_too_black", "changed_char_core_too_black"}
+    issues = stage_issues(report, "ink_gray_balance")
+    if not issues:
+        return {"enabled": False, "reason": "no_ink_gray_issues"}
+    issue_types = {str(issue.get("type") or "") for issue in issues}
+    overblack_issues = [issue for issue in issues if str(issue.get("type") or "") in allowed_issue_types]
+    if not overblack_issues:
+        return {"enabled": False, "reason": "no_overblack_issues_present", "issue_types": sorted(issue_types)}
+    if issue_types - allowed_issue_types:
+        return {
+            "enabled": False,
+            "reason": "other_ink_gray_issues_present",
+            "issue_types": sorted(issue_types),
+        }
+    gaps: list[float] = []
+    for issue in overblack_issues:
+        actual = None
+        limit = None
+        try:
+            actual = float(issue.get("actual"))
+            limit = float(issue.get("limit"))
+        except (TypeError, ValueError):
+            pass
+        if actual is None or limit is None:
+            continue
+        excess = actual - limit
+        if excess <= 0:
+            continue
+        gap_ratio = limit / max(actual, 1.0)
+        gaps.append(1.0 - gap_ratio)
+    if not gaps:
+        return {
+            "enabled": False,
+            "reason": "no_overblack_gap_computed",
+            "issue_types": sorted(issue_types),
+        }
+    mean_gap_ratio = sum(gaps) / len(gaps)
+    near_threshold_limit = 0.12
+    if mean_gap_ratio > near_threshold_limit:
+        return {
+            "enabled": False,
+            "reason": "overblack_gap_not_near_threshold",
+            "mean_gap_ratio": round(mean_gap_ratio, 4),
+            "limit": near_threshold_limit,
+            "issue_types": sorted(issue_types),
+        }
+    metric_actual = None
+    metric_limit = None
+    for issue in overblack_issues:
+        try:
+            metric_actual = float(issue.get("actual"))
+            metric_limit = float(issue.get("limit"))
+        except (TypeError, ValueError):
+            pass
+        if metric_actual is not None and metric_limit is not None:
+            break
+    return {
+        "enabled": True,
+        "reason": "near_threshold_overblack_micro_tuning",
+        "family": "overblack_micro_reduction",
+        "mean_gap_ratio": round(mean_gap_ratio, 4),
+        "limit": near_threshold_limit,
+        "issue_types": sorted(issue_types),
+        "candidate_family": "core_only_micro_reduction",
+        "metric": "ink_gray_balance_core_black",
+        "actual": round(float(metric_actual or 0), 3),
+        "limit_value": round(float(metric_limit or 0), 3),
+        "gap": round(float((metric_actual or 0) - (metric_limit or 0)), 3),
+        "gap_ratio": round(mean_gap_ratio, 4),
+    }
+
+
+def ink_gray_near_threshold_micro_tuning(report: dict[str, Any] | None) -> dict[str, Any]:
+    core_light = _core_light_near_threshold(report)
+    if core_light.get("enabled"):
+        return core_light
+    issue_types_light = set(core_light.get("issue_types") or [])
+    allowed_light = {"core_mean_gray_too_light", "core_lighten_too_high"}
+    if issue_types_light and issue_types_light.issubset(allowed_light):
+        return core_light
+    overblack = _core_overblack_near_threshold(report)
+    if overblack.get("enabled"):
+        return overblack
+    issue_types_overblack = set(overblack.get("issue_types") or [])
+    allowed_overblack = {"roi_core_too_black", "changed_char_core_too_black"}
+    if issue_types_overblack and issue_types_overblack.issubset(allowed_overblack):
+        return overblack
+    issues = stage_issues(report, "ink_gray_balance")
+    issue_types = sorted({str(issue.get("type") or "") for issue in issues if isinstance(issue, dict)})
+    if not issues:
+        return {"enabled": False, "reason": "no_ink_gray_issues"}
+    overblack_issue_types = {"roi_core_too_black", "changed_char_core_too_black"}
+    if issue_types and set(issue_types) & overblack_issue_types:
+        return {
+            "enabled": False,
+            "reason": "other_ink_gray_issues_present",
+            "issue_types": issue_types,
+        }
+    return {"enabled": False, "reason": "no_near_threshold_condition", "issue_types": issue_types}
+
+
+def _core_light_micro_variants(params: CandidateParams) -> list[CandidateParams]:
     core_gain = params.core_ink_gain
     darken = params.core_darken_strength
     target = params.core_darken_target_gray
     threshold = params.core_darken_threshold
-    variants = [
+    return [
         mutate_params(params, core_darken_strength=darken + 0.003),
         mutate_params(params, core_darken_strength=darken + 0.006),
         mutate_params(params, core_ink_gain=core_gain + 0.003),
@@ -780,7 +920,34 @@ def ink_gray_micro_tuning_candidates(
         mutate_params(params, alpha_contrast=params.alpha_contrast + 0.003),
         mutate_params(params, opacity=params.opacity + 0.003),
     ]
-    return variants
+
+
+def _core_overblack_micro_variants(params: CandidateParams) -> list[CandidateParams]:
+    return [
+        mutate_params(params, opacity=params.opacity - 0.005),
+        mutate_params(params, opacity=params.opacity - 0.010),
+        mutate_params(params, core_ink_gain=params.core_ink_gain - 0.005),
+        mutate_params(params, core_ink_gain=params.core_ink_gain - 0.010),
+        mutate_params(params, core_darken_strength=params.core_darken_strength - 0.005),
+        mutate_params(params, core_darken_strength=params.core_darken_strength - 0.010),
+        mutate_params(params, core_ink_gain=params.core_ink_gain - 0.006, core_darken_strength=params.core_darken_strength - 0.006),
+        mutate_params(params, alpha_contrast=params.alpha_contrast - 0.005),
+        mutate_params(params, opacity=params.opacity - 0.007, core_ink_gain=params.core_ink_gain - 0.005),
+        mutate_params(params, core_darken_strength=params.core_darken_strength - 0.007, alpha_contrast=params.alpha_contrast - 0.005),
+    ]
+
+
+def ink_gray_micro_tuning_candidates(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+) -> list[CandidateParams]:
+    micro = ink_gray_near_threshold_micro_tuning(report)
+    if not micro.get("enabled"):
+        return []
+    family = micro.get("candidate_family", "")
+    if family == "core_only_micro_reduction":
+        return _core_overblack_micro_variants(params)
+    return _core_light_micro_variants(params)
 
 
 def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
@@ -866,15 +1033,16 @@ def ink_gray_candidate_grid(
     ink_values = axes["ink_gain"]
     alpha_values = axes["alpha_contrast"]
     core_values = axes["core_tone"]
-    raw_budget = (
+    axis_raw_budget = (
         len(opacity_values)
         * len(stroke_values)
         * len(ink_values)
         * len(alpha_values)
         * len(core_values)
-    ) + len(micro_variants)
+    )
+    raw_budget = axis_raw_budget + len(micro_variants)
 
-    variants: list[CandidateParams] = list(micro_variants)
+    axis_variants: list[CandidateParams] = []
     for opacity in opacity_values:
         for stroke_opacity in stroke_values:
             for ink_gain in ink_values:
@@ -885,7 +1053,7 @@ def ink_gray_candidate_grid(
                         core_darken_threshold,
                         core_darken_target_gray,
                     ) in core_values:
-                        variants.append(
+                        axis_variants.append(
                             mutate_params(
                                 params,
                                 opacity=opacity,
@@ -899,7 +1067,11 @@ def ink_gray_candidate_grid(
                             )
                         )
     retained_limit = min(limit, INK_GRAY_GRID_TOP_LIMIT)
-    candidates = dedupe_params(variants, retained_limit)
+    max_axis_retain = max(0, retained_limit - len(micro_variants))
+    retained_axis = dedupe_params(axis_variants, max(1, max_axis_retain))
+    retained_micro = dedupe_params(micro_variants, len(micro_variants))
+    candidates = retained_micro + retained_axis[:max_axis_retain]
+    micro_candidate_ids = [c.candidate_id for c in retained_micro]
     candidate_records: list[dict[str, Any]] = []
     violations: list[dict[str, Any]] = []
     shape_parent_id = str(parent_shape_candidate_id or params.candidate_id)
@@ -961,6 +1133,9 @@ def ink_gray_candidate_grid(
     issue_flags = ink_gray_issue_flags(report)
     combined_core_light_outer_halo = issue_flags["core_too_light"] and issue_flags["outer_gray_halo"]
     budget_min, budget_max = INK_GRAY_GRID_BUDGET_RANGE
+    overblack_micro_report: dict[str, Any] = _build_micro_tuning_report(
+        micro_tuning, micro_variants, micro_candidate_ids
+    )
     return InkGrayCandidateGrid(
         candidates=candidates,
         report={
@@ -1002,6 +1177,9 @@ def ink_gray_candidate_grid(
                 "core_tone_count": len(core_values),
                 "near_threshold_micro_tuning": micro_tuning,
                 "near_threshold_micro_candidate_count": len(micro_variants),
+                "near_threshold_micro_candidate_ids": micro_candidate_ids,
+                "micro_candidates_retained_separately": True,
+                "micro_retention_rule": "micro tuning candidates are retained independently and prepended ahead of axis-priority top-N; they are not subject to axis-priority pruning",
                 "ranking_method": "local_issue_ordered_axis_priority",
                 "combined_core_light_outer_gray_halo_strategy": (
                     "recover_core_density_and_trim_outer_gray"
@@ -1015,6 +1193,7 @@ def ink_gray_candidate_grid(
             "issue_flags": issue_flags,
             "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
             "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
+            "overblack_micro_tuning_report": overblack_micro_report,
             "preserved_shape_keys": [
                 "font_name",
                 "font_path",

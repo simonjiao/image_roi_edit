@@ -393,6 +393,67 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             "shape-top-01",
         )
 
+    def test_micro_candidates_are_retained_separately_from_axis_priority_top_n(self) -> None:
+        from roi_image_edit.revision_solver import (
+            ink_gray_near_threshold_micro_tuning,
+            ink_gray_micro_tuning_candidates,
+            layered_candidate_search_report,
+        )
+
+        report = {
+            "pass": True,
+            "local_ink_balance_issues": [
+                {"type": "roi_core_too_black", "actual": 52.0, "limit": 48.0},
+            ],
+        }
+        micro = ink_gray_near_threshold_micro_tuning(report)
+        if not micro.get("enabled"):
+            self.skipTest("micro tuning not enabled for this gap")
+        micro_candidates = ink_gray_micro_tuning_candidates(params(), report)
+        micro_ids = set(c.candidate_id for c in micro_candidates)
+
+        grid = ink_gray_candidate_grid(params(), report, limit=8)
+        report_out = grid.report
+        self.assertTrue(report_out.get("enabled"))
+
+        axes = report_out.get("axes") or {}
+        self.assertTrue(axes.get("micro_candidates_retained_separately"))
+        self.assertIn("micro_retention_rule", axes)
+        self.assertEqual(axes.get("near_threshold_micro_candidate_count"), len(micro_candidates))
+        micro_report_ids = axes.get("near_threshold_micro_candidate_ids") or []
+        self.assertEqual(len(micro_report_ids), len(micro_candidates))
+        if micro_candidates and grid.candidates:
+            first_ids = {c.candidate_id for c in grid.candidates[: len(micro_candidates)]}
+            self.assertTrue(
+                set(micro_report_ids).issubset(first_ids),
+                "micro candidates must appear before axis-priority candidates",
+            )
+        layered = layered_candidate_search_report(report_out)
+        micro_axes = (report_out.get("axes") or {}).get("near_threshold_micro_tuning") or {}
+        self.assertTrue(micro_axes.get("enabled"))
+        self.assertEqual(micro_axes.get("candidate_family"), "core_only_micro_reduction")
+
+    def test_overblack_micro_grid_includes_report_in_axes(self) -> None:
+        report = {
+            "pass": True,
+            "local_ink_balance_issues": [
+                {"type": "roi_core_too_black", "actual": 51.0, "limit": 48.0},
+            ],
+        }
+        micro = ink_gray_near_threshold_micro_tuning(report)
+        if not micro.get("enabled"):
+            self.skipTest("micro tuning not enabled for this gap")
+        grid = ink_gray_candidate_grid(params(), report, limit=8)
+        axes = grid.report.get("axes") or {}
+        micro_report = axes.get("near_threshold_micro_tuning") or {}
+        self.assertTrue(micro_report.get("enabled"))
+        self.assertEqual(micro_report.get("candidate_family"), "core_only_micro_reduction")
+        self.assertIn("metric", micro_report)
+        overblack_report = grid.report.get("overblack_micro_tuning_report") or {}
+        self.assertTrue(overblack_report.get("enabled"))
+        self.assertIn("gap", overblack_report)
+        self.assertIn("gap_ratio", overblack_report)
+
 
 if __name__ == "__main__":
     unittest.main()
