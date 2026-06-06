@@ -39,7 +39,7 @@
 要选择最像原图低分辨率扫描/拍照效果的版本。
 如果 `profile_constraints.vision_context_scale` 是 `magnified`，必须优先按放大对比判断字体结构、笔画体量和低分辨率边缘；如果 `profile_constraints.enable_photo_texture=false` 或 `enable_photo_warp=false`，不要建议照片质感或 photo_warp 作为当前修复方向。
 `char_offsets_delta` 中每个元素按 target_text 的非空白字符顺序对应一个目标字符，只给需要微调的字符填非零 dx/dy。
-必须按阶段给出判断：`text_shape` 未通过时，不要把主要建议写成加模糊、加噪声或压缩；`ink_gray_balance` 未通过时，不要用字体重搜或照片质感掩盖黑度/灰边问题；`photo_texture` 只在形态和墨色都通过后作为主要方向；`background_cleanup` 必须先处理旧字残留、发白、过平滑、接缝。
+必须按阶段给出判断：读取 `stage_status`，`text_shape` 存在 hard-blocking issues 时，不要把主要建议写成降黑、加模糊、加噪声或压缩；如果 `stage_status.text_shape.pass=true` 或 `pass_with_deferred=true`，且存在 `deferred_issues` / `deferred_to_stage`，说明本地已允许这些受黑灰影响的形态诊断进入后续阶段，主建议应跟随 `deferred_to_stage` 和当前 `blocking_stage`；`ink_gray_balance` 未通过时，不要用字体重搜或照片质感掩盖黑度/灰边问题；`photo_texture` 只在形态和墨色都通过后作为主要方向；`background_cleanup` 必须先处理旧字残留、发白、过平滑、接缝。
 如果候选的 `stage_context_by_candidate` 中存在 `blocking_stage`，你的 `suggested_patch` 和 `parameter_suggestions` 只能使用该候选 `allowed_patch_keys` 对应的参数。可以描述其它问题，但不能把 blocked 参数作为当前轮主建议。
 必须区分：
 - `too_dark`：真黑核心或整体黑度超过原字/邻字；

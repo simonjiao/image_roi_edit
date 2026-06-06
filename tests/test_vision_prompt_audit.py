@@ -25,6 +25,7 @@ class VisionPromptAuditTest(unittest.TestCase):
                     "field_key field_label_text field_separator_text protected_texts "
                     "source_text target_text search_roi target_roi slot_boxes protected_boxes "
                     "text_angle_degrees stage_context_by_candidate blocking_stage "
+                    "stage_status pass_with_deferred deferred_issues deferred_to_stage "
                     "allowed_patch_keys blocked_patch_keys stage_filter_contract"
                 ),
                 image_paths=[image_path],
@@ -57,7 +58,13 @@ class VisionPromptAuditTest(unittest.TestCase):
 
             response = client.call_json(
                 system_prompt="system prompt",
-                user_prompt="field_key field_label_text protected_texts slot_boxes stage_context final prompt",
+                user_prompt=(
+                    "field_key field_label_text field_separator_text protected_texts "
+                    "source_text target_text search_roi target_roi slot_boxes protected_boxes "
+                    "text_angle_degrees stage_context blocking_stage stage_status "
+                    "pass_with_deferred deferred_issues deferred_to_stage allowed_patch_keys "
+                    "blocked_patch_keys profile_constraints final prompt"
+                ),
                 image_paths=[image_path],
                 prompt_name="final_acceptance_prompt.txt",
                 audit_path=audit_path,

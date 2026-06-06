@@ -2534,7 +2534,7 @@ STRICT_ACCEPTANCE_APPENDIX = """
 6. 如果 char_alignment_metrics 中字距或单字中心偏离旧字 slot 超过阈值，必须 pass=false。
 7. 如果 font_style_gate 中 pass=false，必须 pass=false；尤其要尊重 source_text_roi 对原旧文字 ROI 的字体结构评分。
 8. 如果文字说明中出现“字体结构仍有差异”“字体风格仍略有差异”“不应直接判定通过”等结论，即使 visual_findings.font_similarity 写成 ok，也必须 pass=false。
-9. 必须先验收 text_shape 阶段：字体、字号、字槽、基线、笔画粗细和局部倾斜姿态未通过时，不能用黑度、模糊、噪声或背景质感解释为通过。
+9. 必须先验收 text_shape 阶段：字体、字号、字槽、基线和严重局部姿态存在 hard-blocking issues 时，不能用黑度、模糊、噪声或背景质感解释为通过；若本地已把受黑灰影响的笔画体量诊断标记为 deferred_issues，则应进入 deferred_to_stage 继续修复，但不能让 hard text_shape 指标回退。
 10. 只有字体、黑度、笔画重量、灰边、位置、背景都无明显差异时，才允许 acceptance_level=pass。
 """
 

@@ -55,7 +55,8 @@
 3. `photo_texture`：照片/扫描模糊、锯齿断裂、噪声、压缩质感；
 4. `background_cleanup`：旧字残留、发白、过平滑、涂抹、接缝。
 
-如果 `text_shape` 未通过，不能用“加模糊、加噪声、压缩”作为主要修复方向。
+如果 `text_shape` 存在 hard-blocking issues，不能用“降黑、加模糊、加噪声、压缩”作为主要修复方向。
+如果 `stage_status.text_shape.pass=true` 或 `pass_with_deferred=true`，且存在 `deferred_issues` / `deferred_to_stage`，这些问题不能作为最终通过理由，但当前修复方向应跟随 `deferred_to_stage` 和本地 `blocking_stage`，同时保证字体、字号、字槽、基线、字距和严重姿态指标不回退。
 如果 `ink_gray_balance` 未通过，必须明确是 `too_dark`、`too_bold`、`too_light` 还是 `too_thin`，不要混用。
 禁止把“核心过黑、核心黑度偏重、黑芯过量、too_dark”写成“核心不够黑”。
 如果本地阶段上下文禁止某参数，你仍可在 reason 中描述该现象，但不要在

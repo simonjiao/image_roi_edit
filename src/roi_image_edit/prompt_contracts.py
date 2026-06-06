@@ -36,6 +36,10 @@ PROMPT_INPUT_CONTRACTS: dict[str, dict[str, tuple[str, ...]]] = {
         "stage_context_fields": (
             "stage_context_by_candidate",
             "blocking_stage",
+            "stage_status",
+            "pass_with_deferred",
+            "deferred_issues",
+            "deferred_to_stage",
             "allowed_patch_keys",
             "blocked_patch_keys",
             "stage_filter_contract",
@@ -59,6 +63,10 @@ PROMPT_INPUT_CONTRACTS: dict[str, dict[str, tuple[str, ...]]] = {
         "stage_context_fields": (
             "stage_context",
             "blocking_stage",
+            "stage_status",
+            "pass_with_deferred",
+            "deferred_issues",
+            "deferred_to_stage",
             "allowed_patch_keys",
             "blocked_patch_keys",
             "profile_constraints",
@@ -82,6 +90,10 @@ PROMPT_INPUT_CONTRACTS: dict[str, dict[str, tuple[str, ...]]] = {
         "stage_context_fields": (
             "stage_context",
             "blocking_stage",
+            "stage_status",
+            "pass_with_deferred",
+            "deferred_issues",
+            "deferred_to_stage",
             "allowed_patch_keys",
             "blocked_patch_keys",
             "profile_constraints",
@@ -95,7 +107,14 @@ PROMPT_INPUT_CONTRACTS: dict[str, dict[str, tuple[str, ...]]] = {
     "darkness_blur_prompt.txt": {
         "formatted_payloads": ("hard_check_report",),
         "runtime_context_fields": (),
-        "stage_context_fields": ("stage_context", "blocking_stage"),
+        "stage_context_fields": (
+            "stage_context",
+            "blocking_stage",
+            "stage_status",
+            "pass_with_deferred",
+            "deferred_issues",
+            "deferred_to_stage",
+        ),
     },
     "master_prompt.txt": {
         "formatted_payloads": (),

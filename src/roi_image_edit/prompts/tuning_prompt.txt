@@ -25,7 +25,7 @@
 4. 如果硬校验通过，再判断视觉自然度。
 5. 如果 `stage_context.blocking_stage` 不为空，只能围绕该阶段给主建议；`suggested_patch` 不能使用 `stage_context.blocked_patch_keys` 中的参数。
 6. 如果 `profile_constraints.vision_context_scale=magnified`，必须按放大对比优先判断字体结构和笔画体量；如果 `enable_photo_texture=false` 或 `enable_photo_warp=false`，不要建议照片质感或 photo_warp 作为当前主修复方向。
-7. 如果 `text_shape` 未通过，不能把加模糊、加噪声、压缩或背景修补作为主要修复方向。
+7. 如果 `text_shape` 存在 hard-blocking issues，不能把降黑、加模糊、加噪声、压缩或背景修补作为主要修复方向；如果 `stage_status.text_shape.pass=true` 或 `pass_with_deferred=true`，且存在 `deferred_issues` / `deferred_to_stage`，主建议应跟随 `deferred_to_stage` 和当前 `blocking_stage`。
 8. 如果 `ink_gray_balance` 未通过，必须区分 `too_dark`、`too_bold`、`too_light`、`too_thin`，不要混用。
 9. 必须输出 `stage_assessment`，先声明本地 `blocking_stage` 是否存在；如果认为前置阶段已通过，必须在 `basis` 中说明依据；`suggestion_target_stage` 必须等于当前 `blocking_stage`，没有阻塞阶段时必须为 null。
 

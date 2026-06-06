@@ -98,6 +98,85 @@ def _stage_result(
     )
 
 
+INK_COUPLED_TEXT_SHAPE_ISSUE_TYPES = frozenset(
+    {
+        "changed_char_stroke_body_too_narrow",
+        "changed_char_stroke_body_too_small",
+        "changed_char_fine_strokes_too_soft",
+        "ink_area_ratio_too_low",
+    }
+)
+
+
+def _numeric_issue_value(issue: dict[str, Any], key: str) -> float | None:
+    try:
+        return float(issue.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_near_threshold_geometry_issue(issue: dict[str, Any]) -> bool:
+    issue_type = str(issue.get("type") or "")
+    if issue_type not in {"char_center_dx", "char_center_dy"}:
+        return False
+    actual = _numeric_issue_value(issue, "actual")
+    limit = _numeric_issue_value(issue, "limit")
+    if actual is None or limit is None:
+        return False
+    return abs(actual) <= abs(limit) + 1.0
+
+
+def _is_ink_coupled_text_shape_issue(issue: dict[str, Any]) -> bool:
+    issue_type = str(issue.get("type") or "")
+    return issue_type in INK_COUPLED_TEXT_SHAPE_ISSUE_TYPES or issue_type.startswith("ink_area_ratio_")
+
+
+def classify_text_shape_issues(report: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from roi_image_edit.local_validation import (
+        local_neighbor_style_issues,
+        local_pose_issues,
+        local_stroke_body_issues,
+        report_has_excess_black_core,
+    )
+
+    strict = _strict_stage_issues(report)
+    font_style = report.get("font_style_gate")
+    issues = list(strict.get("text_shape") or [])
+    if isinstance(font_style, dict):
+        issues.extend(issue for issue in font_style.get("issues", []) if isinstance(issue, dict))
+    issues.extend(local_stroke_body_issues(report, allow_excess_black_core=True))
+    issues.extend(local_neighbor_style_issues(report, allow_excess_black_core=True))
+    issues.extend(local_pose_issues(report))
+
+    if not report_has_excess_black_core(report):
+        return issues, []
+
+    blocking: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        if _is_ink_coupled_text_shape_issue(issue):
+            deferred.append(
+                {
+                    **issue,
+                    "deferred_to_stage": "ink_gray_balance",
+                    "defer_reason": "ink_gray_balance_can_change_stroke_body_metrics",
+                }
+            )
+        elif _is_near_threshold_geometry_issue(issue):
+            deferred.append(
+                {
+                    **issue,
+                    "deferred_to_stage": "ink_gray_balance",
+                    "defer_reason": "near_threshold_geometry_while_excess_black_core_blocks_ink",
+                }
+            )
+        else:
+            blocking.append(issue)
+    return blocking, deferred
+
+
 def detect_hard_boundary(report: dict[str, Any]) -> StageResult:
     spec = stage_spec("hard_boundary")
     issues: list[dict[str, Any]] = []
@@ -116,21 +195,8 @@ def detect_hard_boundary(report: dict[str, Any]) -> StageResult:
 
 
 def detect_text_shape(report: dict[str, Any]) -> StageResult:
-    from roi_image_edit.local_validation import (
-        local_neighbor_style_issues,
-        local_pose_issues,
-        local_stroke_body_issues,
-    )
-
     spec = stage_spec("text_shape")
-    strict = _strict_stage_issues(report)
-    font_style = report.get("font_style_gate")
-    issues = list(strict.get("text_shape") or [])
-    if isinstance(font_style, dict):
-        issues.extend(issue for issue in font_style.get("issues", []) if isinstance(issue, dict))
-    issues.extend(local_stroke_body_issues(report, allow_excess_black_core=True))
-    issues.extend(local_neighbor_style_issues(report, allow_excess_black_core=True))
-    issues.extend(local_pose_issues(report))
+    issues, _deferred = classify_text_shape_issues(report)
     return _stage_result(
         "text_shape",
         issues,
@@ -237,6 +303,16 @@ def stage_gate_for_report(
     results = stage_results_for_report(report, profile_obj)
     blocking = next((result for result in results if not result.passed), None)
     stages = [result.as_report() for result in results]
+    text_shape_deferred: list[dict[str, Any]] = []
+    if "text_shape" in profile_obj.enabled_stage_ids:
+        _blocking_text_shape, text_shape_deferred = classify_text_shape_issues(report)
+        for stage in stages:
+            if stage.get("id") == "text_shape":
+                stage["deferred_issues"] = text_shape_deferred
+                stage["deferred_issue_count"] = len(text_shape_deferred)
+                stage["pass_with_deferred"] = bool(stage.get("pass") and text_shape_deferred)
+                stage["deferred_to_stage"] = "ink_gray_balance" if text_shape_deferred else None
+                break
     stage_status = {stage["id"]: stage for stage in stages}
     return {
         "profile": profile_obj.id,

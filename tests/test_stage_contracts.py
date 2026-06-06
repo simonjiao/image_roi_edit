@@ -304,6 +304,79 @@ class StageContractsTest(unittest.TestCase):
         self.assertIn(["background_cleanup"], rejected_steps)
         self.assertIn(["photo_texture"], rejected_steps)
 
+    def test_ink_coupled_text_shape_issues_defer_to_ink_when_black_core_is_excessive(self) -> None:
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "strict_gate": {
+                "issues": [
+                    {
+                        "type": "ink_area_ratio_too_low",
+                        "char_index": 0,
+                    },
+                    {
+                        "type": "char_center_dx",
+                        "actual": 2.5,
+                        "limit": 2.0,
+                    },
+                ]
+            },
+            "local_ink_balance_issues": [
+                {
+                    "type": "roi_core_too_black",
+                    "lt55_delta": 742.0,
+                    "limit": 113.687,
+                }
+            ],
+        }
+        gate = stage_gate_for_report(report, "photo_scan")
+
+        self.assertEqual(gate["blocking_stage"], "ink_gray_balance")
+        text_shape = gate["stage_status"]["text_shape"]
+        self.assertTrue(text_shape["pass"])
+        self.assertTrue(text_shape["pass_with_deferred"])
+        self.assertEqual(text_shape["deferred_to_stage"], "ink_gray_balance")
+        deferred_types = [issue["type"] for issue in text_shape["deferred_issues"]]
+        self.assertIn("ink_area_ratio_too_low", deferred_types)
+        self.assertIn("char_center_dx", deferred_types)
+
+        prompt_context = prompt_stage_context(report, "photo_scan")
+        self.assertEqual(prompt_context["blocking_stage"], "ink_gray_balance")
+        prompt_text_shape = prompt_context["stage_status"]["text_shape"]
+        self.assertTrue(prompt_text_shape["pass_with_deferred"])
+        self.assertEqual(prompt_text_shape["deferred_to_stage"], "ink_gray_balance")
+
+    def test_hard_text_shape_issue_still_blocks_even_when_black_core_is_excessive(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "strict_gate": {
+                    "issues": [
+                        {
+                            "type": "char_center_dx",
+                            "actual": 4.5,
+                            "limit": 2.0,
+                        }
+                    ]
+                },
+                "local_ink_balance_issues": [
+                    {
+                        "type": "roi_core_too_black",
+                        "lt55_delta": 742.0,
+                        "limit": 113.687,
+                    }
+                ],
+            },
+            "photo_scan",
+        )
+
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        text_shape = gate["stage_status"]["text_shape"]
+        self.assertFalse(text_shape["pass"])
+        self.assertFalse(text_shape["pass_with_deferred"])
+        self.assertEqual(text_shape["issues"][0]["type"], "char_center_dx")
+
     def test_ink_gray_stage_rejects_photo_noise_as_primary_fix(self) -> None:
         gate = stage_gate_for_report(
             {

@@ -1965,7 +1965,7 @@ def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, An
     if pose_issues and not ink_issues and not body_issues and not neighbor_issues:
         must_fix.append("Increase local slot shear inheritance for changed characters before accepting.")
     if uncovered_shape_issue_count:
-        must_fix.append("Resolve text_shape stage before tuning ink, blur, noise, or background texture.")
+        must_fix.append("Resolve hard-blocking text_shape issues before tuning ink, blur, noise, or background texture.")
     gated["must_fix"] = must_fix
     return gated
 
