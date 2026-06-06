@@ -87,6 +87,13 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 
 当 `text_shape` 阻塞时，求解流程必须重新生成形态候选：从字体排名、字号、字槽偏移、基线、轻描边、局部姿态继承组成受控网格。不能只在当前候选上累加 `core_ink_gain`、`stroke_opacity`、`blur`、`photo_warp` 或照片噪声。
 
+当 `text_shape` 阻塞且本地已经判定黑芯严重过量时，允许生成单独标记的
+`ink_guard` 候选。`ink_guard` 不是把降黑并入 `text_shape`，而是在形态仍为主阶段时执行横向保护：
+只能调整 `opacity`、`stroke_opacity`、`ink_gain`、`alpha_contrast`、
+`core_ink_gain`、`core_darken_strength`、`core_darken_threshold` 和
+`core_darken_target_gray`，不得改字体、字号、位置、字槽、mask、背景或照片质感。
+`ink_guard` 候选只有在 `text_shape` 严重度不回退且 `ink_gray_balance` 严重度下降时才可进入下一轮。
+
 `photo_texture` 不能无条件通过。形态和墨色通过后，仍需用本地指标比较原图与候选在修改文字附近的边缘拉普拉斯、高频残差、模糊、边缘断裂、噪声和 JPEG 压缩权重；若文字过锐、过干净或过糊，应继续在照片质感阶段调参。
 
 ## 字段和 ROI 规则
@@ -232,6 +239,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 | 阶段门禁 | `stage_gate_for_report`, `stage_selection_penalty`, `report_stage_pass` | `stage_gate` |
 | 运行产物结构 | `request_audit_payload`, `result_audit_payload`, `stage_progress_fields`, `model_stage_context`, `attach_stage_context_to_rank_report` in `run_artifacts.py` | `request.json`, `result.json`, `progress.jsonl`, `stage_context_by_candidate` |
 | 形态重搜 | `text_shape_reset_candidates`, `shape_font_items`, `normalized_offset_candidates` | `revision_attempts[].origin=shape_reset`, `revision_rounds[].shape_reset_count` |
+| 形态阶段墨色保护 | `ink_gray_candidate_grid(... allow_text_shape_guard=True)`, `text_shape_ink_guard_selectable` | `revision_rounds[].ink_guard_candidate_grid`, `revision_rounds[].ink_guard_count`, `revision_attempts[].origin=ink_guard_grid`, `revision_attempts[].ink_guard` |
 | 迭代补丁 | `STAGE_PATCHER_SPECS`, `select_stage_patcher`, `dispatch_revision_patches`, `stage_patcher_registry_report`, `stage_patch_filter_report`, `revision_patches_for_round`, `black_core_reduction_patches`, `gray_stroke_recovery_patches` | `revision_rounds`, `revision_attempts`, `stage_optimization_policy`, `stage_patcher_dispatch`, `stage_filter_report`, `rejected_local_patches` |
 | 视觉建议仲裁 | `filter_model_patch_records`, `model_suggestion_filter_report` in `model_suggestions.py` | `revision_rounds[].model_suggestion_filter`, `revision_rounds[].model_suggestion_attempts`, `revision_rounds[].model_conflicts` |
 | 最终验收 | `evaluate_final`, `apply_local_acceptance_gate` | `final_acceptance` |

@@ -202,6 +202,9 @@ def format_process_progress_line(event: str, record: dict) -> str | None:
                 [
                     f"patches={record.get('patch_count')}",
                     f"shape_resets={record.get('shape_reset_count')}",
+                    f"ink_gray={record.get('ink_gray_count')}",
+                    f"ink_guard={record.get('ink_guard_count')}",
+                    f"photo_texture={record.get('photo_texture_count')}",
                     f"basis_severity={record.get('basis_stage_severity')}",
                 ]
             )

@@ -19,6 +19,9 @@ class CliProgressTest(unittest.TestCase):
                 "stage_optimization_policy": {"optimization_step": "text_shape"},
                 "patch_count": 4,
                 "shape_reset_count": 2,
+                "ink_gray_count": 0,
+                "ink_guard_count": 8,
+                "photo_texture_count": 0,
                 "basis_stage_severity": 8.5,
             },
         )
@@ -33,6 +36,9 @@ class CliProgressTest(unittest.TestCase):
         self.assertIn("selected_optimization_step=text_shape", line)
         self.assertIn("patches=4", line)
         self.assertIn("shape_resets=2", line)
+        self.assertIn("ink_gray=0", line)
+        self.assertIn("ink_guard=8", line)
+        self.assertIn("photo_texture=0", line)
 
     def test_revision_round_finished_line_uses_selected_attempt_step(self) -> None:
         line = format_process_progress_line(

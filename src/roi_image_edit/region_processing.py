@@ -46,6 +46,7 @@ from roi_image_edit.local_validation import (
     opacity_floor_for_excess_black,
     region_candidate_score,
     region_context_box,
+    report_has_excess_black_core,
     report_needs_wider_gray_strokes,
     report_stage_pass,
     save_region_compare,
@@ -67,6 +68,7 @@ from roi_image_edit.revision_selector import (
     revision_selection_score,
 )
 from roi_image_edit.revision_solver import (
+    InkGrayCandidateGrid,
     final_font_revision_candidates,
     ink_gray_candidate_grid,
     layered_candidate_search_report,
@@ -142,6 +144,36 @@ def progresses_past_blocking_stage(
     if not report_stage_status_pass(report, current_blocking_stage):
         return False
     return next_blocking_stage != current_blocking_stage
+
+
+def text_shape_ink_guard_selectable(
+    before_report: dict[str, Any] | None,
+    after_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    text_before = float(stage_issue_severity(before_report, "text_shape"))
+    text_after = float(stage_issue_severity(after_report, "text_shape"))
+    ink_before = float(stage_issue_severity(before_report, "ink_gray_balance"))
+    ink_after = float(stage_issue_severity(after_report, "ink_gray_balance"))
+    text_delta = text_after - text_before
+    ink_improvement = ink_before - ink_after
+    text_not_regressed = text_delta <= 1.0
+    ink_improved = ink_improvement > 6.0
+    enabled = bool(report_blocks_text_shape(before_report) and report_has_excess_black_core(before_report))
+    return {
+        "enabled": enabled,
+        "guard_stage": "ink_gray_balance",
+        "primary_stage": "text_shape",
+        "text_shape_severity_before": round(text_before, 3),
+        "text_shape_severity_after": round(text_after, 3),
+        "text_shape_severity_delta": round(text_delta, 3),
+        "text_shape_not_regressed": text_not_regressed,
+        "ink_gray_severity_before": round(ink_before, 3),
+        "ink_gray_severity_after": round(ink_after, 3),
+        "ink_gray_improvement": round(ink_improvement, 3),
+        "ink_gray_improved": ink_improved,
+        "selectable": bool(enabled and text_not_regressed and ink_improved),
+        "selection_rule": "text_shape candidates may not worsen ink; ink guard candidates may proceed only when text_shape does not regress and ink severity drops",
+    }
 
 
 def load_processing_prompts() -> tuple[str, str, str]:
@@ -597,6 +629,27 @@ def run_region_vision_checks(
                 parent_shape_candidate_id=current_shape_parent_candidate_id,
             )
             ink_gray_params = ink_candidate_grid.candidates
+            if report_blocks_text_shape(current_report):
+                ink_guard_candidate_grid = ink_gray_candidate_grid(
+                    current_params,
+                    current_report,
+                    limit=8,
+                    parent_shape_candidate_id=current_shape_parent_candidate_id,
+                    allow_text_shape_guard=True,
+                )
+            else:
+                ink_guard_candidate_grid = InkGrayCandidateGrid(
+                    candidates=[],
+                    report={
+                        "enabled": False,
+                        "reason": "current_stage_is_not_text_shape",
+                        "stage_id": "ink_gray_balance",
+                        "guards_stage": "text_shape",
+                        "guard_mode": "text_shape_excess_black_core",
+                        "candidate_count": 0,
+                    },
+                )
+            ink_guard_params = ink_guard_candidate_grid.candidates
             photo_candidate_grid = photo_texture_candidate_grid(
                 current_params,
                 current_report,
@@ -606,6 +659,7 @@ def run_region_vision_checks(
             layered_search_report = layered_candidate_search_report(
                 shape_candidate_grid.report,
                 ink_candidate_grid.report,
+                ink_guard_candidate_grid.report,
                 photo_candidate_grid.report,
             )
             round_record: dict[str, Any] = {
@@ -616,6 +670,7 @@ def run_region_vision_checks(
                 "patch_count": len(round_patches),
                 "shape_reset_count": len(shape_reset_params),
                 "ink_gray_count": len(ink_gray_params),
+                "ink_guard_count": len(ink_guard_params),
                 "photo_texture_count": len(photo_texture_params),
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
@@ -629,8 +684,18 @@ def run_region_vision_checks(
                 },
                 "shape_candidate_grid": shape_candidate_grid.report,
                 "ink_gray_candidate_grid": ink_candidate_grid.report,
+                "ink_guard_candidate_grid": ink_guard_candidate_grid.report,
                 "photo_texture_candidate_grid": photo_candidate_grid.report,
                 "layered_candidate_search": layered_search_report,
+                "cross_stage_guard_report": {
+                    "enabled": bool(ink_guard_params),
+                    "guard_mode": "text_shape_excess_black_core",
+                    "primary_stage": "text_shape",
+                    "guard_stage": "ink_gray_balance",
+                    "candidate_count": len(ink_guard_params),
+                    "reason": ink_guard_candidate_grid.report.get("reason"),
+                    "selection_rule": "shape remains primary; ink guard can continue only if text_shape does not regress and ink severity improves",
+                },
                 "stage_filter_report": local_stage_filter_report,
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
@@ -652,6 +717,7 @@ def run_region_vision_checks(
                         "patch_count": len(round_patches),
                         "shape_reset_count": len(shape_reset_params),
                         "ink_gray_count": len(ink_gray_params),
+                        "ink_guard_count": len(ink_guard_params),
                         "photo_texture_count": len(photo_texture_params),
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
@@ -667,7 +733,13 @@ def run_region_vision_checks(
                 round_record["stop_reason"] = "no_stage_specific_candidate_direction"
                 revision_rounds.append(round_record)
                 break
-            if not round_patches and not shape_reset_params and not ink_gray_params and not photo_texture_params:
+            if (
+                not round_patches
+                and not shape_reset_params
+                and not ink_gray_params
+                and not ink_guard_params
+                and not photo_texture_params
+            ):
                 round_record["stop_reason"] = "no_revision_candidates"
                 revision_rounds.append(round_record)
                 break
@@ -689,6 +761,21 @@ def run_region_vision_checks(
                         {
                             "applied": False,
                             "reason": "ink_gray_grid",
+                            "changes": {},
+                            "parent_candidate_id": current_params.candidate_id,
+                        },
+                    )
+                )
+            for guard_idx, guard_params in enumerate(ink_guard_params, start=1):
+                candidate_jobs.append(
+                    (
+                        "ink_guard_grid",
+                        guard_idx,
+                        None,
+                        guard_params,
+                        {
+                            "applied": False,
+                            "reason": "text_shape_excess_black_core_ink_guard",
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
                         },
@@ -782,6 +869,13 @@ def run_region_vision_checks(
                 current_stage_improvement = 0.0
                 current_stage_severity_before = 0.0
                 current_stage_severity_after = 0.0
+                ink_guard_selection = text_shape_ink_guard_selectable(
+                    current_report,
+                    patched_report,
+                ) if candidate_origin == "ink_guard_grid" else {
+                    "enabled": False,
+                    "selectable": False,
+                }
                 if basis_stage_is_local and current_blocking_stage and current_blocking_stage != "text_shape":
                     current_stage_severity_before = stage_issue_severity(
                         current_report,
@@ -870,6 +964,27 @@ def run_region_vision_checks(
                     attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
                     attempt_record["optimization_step"] = "ink_gray_balance"
                     attempt_record["parent_shape_candidate_id"] = current_params.candidate_id
+                elif candidate_origin == "ink_guard_grid":
+                    optimization_policy = {
+                        **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
+                        "optimization_steps": ["ink_gray_balance_guard"],
+                        "primary_optimization_steps": ["text_shape"],
+                        "optimization_step": "ink_guard",
+                        "allowed": current_blocking_stage == "text_shape",
+                        "guarded_stage": "ink_gray_balance",
+                        "guard_mode": "text_shape_excess_black_core",
+                        "rejection_reason": (
+                            None
+                            if current_blocking_stage == "text_shape"
+                            else "ink guard is only generated while text_shape is the primary blocking stage"
+                        ),
+                    }
+                    attempt_record["optimization_policy"] = optimization_policy
+                    attempt_record["optimization_steps"] = optimization_policy.get("optimization_steps")
+                    attempt_record["optimization_step"] = "ink_guard"
+                    attempt_record["guarded_stage"] = "ink_gray_balance"
+                    attempt_record["ink_guard"] = ink_guard_selection
+                    attempt_record["parent_shape_candidate_id"] = current_params.candidate_id
                 elif candidate_origin == "photo_texture_grid":
                     optimization_policy = {
                         **stage_optimization_summary(str(current_blocking_stage) if current_blocking_stage else None),
@@ -910,6 +1025,7 @@ def run_region_vision_checks(
                         or progresses_past_text_shape
                         or progresses_past_current_stage
                         or improves_current_stage
+                        or ink_guard_selection.get("selectable")
                     )
                 ):
                     round_candidates.append(
@@ -941,6 +1057,25 @@ def run_region_vision_checks(
                     progressed_candidates.sort(key=lambda item: item[0])
                     selected_tuple = progressed_candidates[0]
                     selected_reason = "progresses_past_text_shape"
+                elif report_has_excess_black_core(current_report):
+                    ink_guard_candidates = [
+                        item
+                        for item in round_candidates
+                        if (
+                            item[5].get("origin") == "ink_guard_grid"
+                            and (item[5].get("ink_guard") or {}).get("selectable")
+                        )
+                    ]
+                    if ink_guard_candidates:
+                        ink_guard_candidates.sort(
+                            key=lambda item: (
+                                -float((item[5].get("ink_guard") or {}).get("ink_gray_improvement") or 0.0),
+                                item[0],
+                                item[1],
+                            )
+                        )
+                        selected_tuple = ink_guard_candidates[0]
+                        selected_reason = "text_shape_ink_guard_reduces_excess_black_core"
             current_blocking_stage = basis_blocking_stage
             if basis_stage_is_local and current_blocking_stage and current_blocking_stage != "text_shape":
                 improving_stage_candidates = [

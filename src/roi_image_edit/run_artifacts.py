@@ -661,12 +661,18 @@ def _grid_direction_source(
         _positive_int(budget.get("retained_count") if isinstance(budget, dict) else 0),
     )
     stage_id = grid_report.get("stage_id")
-    stage_matches_basis = bool(basis_blocking_stage and stage_id == basis_blocking_stage)
+    guards_stage = grid_report.get("guards_stage")
+    stage_matches_basis = bool(
+        basis_blocking_stage
+        and (stage_id == basis_blocking_stage or guards_stage == basis_blocking_stage)
+    )
     if not grid_report.get("enabled") or candidate_count <= 0 or not stage_matches_basis:
         return None
     return {
         "source": field_name,
         "stage_id": stage_id,
+        "guards_stage": guards_stage,
+        "guard_mode": grid_report.get("guard_mode"),
         "optimization_step": grid_report.get("optimization_step"),
         "candidate_count": candidate_count,
         "raw_candidate_budget": _positive_int(
@@ -735,6 +741,11 @@ def revision_round_continuation_contract(
             _grid_direction_source(
                 round_record,
                 "ink_gray_candidate_grid",
+                basis_blocking_stage=basis_stage,
+            ),
+            _grid_direction_source(
+                round_record,
+                "ink_guard_candidate_grid",
                 basis_blocking_stage=basis_stage,
             ),
             _grid_direction_source(

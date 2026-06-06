@@ -835,14 +835,25 @@ def ink_gray_candidate_grid(
     *,
     limit: int = INK_GRAY_GRID_TOP_LIMIT,
     parent_shape_candidate_id: str | None = None,
+    allow_text_shape_guard: bool = False,
 ) -> InkGrayCandidateGrid:
-    if not report_blocks_ink_gray(report):
+    guard_for_text_shape = (
+        bool(allow_text_shape_guard)
+        and report_blocks_text_shape(report)
+        and report_has_excess_black_core(report)
+    )
+    if not report_blocks_ink_gray(report) and not guard_for_text_shape:
+        reason = "ink_gray_balance_not_blocking"
+        if allow_text_shape_guard and report_blocks_text_shape(report):
+            reason = "text_shape_without_excess_black_core"
         return InkGrayCandidateGrid(
             candidates=[],
             report={
                 "enabled": False,
-                "reason": "ink_gray_balance_not_blocking",
+                "reason": reason,
                 "stage_id": "ink_gray_balance",
+                "guards_stage": "text_shape" if allow_text_shape_guard else None,
+                "guard_mode": "text_shape_excess_black_core" if allow_text_shape_guard else None,
                 "candidate_count": 0,
             },
         )
@@ -918,14 +929,23 @@ def ink_gray_candidate_grid(
     )
     parent_shape_contract = {
         "required_prior_stage": "text_shape",
-        "required_parent_state": "text_shape_passed_before_ink_gray",
+        "required_parent_state": (
+            "text_shape_not_yet_passed_but_ink_must_not_regress"
+            if guard_for_text_shape
+            else "text_shape_passed_before_ink_gray"
+        ),
         "current_blocking_stage": stage_gate.get("blocking_stage"),
         "parent_candidate_id": params.candidate_id,
         "parent_shape_candidate_id": shape_parent_id,
-        "parent_shape_source": "current_candidate_after_text_shape_pass",
+        "parent_shape_source": (
+            "current_text_shape_candidate_with_excess_black_core"
+            if guard_for_text_shape
+            else "current_candidate_after_text_shape_pass"
+        ),
         "parent_shape_stage_passed": bool(
             isinstance(text_shape_status, dict) and text_shape_status.get("pass")
         ),
+        "guard_allows_unpassed_text_shape": bool(guard_for_text_shape),
         "candidate_parent_trace_complete": all(
             record.get("parent_shape_candidate_id") == shape_parent_id
             for record in candidate_records
@@ -946,7 +966,21 @@ def ink_gray_candidate_grid(
         report={
             "enabled": True,
             "stage_id": "ink_gray_balance",
-            "optimization_step": "ink_gray_balance",
+            "optimization_step": "ink_guard" if guard_for_text_shape else "ink_gray_balance",
+            "guards_stage": "text_shape" if guard_for_text_shape else None,
+            "guard_mode": "text_shape_excess_black_core" if guard_for_text_shape else None,
+            "guard_contract": (
+                {
+                    "purpose": "protect ink-gray balance while text_shape remains the primary blocking stage",
+                    "primary_blocking_stage": "text_shape",
+                    "protected_stage": "ink_gray_balance",
+                    "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
+                    "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
+                    "selection_rule": "candidate must not regress text_shape and must reduce ink_gray_balance severity",
+                }
+                if guard_for_text_shape
+                else None
+            ),
             "parent_candidate_id": params.candidate_id,
             "parent_shape_candidate_id": shape_parent_id,
             "parent_shape_contract": parent_shape_contract,

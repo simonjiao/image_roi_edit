@@ -58,6 +58,43 @@ def ink_gray_report() -> dict:
     }
 
 
+def text_shape_with_excess_black_report() -> dict:
+    return {
+        "pass": False,
+        "pipeline_profile": "photo_scan",
+        "local_ink_balance_issues": [
+            {
+                "type": "roi_core_too_black",
+                "lt55_delta": 300.0,
+                "limit": 80.0,
+            }
+        ],
+        "stage_gate": {
+            "pass": False,
+            "blocking_stage": "text_shape",
+            "stages": [
+                {"id": "hard_boundary", "pass": True, "issues": []},
+                {
+                    "id": "text_shape",
+                    "pass": False,
+                    "issues": [{"type": "char_center_dx", "actual": 2.5, "limit": 2.0}],
+                },
+                {
+                    "id": "ink_gray_balance",
+                    "pass": False,
+                    "issues": [
+                        {
+                            "type": "roi_core_too_black",
+                            "lt55_delta": 300.0,
+                            "limit": 80.0,
+                        }
+                    ],
+                },
+            ],
+        },
+    }
+
+
 def core_light_with_outer_halo_report() -> dict:
     return {
         "pass": True,
@@ -157,6 +194,54 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertFalse(grid.report["enabled"])
         self.assertEqual(grid.report["reason"], "ink_gray_balance_not_blocking")
         self.assertEqual(grid.candidates, [])
+
+    def test_text_shape_excess_black_enables_separate_ink_guard_grid(self) -> None:
+        base = params()
+        grid = ink_gray_candidate_grid(
+            base,
+            text_shape_with_excess_black_report(),
+            limit=8,
+            allow_text_shape_guard=True,
+        )
+
+        self.assertTrue(grid.report["enabled"])
+        self.assertEqual(grid.report["stage_id"], "ink_gray_balance")
+        self.assertEqual(grid.report["optimization_step"], "ink_guard")
+        self.assertEqual(grid.report["guards_stage"], "text_shape")
+        self.assertEqual(grid.report["guard_mode"], "text_shape_excess_black_core")
+        self.assertEqual(grid.report["candidate_count"], 8)
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["required_parent_state"],
+            "text_shape_not_yet_passed_but_ink_must_not_regress",
+        )
+        self.assertTrue(grid.report["parent_shape_contract"]["guard_allows_unpassed_text_shape"])
+        self.assertEqual(
+            grid.report["guard_contract"]["selection_rule"],
+            "candidate must not regress text_shape and must reduce ink_gray_balance severity",
+        )
+        for candidate in grid.candidates:
+            self.assertEqual(candidate.font_name, base.font_name)
+            self.assertEqual(candidate.font_path, base.font_path)
+            self.assertEqual(candidate.font_size, base.font_size)
+            self.assertEqual(candidate.text_dx, base.text_dx)
+            self.assertEqual(candidate.text_dy, base.text_dy)
+            self.assertEqual(candidate.char_offsets, base.char_offsets)
+
+    def test_text_shape_without_excess_black_does_not_enable_ink_guard(self) -> None:
+        report = text_shape_with_excess_black_report()
+        report["local_ink_balance_issues"] = []
+        report["stage_gate"]["stages"][2]["issues"] = []
+
+        grid = ink_gray_candidate_grid(
+            params(),
+            report,
+            limit=8,
+            allow_text_shape_guard=True,
+        )
+
+        self.assertFalse(grid.report["enabled"])
+        self.assertEqual(grid.report["reason"], "text_shape_without_excess_black_core")
+        self.assertEqual(grid.report["candidate_count"], 0)
 
     def test_core_light_with_outer_halo_recovers_core_without_expanding_gray(self) -> None:
         base = params()
@@ -283,6 +368,9 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertIn("ink_gray_candidate_grid", source)
         self.assertIn('"ink_gray_candidate_grid": ink_candidate_grid.report', source)
         self.assertIn('"ink_gray_count": len(ink_gray_params)', source)
+        self.assertIn('"ink_guard_candidate_grid": ink_guard_candidate_grid.report', source)
+        self.assertIn('"ink_guard_count": len(ink_guard_params)', source)
+        self.assertIn('"ink_guard_grid"', source)
         self.assertIn("current_shape_parent_candidate_id = current_params.candidate_id", source)
         self.assertIn("parent_shape_candidate_id=current_shape_parent_candidate_id", source)
 

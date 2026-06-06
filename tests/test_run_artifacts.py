@@ -521,6 +521,37 @@ class RunArtifactsTest(unittest.TestCase):
             "core_black_search",
         )
 
+    def test_revision_round_continuation_contract_accepts_ink_guard_for_text_shape(self) -> None:
+        contract = revision_round_continuation_contract(
+            {
+                "round": 1,
+                "basis_blocking_stage": "text_shape",
+                "basis_stage_source": "local_report",
+                "ink_guard_candidate_grid": {
+                    "enabled": True,
+                    "stage_id": "ink_gray_balance",
+                    "guards_stage": "text_shape",
+                    "guard_mode": "text_shape_excess_black_core",
+                    "optimization_step": "ink_guard",
+                    "candidate_count": 8,
+                    "budget": {
+                        "raw_candidate_budget": 128,
+                        "retained_count": 8,
+                    },
+                },
+            },
+            max_revision_rounds=12,
+        )
+
+        self.assertTrue(contract["continuation_allowed"])
+        self.assertTrue(contract["has_stage_specific_candidate_direction"])
+        source = contract["candidate_direction_sources"][0]
+        self.assertEqual(source["source"], "ink_guard_candidate_grid")
+        self.assertEqual(source["stage_id"], "ink_gray_balance")
+        self.assertEqual(source["guards_stage"], "text_shape")
+        self.assertEqual(source["guard_mode"], "text_shape_excess_black_core")
+        self.assertEqual(source["optimization_step"], "ink_guard")
+
     def test_revision_round_continuation_contract_rejects_max_rounds_only(self) -> None:
         contract = revision_round_continuation_contract(
             {
