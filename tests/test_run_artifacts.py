@@ -200,6 +200,7 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("rejection_reason", result_schema["candidate_required"])
         self.assertIn("final_acceptance", result_schema["vision_required"])
         self.assertIn("revision_attempts", result_schema["vision_required"])
+        self.assertIn("vision_prompt_audits", result_schema["vision_required"])
         self.assertIn("final_is_rejected_candidate", result_schema["rejection_required"])
 
         progress_schema = schema["progress_jsonl"]
@@ -231,6 +232,7 @@ class RunArtifactsTest(unittest.TestCase):
             pre_candidate_gate_report = self._touch(run_dir / "r1" / "pre_candidate_gate_report.json")
             candidate_sheet = self._touch(run_dir / "r1" / "vision_candidate_sheet.png")
             final_compare = self._touch(run_dir / "r1" / "vision_final_compare.png")
+            prompt_audit = self._touch(run_dir / "r1" / "final_acceptance_prompt_audit.json")
             iter_compare = self._touch(run_dir / "r1" / "vision_final_compare_iter01.png")
             shape_compare = self._touch(run_dir / "r1" / "stage_evidence" / "text_shape_top_compare.png")
             shape_report = self._touch(run_dir / "r1" / "stage_evidence" / "text_shape_top_report.json")
@@ -276,6 +278,7 @@ class RunArtifactsTest(unittest.TestCase):
                                         "artifacts": {
                                             "candidate_sheet": str(candidate_sheet),
                                             "final_compare": str(final_compare),
+                                            "vision_prompt_audits": [str(prompt_audit)],
                                             "revision_previews": [
                                                 {"round": 1, "path": str(iter_compare)}
                                             ],
@@ -331,6 +334,7 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("auto_roi_evidence_report", report_keys)
         self.assertIn("slot_quality_report", report_keys)
         self.assertIn("pre_candidate_gate_report", report_keys)
+        self.assertIn("vision_prompt_audit_1", report_keys)
         self.assertIn("stage_evidence_summary", report_keys)
         self.assertIn("text_shape_top_report", report_keys)
         self.assertIn("selected_candidate", image_keys)

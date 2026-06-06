@@ -14,12 +14,22 @@ class FakeVisionClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def call_json(self, *, system_prompt: str, user_prompt: str, image_paths: list[Path]) -> dict[str, object]:
+    def call_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        image_paths: list[Path],
+        prompt_name: str | None = None,
+        audit_path: Path | None = None,
+    ) -> dict[str, object]:
         self.calls.append(
             {
                 "system_prompt": system_prompt,
                 "user_prompt": user_prompt,
                 "image_paths": image_paths,
+                "prompt_name": prompt_name,
+                "audit_path": audit_path,
             }
         )
         if len(self.calls) == 1:

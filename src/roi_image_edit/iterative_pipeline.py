@@ -39,6 +39,7 @@ from roi_image_edit.run_artifacts import (
 )
 from roi_image_edit.stage_profiles import stage_profile, stage_profile_choices
 from roi_image_edit.stages import stage_gate_for_report
+from roi_image_edit.vision_audit import write_vision_prompt_audit
 
 
 DEFAULT_ENV = Path(".env")
@@ -280,6 +281,8 @@ class VisionClient:
         system_prompt: str,
         user_prompt: str,
         image_paths: list[Path],
+        prompt_name: str | None = None,
+        audit_path: Path | None = None,
     ) -> dict[str, Any]:
         content: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
         for path in image_paths:
@@ -294,15 +297,46 @@ class VisionClient:
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
+        audit_prompt_name = prompt_name or "unknown_prompt"
+
+        def write_audit(
+            *,
+            response_json: dict[str, Any] | None = None,
+            error: str | None = None,
+            fallback_used: bool = False,
+        ) -> None:
+            if audit_path is None:
+                return
+            write_vision_prompt_audit(
+                audit_path,
+                prompt_name=audit_prompt_name,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                image_paths=image_paths,
+                model=self.model,
+                response_json=response_json,
+                error=error,
+                fallback_used=fallback_used,
+            )
+
         try:
-            return self._post_with_retry(payload)
+            result = self._post_with_retry(payload)
+            write_audit(response_json=result)
+            return result
         except RuntimeError as exc:
             if "response_format" not in str(exc) and "temperature" not in str(exc):
+                write_audit(error=str(exc))
                 raise
             fallback = copy.deepcopy(payload)
             fallback.pop("response_format", None)
             fallback.pop("temperature", None)
-            return self._post_with_retry(fallback)
+            try:
+                result = self._post_with_retry(fallback)
+                write_audit(response_json=result, fallback_used=True)
+                return result
+            except RuntimeError as fallback_exc:
+                write_audit(error=str(fallback_exc), fallback_used=True)
+                raise
 
     def _post_with_retry(self, payload: dict[str, Any]) -> dict[str, Any]:
         retry_markers = (
@@ -4381,6 +4415,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     system_prompt=master_prompt,
                     user_prompt=prompt,
                     image_paths=[run_dir / "original_crop.png", vision_contact_sheet_path],
+                    prompt_name="candidate_rank_prompt.txt",
+                    audit_path=iter_dir / "visual_eval_candidate_rank_prompt_audit.json",
                 )
                 candidate_rank_json["local_stage_context"] = {
                     "pipeline_profile": pipeline_profile,
@@ -4671,6 +4707,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     system_prompt=master_prompt,
                     user_prompt=prompt,
                     image_paths=[run_dir / "original_crop.png", current_image_path, compare_path],
+                    prompt_name="tuning_prompt.txt",
+                    audit_path=iter_dir / "visual_eval_tuning_prompt_audit.json",
                 )
                 write_json(iter_dir / "visual_eval_tuning.json", tuning_json)
                 tuning_wants_stop = bool(tuning_json.get("stop_iteration")) or bool(tuning_json.get("pass"))
@@ -4976,6 +5014,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 system_prompt=master_prompt,
                 user_prompt=prompt,
                 image_paths=[run_dir / "original_crop.png", final_crop_path, run_dir / "compare_final_crop.png"],
+                prompt_name="final_acceptance_prompt.txt",
+                audit_path=run_dir / "final_acceptance_prompt_audit.json",
             )
             write_json(run_dir / "final_acceptance.json", final_acceptance_json)
             progress.emit(
@@ -5057,6 +5097,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "metadata_max_iterations": metadata_max_iterations,
         "progress": str(progress.progress_path),
         "vision_errors": vision_errors,
+        "vision_prompt_audits": sorted(str(path) for path in run_dir.rglob("*prompt_audit.json")),
         "final_acceptance": final_acceptance_json,
         "history": history,
     }

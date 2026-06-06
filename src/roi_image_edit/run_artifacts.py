@@ -58,6 +58,7 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "final_acceptance",
                 "revision_attempts",
                 "revision_rounds",
+                "vision_prompt_audits",
             ],
             "rejection_required": [
                 "accepted",
@@ -337,6 +338,14 @@ def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
         purpose="Final visual acceptance comparison image.",
         required=False,
     )
+    for idx, audit_path in enumerate(vision_artifacts.get("vision_prompt_audits") or [], start=1):
+        _append_path_entry(
+            reports,
+            key=f"vision_prompt_audit_{idx}",
+            path=audit_path,
+            purpose="Audit record for the exact prompt text, prompt hashes, image hashes, and model JSON response fields.",
+            required=False,
+        )
 
     for preview in vision_artifacts.get("revision_previews") or []:
         if not isinstance(preview, dict):

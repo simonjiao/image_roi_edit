@@ -339,6 +339,8 @@ def run_region_vision_checks(
         system_prompt=master_prompt,
         user_prompt=prompt,
         image_paths=[original_context_path, vision_sheet_path],
+        prompt_name="candidate_rank_prompt.txt",
+        audit_path=region_dir / "visual_eval_candidate_rank_prompt_audit.json",
     )
     candidate_rank_json["local_stage_context"] = {
         "pipeline_profile": pipeline_profile,
@@ -426,6 +428,8 @@ def run_region_vision_checks(
             system_prompt=master_prompt,
             user_prompt=final_prompt,
             image_paths=[original_context_path, context_path, compare_path],
+            prompt_name="final_acceptance_prompt.txt",
+            audit_path=out_path.with_name(f"{out_path.stem}_prompt_audit.json"),
         )
         final_json = apply_local_acceptance_gate(final_json, report)
         write_json(out_path, final_json)
@@ -1279,6 +1283,7 @@ def run_region_vision_checks(
             "candidate_sheet": str(vision_sheet_path),
             "final_context": str(final_context_path),
             "final_compare": str(final_compare_path),
+            "vision_prompt_audits": sorted(str(path) for path in region_dir.glob("*prompt_audit.json")),
             "revision_previews": revision_previews,
         },
     }
