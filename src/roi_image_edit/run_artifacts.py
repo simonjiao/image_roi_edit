@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from roi_image_edit.prompt_contracts import prompt_io_contract_report
 from roi_image_edit.stage_policy import STAGE_ORDER, stage_optimization_summary
 from roi_image_edit.stages import prompt_stage_context, stage_gate_for_report
 
@@ -15,6 +16,7 @@ EXTERNAL_ARTIFACT_SCHEMA_VERSION = 1
 def external_artifact_schema_report() -> dict[str, Any]:
     return {
         "artifact_schema_version": EXTERNAL_ARTIFACT_SCHEMA_VERSION,
+        "prompt_io_contract": prompt_io_contract_report(),
         "result_json": {
             "root_required": [
                 "artifactSchemaVersion",

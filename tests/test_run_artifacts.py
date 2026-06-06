@@ -184,6 +184,12 @@ class RunArtifactsTest(unittest.TestCase):
         schema = external_artifact_schema_report()
 
         self.assertEqual(schema["artifact_schema_version"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
+        prompt_contract = schema["prompt_io_contract"]
+        self.assertIn("candidate_rank_prompt.txt", prompt_contract["prompts"])
+        self.assertEqual(
+            prompt_contract["prompts"]["darkness_blur_prompt.txt"]["output_field_handling"]["best_opacity"],
+            "reserved_not_called",
+        )
         result_schema = schema["result_json"]
         self.assertIn("artifactManifest", result_schema["root_required"])
         self.assertIn("profileResolution", result_schema["root_required"])

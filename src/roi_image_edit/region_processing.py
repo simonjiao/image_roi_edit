@@ -179,6 +179,7 @@ def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | 
         "- prompt 模板不得假设固定字段、固定标签或固定字数；本次必须按 field context、source_text 和 target_text 的真实内容逐个判断。\n"
         f"- 用户画出的 search_roi: {list(plan.search_roi)}\n"
         f"- 本地脚本选择的 target_roi: {list(plan.target_roi)}\n"
+        f"- 本地旧槽位 slot_boxes: {[asdict(slot) for slot in plan.slot_boxes]}\n"
         f"- 本地估计的局部文字倾角 text_angle_degrees: {round(float(plan.text_angle_degrees), 3)}\n"
         f"- 必须保持不变的 protected_boxes: {[list(box) for box in plan.protected_boxes]}\n"
         "- field_label_text、field_separator_text、protected_texts 和 protected_boxes 是本次实际任务上下文；如果为空，不能自行补全成某个固定字段标签。\n"
