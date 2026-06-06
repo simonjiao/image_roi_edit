@@ -70,6 +70,22 @@
 
 如果视觉模型给 `pass`，但本地 `blocking_stage != null`，最终仍必须 `revise`。
 
+### 临界失败和模型建议不能只停在说明层
+
+视觉模型可以给出连续参数建议，但任何可转成本地 patch 或目标参数的建议都必须成为可审计的本地候选。
+如果建议被过滤、约束、去重或渲染后失败，运行产物必须记录失败原因；不能只把建议留在
+`final_acceptance_iterXX.json` 文本里。
+
+当本地失败只剩一个接近阈值的质量指标，例如 `ink_gray_balance` 下的
+`roi_core_too_black`、`changed_char_core_too_black` 或方向相反的近阈值偏浅问题时，
+流程必须进入 deterministic micro-search，而不是依赖增加 `max_revision_rounds`。
+临界微调只能围绕当前阻塞阶段的允许参数做更小步长搜索，并保留每个候选的 stage severity
+before/after、strict gate、prior stage regression 和 rejection reason。
+
+受控跨阶段逃逸只能作为临界失败的例外机制：硬边界必须通过，前序阶段必须已通过或不回退，
+当前阶段必须接近通过，并且逃逸候选必须显式标记 `controlled_escape=true`、`primary_stage`、
+`secondary_stage` 和允许的微小参数范围。该机制不能重新引入全量跨阶段笛卡尔搜索。
+
 ## Stage 定义
 
 ### Stage 数据结构

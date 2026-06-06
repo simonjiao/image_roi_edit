@@ -323,6 +323,86 @@ Stage D: vision final check
 
 ROI 很小时，本地渲染和 NumPy 指标可以承受几百到一两千候选。视觉模型不应参与大规模搜索。
 
+### 临界失败微调
+
+分层搜索不能因为避免全量笛卡尔积而漏掉临界小步调整。若当前候选满足以下条件，应进入当前
+stage 的 micro-search：
+
+1. `hard_boundary.pass=true`。
+2. 当前 `blocking_stage` 是本地阶段，不是单纯视觉主观拒绝。
+3. 失败 issue 数量很少，且至少一个主要 issue 的 `gap = actual - limit` 已接近阈值。
+4. 前序阶段已通过，或本轮候选能证明前序阶段不回退。
+
+第一版必须先覆盖两个方向：
+
+| 场景 | 触发 issue | 候选族 | 禁止变化 |
+| --- | --- | --- | --- |
+| 过黑近阈值 | `roi_core_too_black`、`changed_char_core_too_black`、`excess_black_core` | `near_threshold_overblack_micro_tuning`：微降 `opacity`、`core_ink_gain`、`core_darken_strength`、`alpha_contrast`，少量组合。 | 字体、字号、位置、字槽、mask、背景、照片噪声。 |
+| 偏浅近阈值 | `core_mean_gray_too_light`、`core_lighten_too_high` | `near_threshold_core_light_micro_tuning`：微增 core 相关参数，保持形态。 | 字体、字号、位置、mask、背景。 |
+
+micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须分开写：
+
+```json
+{
+  "micro_tuning": {
+    "enabled": true,
+    "family": "near_threshold_overblack_micro_tuning",
+    "stage_id": "ink_gray_balance",
+    "metric": "roi_core_too_black.lt55_delta",
+    "actual": 117.0,
+    "limit": 113.687,
+    "gap": 3.313,
+    "candidate_count": 12,
+    "candidate_ids": ["c000_m01", "c000_m02"]
+  }
+}
+```
+
+### 模型建议强制落地
+
+视觉模型建议不是 stage policy，但可转换建议必须成为本地候选来源之一。
+
+执行规则：
+
+1. `suggested_patch` 和 `parameter_suggestions` 先走现有 stage/profile filter。
+2. 通过 filter 的建议必须生成 `forced_model_seed` 候选，不得只参与 patch dispatch 文本记录。
+3. 如果建议被 constraint 改写，记录 `raw_patch`、`constrained_patch` 和改写原因。
+4. 如果建议被去重，记录 `deduped_to_candidate_id`。
+5. 如果建议生成候选但候选不可选，记录不可选原因。
+
+建议落地产物建议写入：
+
+```json
+{
+  "forced_model_candidates": [
+    {
+      "source": "final_acceptance_basis_round_7",
+      "raw_suggestion": {"parameter": "opacity", "to": 0.67},
+      "converted_patch": {"opacity_delta": -0.03},
+      "candidate_id": "c000_fm08_01",
+      "rendered": true,
+      "selectable": false,
+      "rejection_reason": "prior_stage_regression:text_shape.center_dx"
+    }
+  ]
+}
+```
+
+### 受控跨阶段逃逸
+
+默认仍禁止跨阶段混合调参。只有在临界失败时，允许一个显式标记的 escape 族：
+
+1. `controlled_escape=true`。
+2. `primary_stage` 必须仍是当前 blocking stage。
+3. `secondary_stage` 只能是紧邻相关阶段，例如 `ink_gray_balance` 临界失败时的小幅
+   `photo_texture.blur_match` 或 `text_shape` 的 ±1px 位置回验。
+4. 所有 secondary 参数必须有硬上限，例如 `text_dx/text_dy/char_offsets <= 1px`、
+   `blur_delta <= 0.02`、`photo_noise_delta <= 0.004`。
+5. escape 候选必须通过 prior-stage regression；只要硬边界、旧槽位、protected text、
+   text shape hard issue 或背景残留回退，就必须拒绝。
+
+该机制的目标是解除“只差最后几个像素但常规网格无法命中”的死锁，不是恢复全阶段联合搜索。
+
 ### 剪枝规则
 
 形态阶段先剪掉：
@@ -395,6 +475,16 @@ ROI 很小时，本地渲染和 NumPy 指标可以承受几百到一两千候选
 - final visual candidates。
 - rejected final candidate。
 
+### Slice 6: 临界失败、模型 forced seed 和拒绝诊断
+
+- 增加 `near_threshold_overblack_micro_tuning`，与现有偏浅 micro tuning 对称。
+- micro tuning 候选不受常规 ink-gray top-N 轴优先剪枝吞掉，必须单独计数和审计。
+- 可转换的模型 `suggested_patch` / `parameter_suggestions` 必须生成 forced seed candidate。
+- 每轮 revision 必须输出 `candidate_rejection_table`，覆盖所有被渲染但不可选的候选。
+- `no_selectable_revision_candidate` 不能只写 stop reason；必须说明每个候选为什么不可选。
+- 增加 `controlled_escape` 候选族，但只能用于接近通过的当前阻塞阶段，并必须通过 prior-stage regression。
+- 字数增加或目标字复杂度明显增加时，黑灰阈值报告必须包含复杂度归一化字段，不能只看全 ROI `<55` 增量。
+
 ## Done Definition
 
 该设计完成不能只看某一张图效果。必须满足：
@@ -406,3 +496,8 @@ ROI 很小时，本地渲染和 NumPy 指标可以承受几百到一两千候选
 - `text_shape` 存在 hard-blocking issues 时，流程不会先调照片质感或背景融合；如果只剩受黑灰影响的 deferred issues，则进入声明的后续阶段并在下一轮回验形态。
 - 视觉模型只评估本地 top candidates，不能覆盖本地硬门禁。
 - 失败也有足够中间产物供用户检查。
+- 近阈值过黑和近阈值偏浅都能进入 micro-search，并能证明该搜索没有改变字体、字号、位置、mask 或背景。
+- 每个可转换的视觉模型参数建议都能追溯到本地 forced seed candidate、去重记录或拒绝记录。
+- `no_selectable_revision_candidate` 必须伴随完整候选拒绝表，不能只靠停止原因解释失败。
+- 受控跨阶段逃逸只能在临界失败条件下启用，并且必须记录 primary/secondary stage、参数上限和 prior-stage regression。
+- 字数或复杂度增加的替换必须记录复杂度归一化阈值，且不能放宽 hard boundary。

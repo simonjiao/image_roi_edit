@@ -135,6 +135,14 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 12. 如果 `local_ink_balance_issues` 已经结合邻字参照判定为空，后续 fallback 不应再按旧字槽位把同一候选改判为过黑。
 13. 当目标字比旧字复杂，且同一行邻字风格门槛已通过时，旧槽位的 `70-120` 中间灰阶缺口不能单独作为硬拒绝；否则会把清理外圈灰雾后的候选误判成笔画太窄。
 14. 当本地阶段已通过但视觉模型仍指出 `too_dark` / `too_bold`，后续补丁不能把 `opacity`、`stroke_opacity`、`core_ink_gain` 或 `core_darken_strength` 拉回更黑方向；应优先小幅降低 `opacity`/`alpha_contrast` 或轻微软化，直到本地门禁和视觉验收同时通过。
+15. 当唯一或主要失败项是 `roi_core_too_black` / `changed_char_core_too_black` 且超限很小，应进入过黑临界微调，而不是继续使用常规 ink-gray 网格的粗步长。
+    - 临界条件必须写入报告，例如 `near_threshold=true`、`metric`、`actual`、`limit`、`gap`、`gap_ratio`。
+    - 微调候选应覆盖 `opacity -0.003/-0.006/-0.010/-0.020`、`core_ink_gain -0.003/-0.006/-0.010/-0.020`、`core_darken_strength -0.003/-0.006/-0.010`、`alpha_contrast -0.003/-0.006` 及少量二元组合。
+    - 如果微调会让 `text_shape`、protected text、旧字残留或背景指标回退，必须拒绝并记录原因。
+16. 当目标文字字符数或渲染复杂度高于旧文字时，黑芯和中灰阈值必须使用复杂度归一化说明；不能把全 ROI `<55` 像素增量直接等同为“过黑”。
+    - 报告中应保留 `source_text_count`、`target_text_count`、`text_count_ratio`、`source_complexity`、`target_complexity`、`complexity_ratio` 和使用该比例后的动态阈值。
+    - 复杂度归一化只能放宽质量阈值，不能放宽 ROI 外像素、protected text、旧字残留和边界硬约束。
+17. 如果候选已经只差极小质量阈值，但视觉上仍指出过黑/过硬，本地 solver 应优先生成“降黑且不改变形态”的候选；不能通过继续加模糊、加噪声或改字体来绕过黑灰门禁。
 
 ## 照片质感规则
 
@@ -173,6 +181,11 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 5. 如果视觉模型 `pass` 但本地发现深黑核心过量、灰边过多、ROI 外变化或字体风格失败，必须改成 `revise`。
 6. 如果视觉模型持续 `revise`，最终输出 rejected candidate，并保留每轮候选图和 `final_acceptance_iterXX.json`。
 7. 如果视觉模型在上一轮说过黑，而本地补丁把候选变得更黑，候选选择器必须惩罚这种回退；不能因为字体、字号或细化分支触发旧规则而覆盖当前视觉方向。
+8. 视觉模型给出的 `suggested_patch` 或 `parameter_suggestions` 只要能转换为本地参数，就必须生成至少一个 forced seed candidate。
+   - forced seed 可以被 stage filter、profile filter、constraint 或 prior-stage regression 拒绝，但拒绝必须写入 `revision_rounds[].forced_model_candidates` 或等价产物。
+   - 如果模型建议被去重合并，应记录合并到哪个 candidate id；不能静默丢失。
+9. 视觉模型不能承担连续参数控制器职责。模型负责指出可见问题和候选偏好；本地 solver 负责把建议变成候选、评估指标、选择下一轮或解释为什么停止。
+10. 候选排序 prompt 和最终验收 prompt 不应要求模型同时完成审美排序、阶段仲裁和参数求解三件事；参数求解必须在本地报告中有确定性搜索和拒绝证据。
 
 ## 调参规则
 
@@ -183,6 +196,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
    - 可小幅增加 `blur` 或照片质感；
    - 不应增加 `stroke_opacity` 或大幅加墨。
    - 若同阶段候选的黑芯 severity 明显下降，即使尚未一次性通过 `ink_gray_balance`，也应允许进入下一轮继续小步迭代。
+   - 若黑芯超限已经接近阈值，应使用 `near_threshold_overblack_micro_tuning`，并把常规网格、模型 forced seed 和微调候选分开计数、分开记录拒绝原因。
 4. 当问题是核心不够黑：
    - 优先增加 `core_ink_gain` 或 `core_darken_strength`；
    - 不应直接使用粗体或黑体替代。
@@ -226,6 +240,10 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
    - `final_acceptance_iterXX.json`
 4. 未通过验收时，最终图可以展示 rejected candidate，但必须标记 `accepted=false` / `applied=false` 或等价状态。
 5. Web 候选 drawer 至少显示最近或最有代表性的候选，便于用户观察处理过程。
+6. 如果停止原因是 `no_selectable_revision_candidate`、`no_stage_specific_candidate_direction` 或某个 stage severity 无法继续下降，必须额外写出候选拒绝表：
+   - 每个候选的 `candidate_id`、`origin`、`primary_stage`、`optimization_step`、`strict_pass`、`stage_pass`、`blocking_stage`、当前阶段 severity before/after、prior regression 和不可选原因。
+   - 模型 forced seed 候选必须能从视觉建议追溯到渲染候选或拒绝记录。
+   - UI 可以只展示摘要，但 `result.json` / `progress.jsonl` / region artifact 必须保留完整诊断。
 
 ## 代码位置映射
 
