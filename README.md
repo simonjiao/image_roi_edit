@@ -18,15 +18,15 @@ License: [`GPL-3.0-or-later`](LICENSE).
 
 The implementation rules and accumulated review criteria are documented in
 [`docs/roi_text_replacement_rules.md`](docs/roi_text_replacement_rules.md).
-The no-compromise local-flow hardening plan and implementation checklist are in
-[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md).
+The no-compromise ROI replacement workflow checklist is in
+[`docs/workflow_checklist.md`](docs/workflow_checklist.md).
 When changing the ROI pipeline, update that file alongside the code if the
 workflow, hard gates, iteration strategy, or visual acceptance criteria change.
 
 ## Hardening Status
 
-Local-flow hardening status is tracked in
-[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md).
+Workflow hardening status is tracked in
+[`docs/workflow_checklist.md`](docs/workflow_checklist.md).
 Current behavior must be verified from that checklist plus the test commands
 recorded on each closed item.
 

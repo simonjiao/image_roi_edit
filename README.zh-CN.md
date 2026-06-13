@@ -16,8 +16,8 @@ English README: [`README.md`](README.md).
 
 实现规则和持续沉淀的验收标准记录在
 [`docs/roi_text_replacement_rules.md`](docs/roi_text_replacement_rules.md)。
-不折中的本地流程强化方案和实施 checklist 记录在
-[`docs/local_flow_hardening_checklist.md`](docs/local_flow_hardening_checklist.md)。
+不折中的 ROI 替换 workflow checklist 记录在
+[`docs/workflow_checklist.md`](docs/workflow_checklist.md)。
 修改 ROI 流水线时，如果工作流、硬门槛、迭代策略或视觉验收标准发生变化，
 需要同步更新这份规则文档。
 

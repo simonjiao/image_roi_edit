@@ -5,7 +5,7 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CHECKLIST = REPO_ROOT / "docs" / "local_flow_hardening_checklist.md"
+CHECKLIST = REPO_ROOT / "docs" / "workflow_checklist.md"
 
 
 class CompletionClaimsTest(unittest.TestCase):
@@ -45,12 +45,10 @@ class CompletionClaimsTest(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
         if "- [ ]" in checklist:
-            self.assertIn("The local flow is still being hardened.", readme)
-            self.assertIn("Do not describe it as complete while", readme)
+            self.assertIn("Workflow hardening status is tracked", readme)
         else:
-            self.assertNotIn("The local flow is still being hardened.", readme)
-            self.assertNotIn("Do not describe it as complete while", readme)
-        self.assertIn("local_flow_hardening_checklist.md", readme)
+            self.assertNotIn("Workflow hardening status is tracked", readme)
+        self.assertIn("workflow_checklist.md", readme)
 
     def test_public_docs_and_prompts_do_not_claim_unverified_completion(self) -> None:
         checked_paths = [
@@ -61,9 +59,13 @@ class CompletionClaimsTest(unittest.TestCase):
         forbidden_phrases = (
             "local flow is complete",
             "local-flow hardening is complete",
+            "workflow is complete",
+            "workflow hardening is complete",
             "all checklist items are closed",
             "本地流程完善完成",
             "本地流程已经完成",
+            "workflow 已完善",
+            "workflow 已经完成",
             "所有 checklist 项全部关闭",
             "所有设计目标已完成",
         )

@@ -245,7 +245,7 @@ shape_change_large =
 ## 现有流程差距
 
 本表只同步当前状态，权威关闭条件在
-[`local_flow_hardening_checklist.md`](local_flow_hardening_checklist.md)。
+[`workflow_checklist.md`](workflow_checklist.md)。
 状态含义：
 
 - `已覆盖`：checklist 中对应能力已经有 `[x]`、证据和测试。
@@ -254,17 +254,17 @@ shape_change_large =
 
 | 目标能力 | 当前同步状态 | Checklist 对应项 |
 | --- | --- | --- |
-| 方向和目标字段联合选择 | 部分覆盖：指令解析、方向质量、找不到即失败已覆盖；统一前置安全流程和全字段通用路径未完成。 | 已覆盖：[70-74](local_flow_hardening_checklist.md#d-方向字段和旧值-roi)；未完成：[43](local_flow_hardening_checklist.md#a-三层流程边界)、[75](local_flow_hardening_checklist.md#d-方向字段和旧值-roi)。 |
-| 搜索 ROI 与编辑 ROI 分离 | 部分覆盖：search/edit ROI 分离和标注图已覆盖；仍受全字段通用路径约束。 | 已覆盖：[72-73](local_flow_hardening_checklist.md#d-方向字段和旧值-roi)；未完成：[75](local_flow_hardening_checklist.md#d-方向字段和旧值-roi)。 |
-| 旧槽位完整性门禁 | 部分覆盖：schema、字符数、核心、灰边、底部、label/protected 冲突和早停已覆盖；完整旧字覆盖、倾斜外溢、最后字 protected 误判、前置清除仍未完成。 | 已覆盖：[79-83](local_flow_hardening_checklist.md#e-旧槽位完整性门禁)、[85-90](local_flow_hardening_checklist.md#e-旧槽位完整性门禁)；未完成：[65](local_flow_hardening_checklist.md#c-全局硬约束)、[84](local_flow_hardening_checklist.md#e-旧槽位完整性门禁)、[87](local_flow_hardening_checklist.md#e-旧槽位完整性门禁)、[145-147](local_flow_hardening_checklist.md#k-背景处理拆分)。 |
-| 同字数 CJK 放置 | 部分覆盖：`placement_strategy` schema 和 result 写入已覆盖；同字数小变化/大变化 fixture 尚未关闭。 | 已覆盖：[94](local_flow_hardening_checklist.md#f-放置策略选择)、[101](local_flow_hardening_checklist.md#f-放置策略选择)；未完成：[95-96](local_flow_hardening_checklist.md#f-放置策略选择)。 |
-| 单字形态变化检测 | 部分覆盖：bbox、质心、投影、墨迹面积、边距分布和禁用语义字表已覆盖；动态阈值来源尚未关闭。 | 已覆盖：[105-109](local_flow_hardening_checklist.md#g-单字形态变化检测)、[111-112](local_flow_hardening_checklist.md#g-单字形态变化检测)；未完成：[110](local_flow_hardening_checklist.md#g-单字形态变化检测)。 |
-| 字体形态搜索 | 已覆盖：`text_shape` grid、形态评分组成、形态先行约束和形态剪枝原因均已有测试。 | 已覆盖：[113-121](local_flow_hardening_checklist.md#h-字体形态联合搜索)、[159](local_flow_hardening_checklist.md#l-分层联合优化和搜索预算)。 |
-| 姿态继承 | 部分覆盖：旧 7 类 concern 映射、pose scoring 和形态剪枝原因已覆盖；倾斜外溢槽位覆盖仍未关闭。 | 已覆盖：[52](local_flow_hardening_checklist.md#b-旧-7-类诊断关注点映射到当前-5-个-stage)、[118](local_flow_hardening_checklist.md#h-字体形态联合搜索)、[159](local_flow_hardening_checklist.md#l-分层联合优化和搜索预算)；未完成：[84](local_flow_hardening_checklist.md#e-旧槽位完整性门禁)。 |
-| 黑灰门禁 | 已覆盖：分层执行、四段灰度、核心过黑/过浅、同一行邻字仲裁、形态参数保护和黑灰剪枝原因均已有测试。 | 已覆盖：[124-129](local_flow_hardening_checklist.md#i-黑灰比例搜索)、[160](local_flow_hardening_checklist.md#l-分层联合优化和搜索预算)、[212-216](local_flow_hardening_checklist.md#r-反模式门禁)。 |
-| 照片质感 | 已覆盖：执行顺序、允许参数、照片质感指标、前置阶段回退检查、issue types 和剪枝原因均已有测试。 | 已覆盖：[133-137](local_flow_hardening_checklist.md#j-照片质感搜索)、[161](local_flow_hardening_checklist.md#l-分层联合优化和搜索预算)。 |
-| 背景处理 | 未完成：前置清除和后置融合仍未按 checklist 关闭。 | 未完成：[145-150](local_flow_hardening_checklist.md#k-背景处理拆分)。 |
-| 视觉模型 | 已覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止和不可转化建议记录均已有测试。 | 已覆盖：[46](local_flow_hardening_checklist.md#a-三层流程边界)、[186-192](local_flow_hardening_checklist.md#o-视觉模型-prompt-和本地仲裁)、[212-213](local_flow_hardening_checklist.md#r-反模式门禁)、[220](local_flow_hardening_checklist.md#r-反模式门禁)。 |
+| 方向和目标字段联合选择 | 部分覆盖：指令解析、方向质量、找不到即失败已覆盖；自动分类和 manual anchor ROI 仍未关闭。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)；未完成：[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
+| 搜索 ROI 与编辑 ROI 分离 | 部分覆盖：search/edit ROI 分离和标注图已覆盖；manual anchor 和 expanded edit ROI 仍未关闭。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)；未完成：[全局硬约束](workflow_checklist.md#c-全局硬约束)、[放置策略选择](workflow_checklist.md#f-放置策略选择)。 |
+| 旧槽位完整性门禁 | 部分覆盖：旧槽位质量已折叠为一个完整报告条目；字数增加时右边界仍需降级为扩框诊断。 | 已覆盖：[旧槽位完整性门禁](workflow_checklist.md#e-旧槽位完整性门禁)；未完成：[全局硬约束](workflow_checklist.md#c-全局硬约束)。 |
+| 同字数 CJK 放置 | 部分覆盖：同字数小/大变化已有策略；分类驱动 placement matrix 仍未关闭。 | 已覆盖：[放置策略选择](workflow_checklist.md#f-放置策略选择)；未完成：[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
+| 单字形态变化检测 | 已覆盖：几何、投影、边距、墨迹、动态阈值和禁用语义字表已有测试。 | 已覆盖：[单字形态变化检测](workflow_checklist.md#g-单字形态变化检测)。 |
+| 字体形态搜索 | 已覆盖：`text_shape` grid、形态评分组成、形态先行约束和形态剪枝原因均已有测试。 | 已覆盖：[字体形态联合搜索](workflow_checklist.md#h-字体形态联合搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
+| 姿态继承 | 已覆盖：pose scoring 和形态剪枝原因已覆盖，旧 7 类 concern 映射已从运行时和主 checklist 删除。 | 已覆盖：[单字形态变化检测](workflow_checklist.md#g-单字形态变化检测)、[字体形态联合搜索](workflow_checklist.md#h-字体形态联合搜索)。 |
+| 黑灰门禁 | 已覆盖：分层执行、四段灰度、核心过黑/过浅、同一行邻字仲裁、形态参数保护和黑灰剪枝原因均已有测试。 | 已覆盖：[黑灰比例搜索](workflow_checklist.md#i-黑灰比例搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
+| 照片质感 | 已覆盖：执行顺序、允许参数、照片质感指标、前置阶段回退检查、issue types 和剪枝原因均已有测试。 | 已覆盖：[照片质感搜索](workflow_checklist.md#j-照片质感搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
+| 背景处理 | 已覆盖：前置清除、后置融合、旧槽位残留和局部融合优先级已有测试。 | 已覆盖：[背景处理拆分](workflow_checklist.md#k-背景处理拆分)。 |
+| 视觉模型 | 已覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止和不可转化建议记录均已有测试。 | 已覆盖：[三层流程边界](workflow_checklist.md#a-三层流程边界)、[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)、[反模式门禁](workflow_checklist.md#r-反模式门禁)。 |
 
 ## 分层联合优化设计
 

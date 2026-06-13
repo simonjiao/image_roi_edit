@@ -6,7 +6,7 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CHECKLIST = REPO_ROOT / "docs" / "local_flow_hardening_checklist.md"
+CHECKLIST = REPO_ROOT / "docs" / "workflow_checklist.md"
 PATH_RE = re.compile(r"`((?:tests|scripts|docs|src)/[^`]+?)`")
 
 
