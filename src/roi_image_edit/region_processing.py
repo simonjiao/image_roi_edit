@@ -5,7 +5,7 @@ import io
 import json
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1832,7 +1832,18 @@ def process_region(
     }
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
-    slot_report = plan.slot_quality_report or {}
+    raw_slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
+    slot_report = {
+        **raw_slot_report,
+        "classification": region_classification,
+        "class_key": region_classification.get("class_key"),
+        "roi_policy": region_classification.get("roi_policy"),
+        "internal_profile": region_classification.get("internal_profile"),
+        "profile_source": region_classification.get("profile_source"),
+        "roi_plan": roi_plan,
+        "expanded_edit_roi": roi_plan.get("expanded_edit_roi"),
+    }
+    plan = replace(plan, slot_quality_report=slot_report)
     pre_candidate_report = pre_candidate_gate_report(
         candidate_count=0,
         regions=[{"id": region_id, "roi": list(roi)}],

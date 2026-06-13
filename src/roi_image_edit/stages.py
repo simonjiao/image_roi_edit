@@ -340,6 +340,10 @@ def prompt_stage_context(report: dict[str, Any], profile: StageProfile | str | N
         "roi_policy": classification.get("roi_policy") or (report.get("roi_policy") if isinstance(report, dict) else None),
         "internal_profile": classification.get("internal_profile") or gate.get("profile"),
         "profile_source": classification.get("profile_source") or (report.get("profile_source") if isinstance(report, dict) else None),
+        "scenario_prompt_pack": classification.get("prompt_pack")
+        or (report.get("prompt_pack") if isinstance(report, dict) else None),
+        "parameter_family": classification.get("parameter_family")
+        or (report.get("parameter_family") if isinstance(report, dict) else None),
         "profile_summary": profile_summary,
         "profile_constraints": {
             "enabled_stage_ids": (

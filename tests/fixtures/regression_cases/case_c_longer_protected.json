@@ -7,13 +7,13 @@
   "profile": "photo_scan",
   "source_text": "甲乙",
   "target_text": "丙丁戊",
-  "roi": [0, 0, 72, 36],
+  "roi": [0, 0, 40, 36],
   "slots": [
     [10, 10, 20, 24],
     [26, 10, 36, 24]
   ],
   "protected_boxes": [
-    [38, 9, 54, 25]
+    [70, 9, 86, 25]
   ],
   "shape_report": {
     "pass": true,
@@ -72,12 +72,36 @@
       }
     },
     {
+      "path": "pre_candidate_gate_report.pass",
+      "equals": true
+    },
+    {
+      "path": "pre_candidate_gate_report.candidate_count",
+      "greater_equal": 1
+    },
+    {
       "path": "plan.roi_plan.expansion_report.enabled",
       "equals": true
     },
     {
+      "path": "plan.roi_plan.expanded_edit_roi.2",
+      "greater_equal": 41
+    },
+    {
       "path": "candidate_count",
       "greater_equal": 1
+    },
+    {
+      "path": "hard_report.protected_changed_pixels",
+      "equals": 0
+    },
+    {
+      "path": "hard_report.outside_roi_changed_pixels",
+      "equals": 0
+    },
+    {
+      "path": "hard_report.border_changed_pixels",
+      "equals": 0
     },
     {
       "path": "stage_gate.blocking_stage",

@@ -6,8 +6,10 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 import roi_image_edit.roi_locator as roi_locator
+from roi_image_edit.image_classification import classify_image_workflow, classify_region_roi_policy
 from roi_image_edit.iterative_pipeline import TextRun
-from roi_image_edit.pre_candidate_gates import classify_pre_candidate_slot_failure
+from roi_image_edit.pre_candidate_gates import classify_pre_candidate_slot_failure, pre_candidate_gate_report
+from roi_image_edit.roi_locator import parse_instruction_details
 
 
 def run(x1: int, y1: int = 20, x2: int | None = None, y2: int = 38) -> TextRun:
@@ -85,6 +87,52 @@ class RoiLocatorSlotTest(unittest.TestCase):
         self.assertGreater(length_report["expanded_edit_roi"][2], 40)
         self.assertTrue(length_report["expansion_report"]["expanded_beyond_search_roi"])
         self.assertTrue(plan.slot_quality_report["pass"])
+
+    def test_manual_large_roi_is_anchor_search_and_relocated_edit_roi(self) -> None:
+        image = Image.new("RGB", (150, 70), (235, 235, 235))
+        draw = ImageDraw.Draw(image)
+        slots = (run(72, 24, 84, 42), run(90, 24, 102, 42))
+        for slot in slots:
+            draw.rectangle([slot.x1 + 2, slot.y1 + 3, slot.x2 - 2, slot.y2 - 3], fill=(35, 35, 35))
+        protected_label = (10, 24, 58, 42)
+
+        classification = classify_image_workflow(
+            image,
+            instruction_details=parse_instruction_details("姓名甲乙修改为丙丁"),
+            regions=[{"id": "manual_big", "rect": {"x": 0, "y": 0, "w": 130, "h": 58}}],
+        )
+        with patch.object(roi_locator, "slots_for_region", return_value=slots):
+            with patch.object(roi_locator, "protected_boxes_for_region", return_value=(protected_label,)):
+                plan = roi_locator.build_region_plan(
+                    image,
+                    (0, 0, 130, 58),
+                    source_text="甲乙",
+                    target_text="丙丁",
+                    field_key="name",
+                    field_label_text="姓名",
+                    protected_texts=("姓名",),
+                )
+
+        roi_policy = classify_region_roi_policy(
+            image_classification=classification,
+            search_roi=plan.search_roi,
+            edit_roi=plan.target_roi,
+            source_text="甲乙",
+        )
+        pre_gate = pre_candidate_gate_report(
+            candidate_count=3,
+            regions=[{"id": "manual_big", "roi": list(plan.search_roi)}],
+            slot_quality_report=plan.slot_quality_report,
+        )
+
+        self.assertEqual(classification["roi_policy"], "manual_anchor")
+        self.assertEqual(roi_policy, "manual_anchor")
+        self.assertEqual(plan.search_roi, (0, 0, 130, 58))
+        self.assertGreater(plan.target_roi[0], protected_label[2])
+        self.assertLess(plan.target_roi[2] - plan.target_roi[0], plan.search_roi[2] - plan.search_roi[0])
+        self.assertTrue(plan.slot_quality_report["pass"])
+        self.assertTrue(pre_gate["pass"])
+        self.assertIsNone(pre_gate["failed_gate"])
 
 
 if __name__ == "__main__":

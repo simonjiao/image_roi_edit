@@ -175,6 +175,28 @@ def _strategy_actual_errors(
     }
 
 
+def _workflow_fields(slot_report: dict[str, Any], length_report: dict[str, Any]) -> dict[str, Any]:
+    classification = slot_report.get("classification") if isinstance(slot_report, dict) else None
+    if not isinstance(classification, dict):
+        classification = {}
+    roi_plan = slot_report.get("roi_plan") if isinstance(slot_report, dict) else None
+    if not isinstance(roi_plan, dict):
+        roi_plan = {}
+    return {
+        "classification": classification,
+        "class_key": slot_report.get("class_key") or classification.get("class_key"),
+        "roi_policy": slot_report.get("roi_policy") or classification.get("roi_policy"),
+        "internal_profile": slot_report.get("internal_profile") or classification.get("internal_profile"),
+        "profile_source": slot_report.get("profile_source") or classification.get("profile_source"),
+        "roi_plan": roi_plan,
+        "expanded_edit_roi": (
+            slot_report.get("expanded_edit_roi")
+            or roi_plan.get("expanded_edit_roi")
+            or length_report.get("expanded_edit_roi")
+        ),
+    }
+
+
 def _constraint_issues(constraints: dict[str, Any], actual_errors: dict[str, Any]) -> list[dict[str, Any]]:
     checks = (
         ("max_char_center_dx", "max_abs_center_dx"),
@@ -234,6 +256,8 @@ def placement_strategy_report(
     ):
         target_slot_count = max(target_slot_count, target_count)
     slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
+    length_report = slot_report.get("length_change_report") if isinstance(slot_report.get("length_change_report"), dict) else {}
+    workflow_fields = _workflow_fields(slot_report, length_report)
     per_char = alignment_metrics.get("per_char") if isinstance(alignment_metrics, dict) else []
     if not isinstance(per_char, list):
         per_char = []
@@ -252,6 +276,7 @@ def placement_strategy_report(
         "strategy": plan.placement_strategy,
         "reason": plan.placement_strategy_reason,
         "pass": not issues and slot_quality_pass is not False,
+        **workflow_fields,
         "conditions": {
             "source_count": source_count,
             "target_count": target_count,

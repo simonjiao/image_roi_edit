@@ -267,8 +267,9 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     if isinstance(summary.get("plan"), dict)
                     else None
                 )
+                region_workflow_fields = workflow_fields
                 if isinstance(region_classification, dict):
-                    workflow_fields = {
+                    region_workflow_fields = {
                         **workflow_fields,
                         "classification": region_classification,
                         "class_key": region_classification.get("class_key"),
@@ -284,7 +285,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "image_id": image_id,
                         "region_id": region_id,
                         "accepted": accepted,
-                        **workflow_fields,
+                        **region_workflow_fields,
                         "revision_rounds": len((summary.get("vision") or {}).get("revision_rounds", [])),
                         "blocking_stage": (summary.get("trace") or {}).get("final_blocking_stage"),
                         "stage_severity": (summary.get("trace") or {}).get("final_stage_severity"),

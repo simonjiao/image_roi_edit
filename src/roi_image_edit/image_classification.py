@@ -118,6 +118,28 @@ def _internal_profile(image_type: str, roi_policy: str) -> str:
     return "photo_scan"
 
 
+def _prompt_pack(image_type: str, scenario: str, script: str) -> str:
+    if image_type == "clean_digital" and script == "numeric_or_date":
+        return "clean_numeric_or_date_replace"
+    if image_type == "low_res_thumbnail":
+        return f"low_res_{scenario}"
+    if scenario == "form_field_value_replace":
+        return "form_field_value_replace"
+    if scenario == "dense_paragraph_replace":
+        return "dense_paragraph_replace"
+    return "inline_text_replace"
+
+
+def _parameter_family(image_type: str, roi_policy: str) -> str:
+    if roi_policy == "manual_exact":
+        return "manual_roi_conservative"
+    if image_type == "clean_digital":
+        return "clean_digital_no_photo_texture"
+    if image_type == "low_res_thumbnail":
+        return "low_res_magnified_conservative"
+    return "photo_document_scan"
+
+
 def classify_image_workflow(
     image: Image.Image,
     *,
@@ -168,6 +190,8 @@ def classify_image_workflow(
         "roi_input": roi_input,
         "roi_policy": roi_policy,
         "class_key": _class_key(image_type, scenario, script),
+        "prompt_pack": _prompt_pack(image_type, scenario, script),
+        "parameter_family": _parameter_family(image_type, roi_policy),
         "confidence": round(confidence, 3),
         "evidence": {
             **evidence,

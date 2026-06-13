@@ -56,7 +56,11 @@ class ImageClassificationTest(unittest.TestCase):
         self.assertEqual(len(class_keys), 4)
         self.assertEqual(clean_number["class_key"], "clean_digital.numeric_or_date_replace")
         self.assertEqual(clean_number["internal_profile"], "clean_digital")
+        self.assertEqual(clean_number["prompt_pack"], "clean_numeric_or_date_replace")
+        self.assertEqual(clean_number["parameter_family"], "clean_digital_no_photo_texture")
         self.assertTrue(low_res["class_key"].startswith("low_res_thumbnail."))
+        self.assertTrue(low_res["prompt_pack"].startswith("low_res_"))
+        self.assertEqual(low_res["parameter_family"], "low_res_magnified_conservative")
         self.assertTrue(dense["class_key"].startswith("photo_document.dense_paragraph_replace."))
 
     def test_manual_roi_policy_is_part_of_classification_and_region_plan(self) -> None:

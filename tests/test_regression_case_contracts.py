@@ -8,10 +8,11 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun
+from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun, hard_check
 from roi_image_edit.local_validation import apply_local_acceptance_gate
 from roi_image_edit.image_classification import classify_image_workflow
 from roi_image_edit.placement_strategy import choose_placement_strategy, placement_strategy_report
+from roi_image_edit.pre_candidate_gates import pre_candidate_gate_report
 import roi_image_edit.roi_locator as roi_locator
 from roi_image_edit.roi_locator import parse_instruction_details
 from roi_image_edit.slot_quality import slot_quality_report
@@ -205,6 +206,12 @@ class RegressionCaseContractsTest(unittest.TestCase):
             stage_gate["blocking_stage"],
             limit=10,
         )
+        pre_candidate = pre_candidate_gate_report(
+            candidate_count=3,
+            regions=[{"id": "case_c", "roi": case["roi"]}],
+            slot_quality_report=plan.slot_quality_report,
+        )
+        hard_report = hard_check(image, image.copy(), plan.target_roi, plan.protected_boxes)
 
         payload = {
             "classification": classification,
@@ -216,6 +223,8 @@ class RegressionCaseContractsTest(unittest.TestCase):
                 "slot_quality_report": plan.slot_quality_report,
             },
             "slot_quality": plan.slot_quality_report,
+            "pre_candidate_gate_report": pre_candidate,
+            "hard_report": hard_report,
             "stage_gate": stage_gate,
             "patch_filter": patch_filter,
             "candidate_count": 3,

@@ -179,6 +179,143 @@ class PlacementStrategyTest(unittest.TestCase):
         self.assertEqual(report["actual_errors"]["center_distance_delta"], 0.5)
         self.assertEqual(report["strategy_contract"]["anchor_priority"], "slot_center")
 
+    def test_classification_driven_strategy_report_matrix_records_workflow_schema(self) -> None:
+        scenarios = [
+            {
+                "name": "same_cjk",
+                "source": "日月",
+                "target": "曰朋",
+                "slots": (run(2), run(14)),
+                "draw_mode": "auto",
+                "classification": {
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "roi_policy": "auto",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "same_length_cjk_changed_chars_use_slot_center",
+            },
+            {
+                "name": "longer_cjk",
+                "source": "赵芳",
+                "target": "陈小慧",
+                "slots": (run(2), run(14)),
+                "draw_mode": "line_chars",
+                "classification": {
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "roi_policy": "auto",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "target_text_longer_than_source",
+                "expanded_edit_roi": [2, 2, 70, 16],
+            },
+            {
+                "name": "shorter_cjk",
+                "source": "赵真真",
+                "target": "陈芸",
+                "slots": (run(2), run(14), run(26)),
+                "draw_mode": "line_chars",
+                "classification": {
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "roi_policy": "auto",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "target_text_shorter_than_source",
+            },
+            {
+                "name": "date_number",
+                "source": "2024-01-01",
+                "target": "2025-02-03",
+                "slots": tuple(run(2 + idx * 8, x2=2 + idx * 8 + 5) for idx in range(10)),
+                "draw_mode": "auto",
+                "classification": {
+                    "class_key": "clean_digital.numeric_or_date_replace",
+                    "roi_policy": "auto",
+                    "internal_profile": "clean_digital",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "non_cjk_value_uses_baseline_priority",
+            },
+            {
+                "name": "manual_exact",
+                "source": "",
+                "target": "陈芸",
+                "slots": (),
+                "draw_mode": "auto",
+                "classification": {
+                    "class_key": "photo_document.inline_text_replace.cjk",
+                    "roi_policy": "manual_exact",
+                    "internal_profile": "manual_roi_quick",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "source_text_missing",
+            },
+            {
+                "name": "manual_anchor",
+                "source": "甲乙",
+                "target": "丙丁",
+                "slots": (run(20), run(32)),
+                "draw_mode": "auto",
+                "classification": {
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "roi_policy": "manual_anchor",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
+                },
+                "expected_reason": "same_length_cjk_changed_chars_use_slot_center",
+            },
+        ]
+        for item in scenarios:
+            with self.subTest(item["name"]):
+                slot_report = {
+                    "pass": True,
+                    "classification": item["classification"],
+                    "class_key": item["classification"]["class_key"],
+                    "roi_policy": item["classification"]["roi_policy"],
+                    "internal_profile": item["classification"]["internal_profile"],
+                    "profile_source": "classification",
+                    "roi_plan": {
+                        "search_roi": [0, 0, 80, 24],
+                        "edit_roi": [2, 2, 54, 16],
+                        "expanded_edit_roi": item.get("expanded_edit_roi"),
+                    },
+                    "length_change_report": {
+                        "expanded_edit_roi": item.get("expanded_edit_roi"),
+                        "right_boundary": {
+                            "pass": True,
+                            "diagnostic_only": True,
+                            "space_sufficient": item.get("expanded_edit_roi") is None,
+                        },
+                    },
+                }
+                strategy, reason = choose_placement_strategy(
+                    source_text=item["source"],
+                    target_text=item["target"],
+                    slots=item["slots"],
+                    slot_report=slot_report,
+                    draw_mode=item["draw_mode"],
+                )
+                plan = plan_for(
+                    source=item["source"],
+                    target=item["target"],
+                    slots=item["slots"],
+                    strategy=strategy,
+                    reason=reason,
+                    slot_report=slot_report,
+                    draw_mode=item["draw_mode"],
+                )
+                report = strategy_report(plan, {"enabled": True})
+                self.assertEqual(report["reason"], item["expected_reason"])
+                self.assertEqual(report["classification"]["class_key"], item["classification"]["class_key"])
+                self.assertEqual(report["class_key"], item["classification"]["class_key"])
+                self.assertEqual(report["roi_policy"], item["classification"]["roi_policy"])
+                self.assertEqual(report["internal_profile"], item["classification"]["internal_profile"])
+                self.assertEqual(report["profile_source"], "classification")
+                self.assertEqual(report["expanded_edit_roi"], item.get("expanded_edit_roi"))
+                self.assertTrue(report["pass"])
+
     def test_same_length_small_cjk_uses_top_left_with_center_spacing_and_baseline_constraints(self) -> None:
         strategy, reason = choose_placement_strategy(
             source_text="日月",

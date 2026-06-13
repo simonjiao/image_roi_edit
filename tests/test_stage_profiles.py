@@ -264,6 +264,55 @@ class StageProfilesTest(unittest.TestCase):
             clean_order,
         )
 
+    def test_classification_context_selects_scenario_prompt_pack_and_parameter_family(self) -> None:
+        photo_context = prompt_stage_context(
+            {
+                "pass": True,
+                "classification": {
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "prompt_pack": "form_field_value_replace",
+                    "parameter_family": "photo_document_scan",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
+                },
+            },
+            "photo_scan",
+        )
+        clean_context = prompt_stage_context(
+            {
+                "pass": True,
+                "classification": {
+                    "class_key": "clean_digital.numeric_or_date_replace",
+                    "prompt_pack": "clean_numeric_or_date_replace",
+                    "parameter_family": "clean_digital_no_photo_texture",
+                    "internal_profile": "clean_digital",
+                    "profile_source": "classification",
+                },
+            },
+            "clean_digital",
+        )
+        low_res_context = prompt_stage_context(
+            {
+                "pass": True,
+                "classification": {
+                    "class_key": "low_res_thumbnail.inline_text_replace.cjk",
+                    "prompt_pack": "low_res_inline_text_replace",
+                    "parameter_family": "low_res_magnified_conservative",
+                    "internal_profile": "low_res_thumbnail",
+                    "profile_source": "classification",
+                },
+            },
+            "low_res_thumbnail",
+        )
+
+        self.assertEqual(photo_context["scenario_prompt_pack"], "form_field_value_replace")
+        self.assertEqual(photo_context["parameter_family"], "photo_document_scan")
+        self.assertEqual(clean_context["scenario_prompt_pack"], "clean_numeric_or_date_replace")
+        self.assertFalse(clean_context["profile_constraints"]["enable_photo_texture"])
+        self.assertFalse(clean_context["profile_constraints"]["enable_photo_warp"])
+        self.assertEqual(low_res_context["scenario_prompt_pack"], "low_res_inline_text_replace")
+        self.assertEqual(low_res_context["profile_constraints"]["vision_context_scale"], "magnified")
+
     def test_auto_suggestion_used_only_without_explicit_profile(self) -> None:
         resolution = resolve_stage_profile(None, "low_res_thumbnail")
         self.assertEqual(resolution["id"], "low_res_thumbnail")
