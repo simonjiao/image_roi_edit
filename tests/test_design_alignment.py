@@ -28,6 +28,11 @@ class DesignAlignmentTest(unittest.TestCase):
         self.assertIsNotNone(match)
         body = match.group("body") if match else ""
         payload = json.loads(body)
+        self.assertNotIn("pipeline_profile", payload)
+        self.assertEqual(payload["classification"]["profile_source"], "classification")
+        self.assertEqual(payload["classification"]["internal_profile"], "photo_scan")
+        self.assertEqual(payload["class_key"], payload["classification"]["class_key"])
+        self.assertEqual(payload["roi_policy"], payload["classification"]["roi_policy"])
         self.assertEqual(tuple(payload["stage_order"]), EXPECTED_STAGE_ORDER)
         self.assertEqual(payload["blocking_stage"], "text_shape")
         self.assertTrue(payload["blocking_stage_blocks_next"])

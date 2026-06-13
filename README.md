@@ -55,8 +55,9 @@ environment checks load prompts from that package resource directory only.
 - `src/roi_image_edit/roi_locator.py`: instruction parsing, document
   orientation scoring, field ROI selection, source-text slot detection, and
   `RenderPlan` construction.
-- `src/roi_image_edit/local_validation.py`: reference profiles, hard/local
-  validation reports, background/photo metrics, and local candidate scoring.
+- `src/roi_image_edit/local_validation.py`: reference-image metrics,
+  hard/local validation reports, background/photo metrics, and local candidate
+  scoring.
 - `src/roi_image_edit/revision_selector.py`: final-acceptance delivery checks,
   revision selection scoring, and candidate parameter constraints.
 - `src/roi_image_edit/revision_solver.py`: stage-specific shape, ink-gray, and
@@ -66,8 +67,9 @@ environment checks load prompts from that package resource directory only.
   must not redefine stage policy.
 - `src/roi_image_edit/stages.py`: executable stage definitions, `StageSpec`,
   `StageResult`, detector mapping, and stage report generation.
-- `src/roi_image_edit/stage_profiles.py`: stage profiles for photo scans,
-  clean digital images, low-resolution thumbnails, and manual ROI quick runs.
+- `src/roi_image_edit/stage_profiles.py`: internal stage strategy registry
+  selected by workflow classification for photo scans, clean digital images,
+  low-resolution thumbnails, and manual exact/anchor ROI cases.
 - `src/roi_image_edit/stage_patchers.py`: per-stage patchers, model patch
   parsing, stage patch filtering, and revision patch dispatch.
 - `src/roi_image_edit/iterative_pipeline.py`: lower-level rendering, metric,
@@ -125,16 +127,20 @@ The web page supports multiple uploaded images. Draw one or more rectangles on
 the left image, enter a replacement instruction such as `旧文字替换为新文字`, then
 click `处理全部`. The right pane shows the edited image. Use `>>>` to open the
 candidate drawer; it shows up to five local candidate previews for the image.
-The drawer also shows the profile, blocking stage, candidate source,
-Optimization Steps, model-suggestion count, and patch summary.
+The drawer also shows the automatically selected class/scenario, blocking stage,
+candidate source, Optimization Steps, model-suggestion count, and patch summary.
+Profile is an internal execution strategy selected by workflow classification,
+not a user-facing control.
 The result pane also shows the current blocking stage, revision count, stop
 reason, and next-round plan when the final candidate is rejected.
 Each web run is saved under `output/web/<run_id>/` with `request.json`,
 `result.json`, the original image, and the final image. When a rectangle is
-larger than the text itself, the web pipeline first shrinks the edit target to
-the detected source-text components inside the rectangle. Web processing also
-runs the vision candidate-ranking and final-acceptance prompts; per-region
-visual artifacts are written under `output/web/<run_id>/regions/<region_id>/`.
+larger than the text itself, the workflow treats it as a search/anchor ROI,
+relocates the source-text slots, and derives a separate edit ROI. Longer
+replacement tasks may expand that edit ROI during planning instead of stopping
+because the original rectangle is too small. Web processing also runs the vision
+candidate-ranking and final-acceptance prompts; per-region visual artifacts are
+written under `output/web/<run_id>/regions/<region_id>/`.
 Each region also writes `stage_evidence/summary.json` and per-stage evidence for
 `text_shape`, `ink_gray_balance`, `photo_texture`, and `background_cleanup`
 when a candidate is blocked at that stage.

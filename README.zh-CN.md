@@ -48,8 +48,8 @@ Prompt 文本文件打包在
   Web 代码只能通过处理服务使用这些策略，不能在 `web_app.py` 里重新定义。
 - `src/roi_image_edit/stages.py`：负责可执行阶段定义、`StageSpec`、`StageResult`、
   detector mapping 和阶段报告生成。
-- `src/roi_image_edit/stage_profiles.py`：负责照片/扫描、干净数字图、低分辨率缩略图、
-  手动 ROI 快速处理等 profile。
+- `src/roi_image_edit/stage_profiles.py`：负责由 workflow 分类选择的后端内部阶段策略，
+  覆盖照片/扫描、干净数字图、低分辨率缩略图和 manual exact/anchor ROI 场景。
 - `src/roi_image_edit/stage_patchers.py`：负责按阶段生成 patch、解析模型 patch、
   stage filter 和 revision patch dispatch。
 - `src/roi_image_edit/iterative_pipeline.py`：更底层的渲染、指标、字体、硬校验和
@@ -105,17 +105,16 @@ Prompt 文本文件打包在
 Web 页面支持批量上传图片。左侧原图上可以画一个或多个矩形，输入类似
 `旧文字替换为新文字` 的修改说明，然后点击 `处理全部`。右侧显示修改后的图片。
 使用 `>>>` 可以打开候选图抽屉，最多显示 5 张本地候选预览。
-候选抽屉会显示 profile、blocking stage、候选来源、Optimization Step、模型建议数量
-和被应用的 patch 摘要。
+候选抽屉会显示自动分类得到的 class/scenario、blocking stage、候选来源、
+Optimization Step、模型建议数量和被应用的 patch 摘要。Profile 是 workflow
+分类得到的后端内部执行策略，不是用户需要选择的前端控件。
 结果区域也会显示当前 blocking stage、迭代轮次、停止原因和下一轮计划；如果最终
 候选未被接受，会明确标注为 rejected candidate，不会当作已应用交付图。
-顶部 profile 控件会写入每次任务，`photo_scan` 是默认照片/扫描件流程；
-`clean_digital` 不启用照片质感阶段。
-
 每次 Web 运行都会保存到 `output/web/<run_id>/`，包括 `request.json`、
-`result.json`、原图和最终图。如果用户画的矩形大于文字本身，Web 流水线会先把
-编辑目标收缩到矩形内检测到的旧文字组件。Web 处理也会运行视觉候选排序和最终验收
-prompt；每个区域的视觉产物写入
+`result.json`、原图和最终图。如果用户画的矩形大于文字本身，workflow 会先把它
+视为 search/anchor ROI，重新定位旧文字槽位并生成独立 edit ROI；字数增加时可以在
+规划阶段继续扩展 edit ROI，而不是因为用户原框空间不足提前停止。Web 处理也会运行
+视觉候选排序和最终验收 prompt；每个区域的视觉产物写入
 `output/web/<run_id>/regions/<region_id>/`。
 每个区域还会写入 `stage_evidence/summary.json`，并为 `text_shape`、
 `ink_gray_balance`、`photo_texture`、`background_cleanup` 保存该阶段 top

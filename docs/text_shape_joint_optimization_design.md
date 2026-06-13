@@ -17,8 +17,10 @@
 这些步骤发生在阶段门禁之前或属于 `hard_boundary` 的输入条件。失败时不能进入候选生成。
 
 ```text
-方向校正
+输入图自动分类
+-> 方向校正
 -> 字段和旧值 ROI 定位
+-> manual exact/anchor ROI 判定
 -> 旧槽位完整性门禁
 -> protected text 边界确认
 ```
@@ -87,6 +89,7 @@ background_cleanup 内部：
 - 字段搜索 ROI 和实际编辑 ROI 分离。
 - 搜索 ROI 可以较宽，用于找字段锚点、旧值和后续保护文本。
 - 编辑 ROI 必须收缩到旧值槽位和必要空白，不能把整行当成修改目标。
+- 用户手动画框时，必须先分类为 `manual_exact` 或 `manual_anchor`；`manual_anchor` 只能作为 search/anchor ROI，后端仍需重新定位旧值槽位并生成独立 `edit_roi` 或 `expanded_edit_roi`。
 - 找不到字段或旧值时立即失败，并保留 rejected 产物；不能静默输出原图或无效结果。
 
 ### 2. 旧槽位完整性门禁
@@ -100,7 +103,7 @@ background_cleanup 内部：
 - 槽位没有把字段标签、冒号或后续未修改文本混进去。
 - 旧值最后一个字不能被误判成 protected text。
 - 字数减少时，多余旧槽位必须进入前置清除区域。
-- 字数增加时，编辑区域右边界必须受后续保护文本限制。
+- 字数增加时，右边界和 protected distance 必须作为扩框诊断和最终 hard report 验收依据，不能作为候选生成前的空间不足阻断器。
 
 旧槽位门禁失败的表现不是 `text_shape`，而是更前置的 ROI/slot 问题。它必须阻塞候选生成，否则后续字体、黑度和背景修补都会在错误目标上工作。
 
@@ -113,9 +116,9 @@ background_cleanup 内部：
 | 同字数 CJK，字形变化小 | 槽位左上边界贴齐 | 限制中心误差、字距、基线 |
 | 同字数 CJK，字形变化大 | 槽位中心优先 | 限制左边界、基线、字距 |
 | 字数减少 | 目标字按旧值整体跨度排布 | 清理多余旧槽位 |
-| 字数增加 | 左边界锚定，保留旧字槽位并从旧值最右侧追加新增字 | 不覆盖后续 protected text；不得为了容纳新增字压缩旧字槽位 |
+| 字数增加 | 左边界锚定，保留旧字槽位并从旧值最右侧追加新增字 | 用户原框不足时自动扩展 `edit_roi`；不压缩旧字槽位；最终不修改 protected text |
 | 数字、日期、编号 | 左对齐和基线优先 | 保持数字节奏和字段宽度 |
-| 手动 ROI 且无旧值 | 保守居中或左对齐 fallback | 必须降低自动验收置信度 |
+| 手动 ROI 且无旧值 | 先判定 `manual_exact` 或 `manual_anchor`；仅 `manual_exact` 且无法定位旧值时才 fallback | `manual_anchor` 重新定位旧值槽位；fallback 必须降低自动验收置信度 |
 
 无论使用逐字绘制、span 绘制还是中心绘制，`row_baseline_metrics` 都必须输出候选整体 bbox、旧槽位 bbox、同一行 protected boxes、参考中心线和上下边界偏移。参考线以旧槽位为主，同一行未修改文字只作为上下文，防止 ROI 画得偏高或偏低时把新字整体拖离原文字所在行。
 
@@ -364,7 +367,7 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 
 执行规则：
 
-1. `suggested_patch` 和 `parameter_suggestions` 先走现有 stage/profile filter。
+1. `suggested_patch` 和 `parameter_suggestions` 先走现有 stage/internal-strategy filter。
 2. 通过 filter 的建议必须生成 `forced_model_seed` 候选，不得只参与 patch dispatch 文本记录。
 3. 如果建议被 constraint 改写，记录 `raw_patch`、`constrained_patch` 和改写原因。
 4. 如果建议被去重，记录 `deduped_to_candidate_id`。
