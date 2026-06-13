@@ -2,7 +2,7 @@
   "case_id": "case_a_field_text_shape",
   "case_label": "Case A",
   "description": "Field old-value to new-value edit must block in text_shape when stroke body is too thin, even if visual acceptance says deliver.",
-  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_a_source.png --instruction '姓名甲乙修改为丙丁' --output output/regression/case_a.png --profile photo_scan",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_a_source.png --instruction '姓名甲乙修改为丙丁' --output output/regression/case_a.png",
   "instruction": "姓名甲乙修改为丙丁",
   "profile": "photo_scan",
   "local_report": {
@@ -72,6 +72,22 @@
     }
   ],
   "expected_report_fields": [
+    {
+      "path": "classification.class_key",
+      "equals": "photo_document.form_field_value_replace.cjk"
+    },
+    {
+      "path": "classification.length_change",
+      "equals": "same"
+    },
+    {
+      "path": "classification.roi_policy",
+      "equals": "auto"
+    },
+    {
+      "path": "classification.internal_profile",
+      "equals": "photo_scan"
+    },
     {
       "path": "instruction_details.field",
       "equals": "name"

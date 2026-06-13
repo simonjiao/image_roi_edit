@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import re
 import unittest
 
 
@@ -32,6 +33,17 @@ class WebBoundaryTest(unittest.TestCase):
                     violations.append(f"{node.lineno}: from {module} import ...")
 
         self.assertEqual(violations, [])
+
+    def test_web_does_not_expose_or_submit_profile_selector(self) -> None:
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("profileSelect", html)
+        self.assertNotIn("profile-control", html)
+        self.assertNotIn("profileSelect", script)
+        self.assertNotRegex(script, re.compile(r"\bprofile\s*:"))
+        self.assertIn("class_key", script)
+        self.assertIn("internal_profile", script)
 
     def test_web_app_does_not_call_stage_or_image_processing_entrypoints(self) -> None:
         path = ROOT / "src" / "roi_image_edit" / "web_app.py"

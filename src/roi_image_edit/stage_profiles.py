@@ -145,5 +145,35 @@ def resolve_stage_profile(
     }
 
 
+def resolve_internal_stage_profile(
+    classification: dict[str, Any] | None = None,
+    *,
+    debug_profile: str | None = None,
+) -> dict[str, Any]:
+    debug = str(debug_profile or "").strip()
+    if debug:
+        profile = stage_profile(debug)
+        return {
+            "id": profile.id,
+            "source": "debug_override",
+            "requested_profile": debug,
+            "suggested_profile": (classification or {}).get("internal_profile"),
+            "profile_source": "debug_override",
+            "classification": classification or {},
+            "profile": profile.as_report(),
+        }
+    profile_id = str((classification or {}).get("internal_profile") or DEFAULT_STAGE_PROFILE_ID)
+    profile = stage_profile(profile_id)
+    return {
+        "id": profile.id,
+        "source": "classification",
+        "requested_profile": None,
+        "suggested_profile": profile.id,
+        "profile_source": "classification",
+        "classification": classification or {},
+        "profile": profile.as_report(),
+    }
+
+
 def stage_profile_summary(profile_id: str | None = None) -> dict[str, Any]:
     return stage_profile(profile_id).as_report()

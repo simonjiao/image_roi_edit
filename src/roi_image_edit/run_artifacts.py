@@ -23,7 +23,6 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "ok",
                 "runDir",
                 "artifactManifest",
-                "profile",
                 "profileResolution",
                 "images",
             ],
@@ -33,6 +32,11 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "accepted",
                 "applied",
                 "instructionDetails",
+                "classification",
+                "class_key",
+                "roi_policy",
+                "internal_profile",
+                "profile_source",
                 "candidates",
                 "stage_evidence",
                 "regions",
@@ -75,6 +79,11 @@ def external_artifact_schema_report() -> dict[str, Any]:
                 "event",
             ],
             "stage_fields": [
+                "classification",
+                "class_key",
+                "roi_policy",
+                "internal_profile",
+                "profile_source",
                 "pipeline_profile",
                 "stage_order",
                 "stage_status",
@@ -149,8 +158,7 @@ def normalize_vision_candidate_limit(requested_limit: int | None, total_candidat
 
 def request_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        "profile": payload.get("profile"),
-        "profileSuggestion": payload.get("profileSuggestion"),
+        "debugProfile": payload.get("debugProfile"),
         "maxCandidates": payload.get("maxCandidates"),
         "visionCandidateLimit": payload.get("visionCandidateLimit"),
         "maxRevisionRounds": payload.get("maxRevisionRounds"),
@@ -190,7 +198,6 @@ def result_audit_payload(response: dict[str, Any]) -> dict[str, Any]:
         "ok": response.get("ok"),
         "runDir": response.get("runDir"),
         "artifactManifest": response.get("artifactManifest"),
-        "profile": response.get("profile"),
         "profileResolution": response.get("profileResolution"),
         "images": images,
     }
@@ -289,6 +296,13 @@ def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
     candidate_images: list[dict[str, Any]] = []
     embedded_reports: list[dict[str, Any]] = []
 
+    _append_path_entry(
+        reports,
+        key="roi_plan_report",
+        path=artifacts.get("roi_plan_report"),
+        purpose="Region search/edit ROI plan, manual exact/anchor policy, and expanded edit ROI diagnostics.",
+        required=False,
+    )
     _append_path_entry(
         reports,
         key="slot_quality_report",
@@ -401,6 +415,16 @@ def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
                 "pass": plan["slot_quality_report"].get("pass"),
             }
         )
+    if isinstance(plan.get("roi_plan"), dict):
+        embedded_reports.append(
+            {
+                "key": "roi_plan",
+                "purpose": "Region ROI policy and expanded edit ROI plan.",
+                "available": True,
+                "roi_policy": plan.get("roi_policy"),
+                "expanded_edit_roi": plan.get("roi_plan", {}).get("expanded_edit_roi"),
+            }
+        )
 
     local_missing = _missing_required(reports + candidate_images)
     return {
@@ -439,6 +463,13 @@ def _collect_image_explanation(image: dict[str, Any]) -> dict[str, Any]:
         key="final_image",
         path=artifacts.get("final"),
         purpose="Displayed final image for this task.",
+        required=status != "failed",
+    )
+    _append_path_entry(
+        reports,
+        key="classification_report",
+        path=artifacts.get("classification_report"),
+        purpose="Per-image automatic workflow classification and internal strategy selection evidence.",
         required=status != "failed",
     )
     _append_path_entry(
@@ -503,6 +534,17 @@ def _collect_image_explanation(image: dict[str, Any]) -> dict[str, Any]:
                 "purpose": "Pre-candidate gate failure reason and gate order.",
                 "available": True,
                 "failed_gate": failure["pre_candidate_gate_report"].get("failed_gate"),
+            }
+        )
+    if isinstance(image.get("classification"), dict):
+        embedded_reports.append(
+            {
+                "key": "classification",
+                "purpose": "Automatic workflow classification embedded in result.json.",
+                "available": True,
+                "class_key": image.get("class_key") or image["classification"].get("class_key"),
+                "internal_profile": image.get("internal_profile") or image["classification"].get("internal_profile"),
+                "roi_policy": image.get("roi_policy") or image["classification"].get("roi_policy"),
             }
         )
 
@@ -616,6 +658,19 @@ def stage_progress_fields(report: dict[str, Any] | None) -> dict[str, Any]:
         else None
     )
     return {
+        "classification": report.get("classification"),
+        "class_key": report.get("class_key") or (report.get("classification") or {}).get("class_key")
+        if isinstance(report.get("classification"), dict)
+        else report.get("class_key"),
+        "roi_policy": report.get("roi_policy") or (report.get("classification") or {}).get("roi_policy")
+        if isinstance(report.get("classification"), dict)
+        else report.get("roi_policy"),
+        "internal_profile": report.get("internal_profile") or (report.get("classification") or {}).get("internal_profile")
+        if isinstance(report.get("classification"), dict)
+        else report.get("internal_profile"),
+        "profile_source": report.get("profile_source") or (report.get("classification") or {}).get("profile_source")
+        if isinstance(report.get("classification"), dict)
+        else report.get("profile_source"),
         "pipeline_profile": report.get("pipeline_profile") or stage_gate.get("profile"),
         "stage_order": stage_gate.get("order"),
         "stage_status": stage_gate.get("stage_status"),

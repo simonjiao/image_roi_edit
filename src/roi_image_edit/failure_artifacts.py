@@ -32,6 +32,7 @@ def failed_image_result(
     error: str,
     image: Image.Image | None,
     instruction_details: dict[str, Any] | None,
+    classification: dict[str, Any] | None = None,
     pre_candidate_gate_report: dict[str, Any] | None = None,
     orientation_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -45,6 +46,10 @@ def failed_image_result(
     if orientation_summary is not None:
         orientation_report_path = run_dir / f"{safe_stem}_auto_orientation_report.json"
         write_json(orientation_report_path, orientation_summary)
+    classification_report_path: Path | None = None
+    if classification is not None:
+        classification_report_path = run_dir / f"{safe_stem}_classification_report.json"
+        write_json(classification_report_path, classification)
     report = {
         "image_id": image_id,
         "filename": filename,
@@ -57,6 +62,7 @@ def failed_image_result(
         "reason": "image_processing_failed_before_candidate_generation",
         "pre_candidate_gate_report": pre_candidate_gate_report,
         "orientation_summary": orientation_summary,
+        "classification": classification,
     }
     report_path = run_dir / f"{safe_stem}_failure_report.json"
     write_json(report_path, report)
@@ -70,6 +76,11 @@ def failed_image_result(
         "sourceDataUrl": image_data_url,
         "resultDataUrl": image_data_url,
         "instructionDetails": instruction_details,
+        "classification": classification,
+        "class_key": (classification or {}).get("class_key") if isinstance(classification, dict) else None,
+        "roi_policy": (classification or {}).get("roi_policy") if isinstance(classification, dict) else None,
+        "internal_profile": (classification or {}).get("internal_profile") if isinstance(classification, dict) else None,
+        "profile_source": (classification or {}).get("profile_source") if isinstance(classification, dict) else None,
         "candidates": [],
         "regions": [],
         "stage_evidence": {
@@ -78,11 +89,13 @@ def failed_image_result(
                 "report_path": str(report_path),
                 "rejected_input": str(rejected_input_path) if rejected_input_path else None,
                 "orientation_report": str(orientation_report_path) if orientation_report_path else None,
+                "classification_report": str(classification_report_path) if classification_report_path else None,
             },
         },
         "artifacts": {
             "rejected_input": str(rejected_input_path) if rejected_input_path else None,
             "failure_report": str(report_path),
+            "classification_report": str(classification_report_path) if classification_report_path else None,
             "auto_orientation_report": str(orientation_report_path) if orientation_report_path else None,
             "final_is_rejected_candidate": True,
         },

@@ -12,6 +12,10 @@ class CliProgressTest(unittest.TestCase):
             {
                 "round": 3,
                 "pipeline_profile": "photo_scan",
+                "class_key": "photo_document.form_field_value_replace.cjk",
+                "roi_policy": "manual_anchor",
+                "internal_profile": "photo_scan",
+                "profile_source": "classification",
                 "basis_blocking_stage": "text_shape",
                 "blocking_stage_reason": "font_style_mismatch",
                 "allowed_patch_keys": ["font_size_delta", "text_dx_delta"],
@@ -28,7 +32,10 @@ class CliProgressTest(unittest.TestCase):
         self.assertIsNotNone(line)
         assert line is not None
         self.assertIn("round=3", line)
-        self.assertIn("profile=photo_scan", line)
+        self.assertIn("class_key=photo_document.form_field_value_replace.cjk", line)
+        self.assertIn("roi_policy=manual_anchor", line)
+        self.assertIn("internal_profile=photo_scan", line)
+        self.assertIn("profile_source=classification", line)
         self.assertIn("blocking_stage=text_shape", line)
         self.assertIn("reason=font_style_mismatch", line)
         self.assertIn("allowed_params=font_size_delta,text_dx_delta", line)
@@ -46,6 +53,10 @@ class CliProgressTest(unittest.TestCase):
             {
                 "round": 1,
                 "pipeline_profile": "clean_digital",
+                "class_key": "clean_digital.numeric_or_date_replace",
+                "roi_policy": "auto",
+                "internal_profile": "clean_digital",
+                "profile_source": "classification",
                 "blocking_stage": "ink_gray_balance",
                 "blocking_stage_reason": "ink_too_light",
                 "allowed_patch_keys": ["opacity_delta"],
@@ -59,7 +70,9 @@ class CliProgressTest(unittest.TestCase):
         self.assertIsNotNone(line)
         assert line is not None
         self.assertIn("round=1", line)
-        self.assertIn("profile=clean_digital", line)
+        self.assertIn("class_key=clean_digital.numeric_or_date_replace", line)
+        self.assertIn("roi_policy=auto", line)
+        self.assertIn("internal_profile=clean_digital", line)
         self.assertIn("blocking_stage=ink_gray_balance", line)
         self.assertIn("reason=ink_too_light", line)
         self.assertIn("allowed_params=opacity_delta", line)

@@ -118,7 +118,7 @@ def _strategy_constraints(strategy: str, length_change: str) -> dict[str, Any]:
             constraints["cleanup_extra_source_slots_required"] = True
         if length_change == "longer":
             constraints["protected_text_overlap_pixels"] = 0
-            constraints["right_boundary_required"] = True
+            constraints["right_boundary_diagnostic_required"] = True
         return constraints
     if strategy == "baseline_numeric":
         return {
@@ -171,6 +171,7 @@ def _strategy_actual_errors(
         "protected_text_overlap_pixels": alignment_metrics.get("protected_text_overlap_pixels"),
         "extra_source_cleanup_enabled": cleanup_report.get("enabled") if isinstance(cleanup_report, dict) else None,
         "right_boundary_pass": right_boundary.get("pass") if isinstance(right_boundary, dict) else None,
+        "right_boundary_space_sufficient": right_boundary.get("space_sufficient") if isinstance(right_boundary, dict) else None,
     }
 
 
@@ -209,8 +210,6 @@ def _constraint_issues(constraints: dict[str, Any], actual_errors: dict[str, Any
             )
     if constraints.get("cleanup_extra_source_slots_required") and actual_errors.get("extra_source_cleanup_enabled") is False:
         issues.append({"type": "missing_extra_source_slot_cleanup"})
-    if constraints.get("right_boundary_required") and actual_errors.get("right_boundary_pass") is False:
-        issues.append({"type": "right_boundary_failed_for_longer_replacement"})
     return issues
 
 

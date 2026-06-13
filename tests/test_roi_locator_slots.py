@@ -63,6 +63,29 @@ class RoiLocatorSlotTest(unittest.TestCase):
                 self.assertEqual(report["overlap_report"]["protected_text_guard_scope"], "all_directions")
                 self.assertEqual(classify_pre_candidate_slot_failure(report), "protected_text_guard")
 
+    def test_longer_replacement_expands_edit_roi_beyond_manual_search_roi(self) -> None:
+        image = Image.new("RGB", (100, 60), (235, 235, 235))
+        draw = ImageDraw.Draw(image)
+        slots = (run(10, 20, 22, 38), run(26, 20, 38, 38))
+        for slot in slots:
+            draw.rectangle([slot.x1 + 2, slot.y1 + 3, slot.x2 - 2, slot.y2 - 3], fill=(35, 35, 35))
+
+        with patch.object(roi_locator, "slots_for_region", return_value=slots):
+            with patch.object(roi_locator, "protected_boxes_for_region", return_value=()):
+                plan = roi_locator.build_region_plan(
+                    image,
+                    (0, 0, 40, 50),
+                    source_text="甲乙",
+                    target_text="丙丁戊",
+                )
+
+        length_report = plan.slot_quality_report["length_change_report"]
+        self.assertEqual(length_report["length_change"], "longer")
+        self.assertIsNotNone(length_report["expanded_edit_roi"])
+        self.assertGreater(length_report["expanded_edit_roi"][2], 40)
+        self.assertTrue(length_report["expansion_report"]["expanded_beyond_search_roi"])
+        self.assertTrue(plan.slot_quality_report["pass"])
+
 
 if __name__ == "__main__":
     unittest.main()

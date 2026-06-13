@@ -2,7 +2,7 @@
   "case_id": "case_e_cjk_longer_text_near_threshold_ink",
   "case_label": "Case E",
   "description": "CJK 2-char to 3-char replacement near-threshold overblack. Must use micro tuning and forced seed audit; if still rejected, must see micro tuning report, forced seed entries, and candidate rejection table.",
-  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_e_source.png --instruction '字段文字甲乙修改为丙丁戊' --output output/regression/case_e.png --profile photo_scan",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_e_source.png --instruction '字段文字甲乙修改为丙丁戊' --output output/regression/case_e.png",
   "instruction": "字段文字甲乙修改为丙丁戊",
   "profile": "photo_scan",
   "source_text": "甲乙",
@@ -27,6 +27,18 @@
     ]
   },
   "expected_report_fields": [
+    {
+      "path": "classification.class_key",
+      "equals": "photo_document.form_field_value_replace.cjk"
+    },
+    {
+      "path": "classification.roi_policy",
+      "equals": "auto"
+    },
+    {
+      "path": "classification.internal_profile",
+      "equals": "photo_scan"
+    },
     {
       "path": "micro_tuning_report.enabled",
       "comment": "overblack near-threshold micro tuning should fire when core black gap is small"

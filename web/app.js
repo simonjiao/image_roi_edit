@@ -3,7 +3,6 @@ const processButton = document.getElementById("processButton");
 const imageList = document.getElementById("imageList");
 const statusText = document.getElementById("statusText");
 const template = document.getElementById("imageTemplate");
-const profileSelect = document.getElementById("profileSelect");
 const editorModal = document.getElementById("imageEditorModal");
 const editorTitle = document.getElementById("editorTitle");
 const editorCanvasShell = document.getElementById("editorCanvasShell");
@@ -424,7 +423,9 @@ function candidateMetaLines(candidate) {
     : "";
   const lines = [
     `${candidate.index}. ${candidate.kind || "candidate"} | ${candidate.label}`,
-    `profile ${candidate.pipeline_profile || "photo_scan"} | stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
+    `class ${candidate.class_key || candidate.stage_context?.class_key || "-"} | strategy ${
+      candidate.internal_profile || candidate.pipeline_profile || "photo_scan"
+    } | stage ${candidate.blocking_stage || "pass"} | severity ${formatNumber(candidate.stage_severity)} | score ${formatNumber(candidate.score)}`,
     `origin ${candidate.patcher_source || "-"} | steps ${steps || "-"} | patch ${patchKeys || "-"} | model ${modelSuggestionCount}`,
     `placement ${candidate.placement_strategy || "-"} | shape_large ${
       candidate.shape_change_large === null || candidate.shape_change_large === undefined
@@ -483,6 +484,15 @@ function progressEventDetailLines(record) {
   const stage = progressRecordBlockingStage(record);
   const reason = progressRecordReason(record);
   const candidateCount = progressRecordCandidateCount(record);
+  if (record?.class_key) {
+    lines.push(`class_key=${record.class_key}`);
+  }
+  if (record?.roi_policy) {
+    lines.push(`roi_policy=${record.roi_policy}`);
+  }
+  if (record?.internal_profile) {
+    lines.push(`internal_profile=${record.internal_profile}`);
+  }
   if (stage) {
     lines.push(`blocking_stage=${stage}`);
   }
@@ -538,10 +548,13 @@ function renderTrace(item, entry) {
   regions.forEach((region) => {
     const trace = region.summary?.trace || {};
     const vision = region.summary?.vision || {};
+    const plan = region.summary?.plan || {};
     const nextPlan = trace.next_round_plan || vision.next_round_plan || {};
     const lines = [
-      `${region.id || "region"} | ${region.accepted ? "accepted" : "rejected"} | profile ${
-        region.summary?.plan?.pipeline_profile || "photo_scan"
+      `${region.id || "region"} | ${region.accepted ? "accepted" : "rejected"} | class ${
+        plan.class_key || plan.classification?.class_key || "-"
+      } | strategy ${plan.internal_profile || plan.pipeline_profile || "photo_scan"} | roi ${
+        plan.roi_policy || "-"
       } | stage ${trace.final_blocking_stage || "pass"} | rounds ${trace.revision_round_count ?? 0}`,
     ];
     if (trace.last_round_stop_reason) {
@@ -575,11 +588,11 @@ function progressEventText(record) {
     case "queued":
       return "等待开始处理";
     case "run_started":
-      return `任务已创建：profile ${record.pipeline_profile || "photo_scan"}`;
+      return "任务已创建：自动分类";
     case "image_started":
-      return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}，profile ${
-        record.pipeline_profile || "photo_scan"
-      }`;
+      return `开始处理：${record.source_text || "-"} -> ${record.target_text || "-"}，class ${
+        record.class_key || "-"
+      }，策略 ${record.internal_profile || record.pipeline_profile || "-"}`;
     case "auto_roi_finished":
       return `自动定位完成：${record.region_count ?? 0} 个区域，方向 ${
         record.orientation || "none"
@@ -604,8 +617,8 @@ function progressEventText(record) {
         record.hard_boundary_pass ? "通过" : "未通过"
       }，严格门槛 ${record.strict_pass ? "通过" : "未通过"}`;
     case "revision_round_started":
-      return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}，profile ${
-        record.pipeline_profile || "photo_scan"
+      return `第 ${record.round ?? "-"} 轮调参开始：${record.basis_blocking_stage || "vision"}，class ${
+        record.class_key || "-"
       }`;
     case "revision_round_candidates":
       return `第 ${record.round ?? "-"} 轮候选：${record.patch_count ?? 0} 个修正，${
@@ -991,7 +1004,6 @@ async function processAll() {
   });
 
   const payload = {
-    profile: profileSelect.value,
     maxCandidates: 120,
     maxRevisionRounds: 12,
     images: processable.map((item) => ({

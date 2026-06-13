@@ -2,7 +2,7 @@
   "case_id": "case_b_shorter_cleanup",
   "case_label": "Case B",
   "description": "Shorter replacement must clean extra source slots, preserve following protected text, and attribute residual old text outside photo_texture.",
-  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_b_source.png --instruction '姓名甲乙丙修改为丁戊' --output output/regression/case_b.png --profile photo_scan",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_b_source.png --instruction '姓名甲乙丙修改为丁戊' --output output/regression/case_b.png",
   "instruction": "姓名甲乙丙修改为丁戊",
   "profile": "photo_scan",
   "source_text": "甲乙丙",
@@ -43,6 +43,22 @@
     }
   },
   "expected_report_fields": [
+    {
+      "path": "classification.class_key",
+      "equals": "photo_document.form_field_value_replace.cjk"
+    },
+    {
+      "path": "classification.length_change",
+      "equals": "shorter"
+    },
+    {
+      "path": "classification.roi_policy",
+      "equals": "auto"
+    },
+    {
+      "path": "classification.internal_profile",
+      "equals": "photo_scan"
+    },
     {
       "path": "slot_quality.length_change_report.length_change",
       "equals": "shorter"

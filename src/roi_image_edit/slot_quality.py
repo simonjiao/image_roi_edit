@@ -428,18 +428,20 @@ def slot_quality_report(
             "protected_distances_px": [int(distance) for distance in protected_distances_px],
             "limited_by_protected_text": bool(right_limit < roi[2]),
             "protected_right_boxes": [list(box) for box in right_protected_boxes],
-            "pass": bool(available_right_px >= estimated_extra_width),
+            "space_sufficient": bool(available_right_px >= estimated_extra_width),
+            "diagnostic_only": True,
+            "pass": True,
         }
         if available_right_px < estimated_extra_width:
-            issues.append(
-                {
-                    "type": "right_boundary_too_close_to_protected_text",
-                    "available_right_px": int(available_right_px),
-                    "estimated_extra_width": round(float(estimated_extra_width), 3),
-                    "protected_gap_px": None if protected_gap_px is None else int(protected_gap_px),
-                    "minimum_safe_gap_px": int(minimum_safe_gap_px),
-                }
-            )
+            right_boundary["diagnostic_issue"] = {
+                "type": "right_boundary_too_close_to_protected_text",
+                "blocking": False,
+                "available_right_px": int(available_right_px),
+                "estimated_extra_width": round(float(estimated_extra_width), 3),
+                "protected_gap_px": None if protected_gap_px is None else int(protected_gap_px),
+                "minimum_safe_gap_px": int(minimum_safe_gap_px),
+                "reason": "longer replacement expansion is decided in roi_plan and final hard report, not pre-candidate space gate",
+            }
 
     return {
         "pass": not issues,

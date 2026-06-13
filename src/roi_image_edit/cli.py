@@ -114,7 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--max-candidates", type=int, default=130)
     process.add_argument("--vision-candidate-limit", type=int, default=8)
     process.add_argument("--max-revision-rounds", type=int, default=12)
-    process.add_argument("--profile", choices=stage_profile_choices(), default="photo_scan")
+    process.add_argument("--debug-profile", choices=stage_profile_choices(), default=None, help=argparse.SUPPRESS)
+    process.add_argument("--profile", choices=stage_profile_choices(), default=None, help=argparse.SUPPRESS)
     process.add_argument("--output", type=Path, default=None, help="Optional path to copy the final image.")
     process.add_argument("--json", action="store_true", dest="as_json")
 
@@ -138,6 +139,11 @@ def build_process_summary(
         "final_is_rejected_candidate": artifacts.get("final_is_rejected_candidate", False),
         "orientation": image_result.get("orientation"),
         "instruction_details": image_result.get("instructionDetails"),
+        "classification": image_result.get("classification"),
+        "class_key": image_result.get("class_key"),
+        "roi_policy": image_result.get("roi_policy"),
+        "internal_profile": image_result.get("internal_profile"),
+        "profile_source": image_result.get("profile_source"),
         "regions": [
             {
                 "id": region.get("id"),
@@ -147,6 +153,8 @@ def build_process_summary(
                 "target_text": region.get("targetText"),
                 "accepted": region.get("accepted"),
                 "target_roi": (region.get("summary") or {}).get("plan", {}).get("target_roi"),
+                "roi_plan": (region.get("summary") or {}).get("plan", {}).get("roi_plan"),
+                "classification": (region.get("summary") or {}).get("plan", {}).get("classification"),
                 "params": (region.get("summary") or {}).get("params"),
                 "vision": (region.get("summary") or {}).get("vision", {}),
                 "next_round_plan": ((region.get("summary") or {}).get("vision") or {}).get("next_round_plan"),
@@ -190,7 +198,10 @@ def format_process_progress_line(event: str, record: dict) -> str | None:
             "[progress]",
             event,
             f"round={record.get('round')}",
-            f"profile={record.get('pipeline_profile')}",
+            f"class_key={record.get('class_key')}",
+            f"roi_policy={record.get('roi_policy')}",
+            f"internal_profile={record.get('internal_profile') or record.get('pipeline_profile')}",
+            f"profile_source={record.get('profile_source')}",
             f"blocking_stage={progress_blocking_stage(record)}",
             f"reason={record.get('blocking_stage_reason') or record.get('selected_reason') or record.get('stop_reason')}",
             f"allowed_params={_format_progress_list(record.get('allowed_patch_keys'))}",
@@ -302,7 +313,6 @@ def main() -> None:
             for idx, rect in enumerate(args.rect or [], start=1)
         ]
         payload = {
-            "profile": args.profile,
             "maxCandidates": args.max_candidates,
             "visionCandidateLimit": args.vision_candidate_limit,
             "maxRevisionRounds": args.max_revision_rounds,
@@ -316,6 +326,9 @@ def main() -> None:
                 }
             ],
         }
+        debug_profile = args.debug_profile or args.profile
+        if debug_profile:
+            payload["debugProfile"] = debug_profile
         def print_progress(event: str, record: dict) -> None:
             if args.as_json:
                 return

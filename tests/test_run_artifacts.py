@@ -40,6 +40,7 @@ class RunArtifactsTest(unittest.TestCase):
         payload = {
             "profile": "photo_scan",
             "profileSuggestion": "clean_digital",
+            "debugProfile": "low_res_thumbnail",
             "maxCandidates": 130,
             "visionCandidateLimit": 8,
             "maxRevisionRounds": 12,
@@ -54,8 +55,9 @@ class RunArtifactsTest(unittest.TestCase):
             ],
         }
         audit = request_audit_payload(payload)
-        self.assertEqual(audit["profile"], "photo_scan")
-        self.assertEqual(audit["profileSuggestion"], "clean_digital")
+        self.assertNotIn("profile", audit)
+        self.assertNotIn("profileSuggestion", audit)
+        self.assertEqual(audit["debugProfile"], "low_res_thumbnail")
         self.assertEqual(audit["maxCandidates"], 130)
         self.assertEqual(audit["visionCandidateLimit"], 8)
         self.assertEqual(audit["maxRevisionRounds"], 12)
@@ -66,17 +68,26 @@ class RunArtifactsTest(unittest.TestCase):
         response = {
             "ok": True,
             "runDir": "output/web/run1",
-            "profile": "clean_digital",
             "profileResolution": {
-                "id": "clean_digital",
-                "source": "explicit_request",
-                "suggested_profile": "photo_scan",
+                "id": None,
+                "source": "classification",
+                "per_image": True,
             },
             "images": [
                 {
                     "id": "img1",
                     "ok": True,
                     "accepted": False,
+                    "classification": {
+                        "class_key": "photo_document.form_field_value_replace.cjk",
+                        "roi_policy": "manual_anchor",
+                        "internal_profile": "photo_scan",
+                        "profile_source": "classification",
+                    },
+                    "class_key": "photo_document.form_field_value_replace.cjk",
+                    "roi_policy": "manual_anchor",
+                    "internal_profile": "photo_scan",
+                    "profile_source": "classification",
                     "sourceDataUrl": "data:image/png;base64,source",
                     "resultDataUrl": "data:image/png;base64,result",
                     "autoRoiEvidence": {
@@ -145,9 +156,8 @@ class RunArtifactsTest(unittest.TestCase):
         }
         audit = result_audit_payload(response)
         self.assertEqual(audit["artifactSchemaVersion"], EXTERNAL_ARTIFACT_SCHEMA_VERSION)
-        self.assertEqual(audit["profile"], "clean_digital")
-        self.assertEqual(audit["profileResolution"]["source"], "explicit_request")
-        self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
+        self.assertNotIn("profile", audit)
+        self.assertEqual(audit["profileResolution"]["source"], "classification")
         image = audit["images"][0]
         self.assertNotIn("sourceDataUrl", image)
         self.assertNotIn("resultDataUrl", image)
@@ -157,6 +167,10 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertEqual(image["candidates"][0]["patch"], {"font_size_delta": 1})
         self.assertEqual(image["candidates"][0]["model_suggestions"][0]["parameter"], "font_size")
         self.assertEqual(image["candidates"][0]["rejection_reason"], "text_shape_not_yet_passed")
+        self.assertEqual(image["classification"]["class_key"], "photo_document.form_field_value_replace.cjk")
+        self.assertEqual(image["roi_policy"], "manual_anchor")
+        self.assertEqual(image["internal_profile"], "photo_scan")
+        self.assertEqual(image["profile_source"], "classification")
         self.assertEqual(image["autoRoiEvidence"]["regions"][0]["search_roi"], [2, 4, 46, 26])
         self.assertEqual(image["autoRoiEvidence"]["regions"][0]["edit_roi"], [10, 8, 32, 22])
         self.assertEqual(image["stage_evidence"]["auto_roi"]["regions"][0]["search_roi"], [2, 4, 46, 26])
@@ -193,6 +207,12 @@ class RunArtifactsTest(unittest.TestCase):
         result_schema = schema["result_json"]
         self.assertIn("artifactManifest", result_schema["root_required"])
         self.assertIn("profileResolution", result_schema["root_required"])
+        self.assertNotIn("profile", result_schema["root_required"])
+        self.assertIn("classification", result_schema["image_required"])
+        self.assertIn("class_key", result_schema["image_required"])
+        self.assertIn("roi_policy", result_schema["image_required"])
+        self.assertIn("internal_profile", result_schema["image_required"])
+        self.assertIn("profile_source", result_schema["image_required"])
         self.assertIn("stage_evidence", result_schema["image_required"])
         self.assertIn("stage_context", result_schema["candidate_required"])
         self.assertIn("patch", result_schema["candidate_required"])
@@ -205,6 +225,10 @@ class RunArtifactsTest(unittest.TestCase):
 
         progress_schema = schema["progress_jsonl"]
         self.assertIn("artifactSchemaVersion", progress_schema["record_required"])
+        self.assertIn("classification", progress_schema["stage_fields"])
+        self.assertIn("class_key", progress_schema["stage_fields"])
+        self.assertIn("roi_policy", progress_schema["stage_fields"])
+        self.assertIn("internal_profile", progress_schema["stage_fields"])
         self.assertIn("blocking_stage", progress_schema["stage_fields"])
         self.assertIn("stage_evidence", progress_schema["candidate_fields"])
         self.assertIn("stage_filter_report", progress_schema["patch_fields"])
@@ -223,11 +247,13 @@ class RunArtifactsTest(unittest.TestCase):
             result_path = self._touch(run_dir / "result.json")
             progress_path = self._touch(run_dir / "progress.jsonl")
             final_path = self._touch(run_dir / "final.png")
+            classification_report = self._touch(run_dir / "classification_report.json")
             orientation_report = self._touch(run_dir / "auto_orientation_report.json")
             auto_roi_evidence_report = self._touch(run_dir / "auto_roi_evidence.json")
             auto_overlay = self._touch(run_dir / "auto_roi_overlay.png")
             selected_candidate = self._touch(run_dir / "r1" / "selected_candidate.png")
             selected_compare = self._touch(run_dir / "r1" / "selected_compare.png")
+            roi_plan_report = self._touch(run_dir / "r1" / "roi_plan_report.json")
             slot_quality_report = self._touch(run_dir / "r1" / "slot_quality_report.json")
             pre_candidate_gate_report = self._touch(run_dir / "r1" / "pre_candidate_gate_report.json")
             candidate_sheet = self._touch(run_dir / "r1" / "vision_candidate_sheet.png")
@@ -247,8 +273,19 @@ class RunArtifactsTest(unittest.TestCase):
                         "ok": True,
                         "accepted": False,
                         "applied": False,
+                        "classification": {
+                            "class_key": "photo_document.form_field_value_replace.cjk",
+                            "roi_policy": "manual_anchor",
+                            "internal_profile": "photo_scan",
+                            "profile_source": "classification",
+                        },
+                        "class_key": "photo_document.form_field_value_replace.cjk",
+                        "roi_policy": "manual_anchor",
+                        "internal_profile": "photo_scan",
+                        "profile_source": "classification",
                         "artifacts": {
                             "final": str(final_path),
+                            "classification_report": str(classification_report),
                             "auto_orientation_report": str(orientation_report),
                             "auto_roi_evidence_report": str(auto_roi_evidence_report),
                             "auto_roi_overlay": str(auto_overlay),
@@ -268,6 +305,12 @@ class RunArtifactsTest(unittest.TestCase):
                                 "summary": {
                                     "trace": {"final_blocking_stage": "text_shape"},
                                     "plan": {
+                                        "roi_policy": "manual_anchor",
+                                        "roi_plan": {
+                                            "search_roi": [0, 0, 80, 36],
+                                            "edit_roi": [10, 10, 52, 24],
+                                            "expanded_edit_roi": [10, 10, 64, 24],
+                                        },
                                         "slot_quality_report": {
                                             "pass": True,
                                             "source_count": 2,
@@ -287,6 +330,7 @@ class RunArtifactsTest(unittest.TestCase):
                                     "artifacts": {
                                         "selected_candidate": str(selected_candidate),
                                         "selected_compare": str(selected_compare),
+                                        "roi_plan_report": str(roi_plan_report),
                                         "slot_quality_report": str(slot_quality_report),
                                         "pre_candidate_gate_report": str(pre_candidate_gate_report),
                                         "stage_evidence": {
@@ -330,8 +374,10 @@ class RunArtifactsTest(unittest.TestCase):
         report_keys = [item["key"] for item in image["reports"]]
         image_keys = [item["key"] for item in image["candidate_images"]]
         embedded_keys = [item["key"] for item in image["embedded_reports"]]
+        self.assertIn("classification_report", report_keys)
         self.assertIn("auto_orientation_report", report_keys)
         self.assertIn("auto_roi_evidence_report", report_keys)
+        self.assertIn("roi_plan_report", report_keys)
         self.assertIn("slot_quality_report", report_keys)
         self.assertIn("pre_candidate_gate_report", report_keys)
         self.assertIn("vision_prompt_audit_1", report_keys)
@@ -343,6 +389,8 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("vision_final_compare", image_keys)
         self.assertIn("revision_preview_round_1", image_keys)
         self.assertIn("text_shape_top_compare", image_keys)
+        self.assertIn("classification", embedded_keys)
+        self.assertIn("roi_plan", embedded_keys)
         self.assertIn("slot_quality_report", embedded_keys)
 
     def test_progress_record_adds_stable_schema_version(self) -> None:

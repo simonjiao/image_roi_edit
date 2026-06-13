@@ -10,6 +10,7 @@ from PIL import Image
 
 from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_auto_roi_overlay
 from roi_image_edit.failure_artifacts import failed_image_result
+from roi_image_edit.image_classification import classify_image_workflow
 from roi_image_edit.iterative_pipeline import VisionClient, clamp_box, write_json
 from roi_image_edit.pre_candidate_gates import pre_candidate_gate_report
 from roi_image_edit.result_previews import rejected_region_preview_candidate
@@ -20,7 +21,7 @@ from roi_image_edit.run_artifacts import (
     request_audit_payload,
     result_audit_payload,
 )
-from roi_image_edit.stage_profiles import resolve_stage_profile
+from roi_image_edit.stage_profiles import resolve_internal_stage_profile
 from roi_image_edit.region_processing import (
     ENV_PATH,
     OUTPUT_DIR,
@@ -43,11 +44,14 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
     run_dir = OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     progress_path = run_dir / "progress.jsonl"
-    profile_resolution = resolve_stage_profile(
-        str(payload.get("profile") or ""),
-        str(payload.get("profileSuggestion") or ""),
-    )
-    pipeline_profile = str(profile_resolution["id"])
+    run_profile_resolution = {
+        "id": None,
+        "source": "classification",
+        "requested_profile": None,
+        "suggested_profile": None,
+        "profile_source": "classification",
+        "per_image": True,
+    }
 
     def emit(event: str, fields: dict[str, Any] | None = None) -> None:
         record = progress_record(
@@ -65,8 +69,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         "run_started",
         {
             "run_dir": str(run_dir),
-            "pipeline_profile": pipeline_profile,
-            "profile_resolution": profile_resolution,
+            "profile_source": "classification",
+            "profile_resolution": run_profile_resolution,
         },
     )
     prompts = load_processing_prompts()
@@ -80,12 +84,42 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         failure_image: Image.Image | None = None
         pre_candidate_report: dict[str, Any] | None = None
         orientation_summary: dict[str, Any] | None = None
+        classification: dict[str, Any] | None = None
         try:
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
             target_text = instruction_details["target_text"]
             if not target_text:
                 raise ValueError("missing replacement instruction")
+            image = image_from_data_url(str(image_item.get("dataUrl") or ""))
+            failure_image = image.copy()
+            classification = classify_image_workflow(
+                image,
+                instruction_details=instruction_details,
+                regions=list(image_item.get("regions", []) or []),
+            )
+            profile_resolution = resolve_internal_stage_profile(
+                classification,
+                debug_profile=str(payload.get("debugProfile") or image_item.get("debugProfile") or ""),
+            )
+            pipeline_profile = str(profile_resolution["id"])
+            classification = {
+                **classification,
+                "internal_profile": pipeline_profile,
+                "profile_source": str(
+                    profile_resolution.get("profile_source")
+                    or profile_resolution.get("source")
+                    or "classification"
+                ),
+            }
+            workflow_fields = {
+                "classification": classification,
+                "class_key": classification.get("class_key"),
+                "roi_policy": classification.get("roi_policy"),
+                "internal_profile": classification.get("internal_profile"),
+                "profile_source": classification.get("profile_source"),
+                "pipeline_profile": pipeline_profile,
+            }
             emit(
                 "image_started",
                 {
@@ -94,12 +128,13 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "instruction_details": instruction_details,
                     "source_text": source_text,
                     "target_text": target_text,
-                    "pipeline_profile": pipeline_profile,
+                    "profile_resolution": profile_resolution,
+                    **workflow_fields,
                 },
             )
-            image = image_from_data_url(str(image_item.get("dataUrl") or ""))
-            failure_image = image.copy()
             original_image = image.copy()
+            classification_report_path = run_dir / f"{safe_stem}_classification_report.json"
+            write_json(classification_report_path, classification)
             orientation_summary = {
                 "applied": False,
                 "orientation": "none",
@@ -133,6 +168,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                             "candidate_count": 0,
                             "failed_gate": pre_candidate_report["failed_gate"],
                             "pre_candidate_gate_report": pre_candidate_report,
+                            **workflow_fields,
                         },
                     )
                     raise
@@ -145,6 +181,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "selected_score": orientation_summary.get("selected_score"),
                         "attempt_count": len(orientation_summary.get("attempts") or []),
                         "region_count": len(regions),
+                        **workflow_fields,
                     },
                 )
                 original_image = image.copy()
@@ -190,12 +227,23 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "roi": list(roi),
                         "source_text": region_source_text,
                         "target_text": region_target_text,
-                        "pipeline_profile": pipeline_profile,
+                        **workflow_fields,
                     },
                 )
 
                 def region_progress(event: str, fields: dict[str, Any]) -> None:
-                    emit(event, {"image_id": image_id, **(fields or {})})
+                    event_fields = {**workflow_fields, **(fields or {})}
+                    region_classification = event_fields.get("classification")
+                    if isinstance(region_classification, dict):
+                        event_fields["class_key"] = region_classification.get("class_key")
+                        event_fields["roi_policy"] = region_classification.get("roi_policy")
+                        event_fields["internal_profile"] = region_classification.get("internal_profile")
+                        event_fields["profile_source"] = region_classification.get("profile_source")
+                        event_fields["pipeline_profile"] = (
+                            region_classification.get("internal_profile")
+                            or event_fields.get("pipeline_profile")
+                        )
+                    emit(event, {"image_id": image_id, **event_fields})
 
                 image, region_display_image, region_candidates, summary, accepted = process_region(
                     image,
@@ -212,7 +260,23 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     pipeline_profile=pipeline_profile,
                     progress=region_progress,
                     field_context=field_context,
+                    classification=classification,
                 )
+                region_classification = (
+                    (summary.get("plan") or {}).get("classification")
+                    if isinstance(summary.get("plan"), dict)
+                    else None
+                )
+                if isinstance(region_classification, dict):
+                    workflow_fields = {
+                        **workflow_fields,
+                        "classification": region_classification,
+                        "class_key": region_classification.get("class_key"),
+                        "roi_policy": region_classification.get("roi_policy"),
+                        "internal_profile": region_classification.get("internal_profile"),
+                        "profile_source": region_classification.get("profile_source"),
+                        "pipeline_profile": region_classification.get("internal_profile") or pipeline_profile,
+                    }
                 display_image = image.copy() if accepted else region_display_image.copy()
                 emit(
                     "region_finished",
@@ -220,7 +284,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "image_id": image_id,
                         "region_id": region_id,
                         "accepted": accepted,
-                        "pipeline_profile": pipeline_profile,
+                        **workflow_fields,
                         "revision_rounds": len((summary.get("vision") or {}).get("revision_rounds", [])),
                         "blocking_stage": (summary.get("trace") or {}).get("final_blocking_stage"),
                         "stage_severity": (summary.get("trace") or {}).get("final_stage_severity"),
@@ -284,6 +348,12 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     "applied": image_accepted,
                     "filename": filename,
                     "instructionDetails": instruction_details,
+                    "classification": classification,
+                    "class_key": classification.get("class_key"),
+                    "roi_policy": classification.get("roi_policy"),
+                    "internal_profile": classification.get("internal_profile"),
+                    "profile_source": classification.get("profile_source"),
+                    "profileResolution": profile_resolution,
                     "sourceDataUrl": image_to_data_url(original_image),
                     "resultDataUrl": image_to_data_url(result_image),
                     "candidates": candidates[:5],
@@ -297,6 +367,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         "original": str(original_path),
                         "final": str(final_path),
                         "applied": str(applied_path),
+                        "classification_report": str(classification_report_path),
                         "auto_orientation_report": str(auto_orientation_report_path),
                         "auto_roi_evidence_report": str(auto_roi_evidence_report_path),
                         "auto_roi_overlay": str(auto_roi_overlay_path) if auto_roi_overlay_path else None,
@@ -304,9 +375,20 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     },
                 }
             )
-            emit("image_finished", {"image_id": image_id, "accepted": image_accepted})
+            emit("image_finished", {"image_id": image_id, "accepted": image_accepted, **workflow_fields})
         except Exception as exc:
             failure_progress: dict[str, Any] = {"image_id": image_id, "error": str(exc)}
+            if isinstance(classification, dict):
+                failure_progress.update(
+                    {
+                        "classification": classification,
+                        "class_key": classification.get("class_key"),
+                        "roi_policy": classification.get("roi_policy"),
+                        "internal_profile": classification.get("internal_profile"),
+                        "profile_source": classification.get("profile_source"),
+                        "pipeline_profile": classification.get("internal_profile"),
+                    }
+                )
             if pre_candidate_report:
                 failure_progress.update(
                     {
@@ -325,6 +407,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                     error=str(exc),
                     image=failure_image,
                     instruction_details=instruction_details,
+                    classification=classification,
                     pre_candidate_gate_report=pre_candidate_report,
                     orientation_summary=orientation_summary,
                 )
@@ -333,8 +416,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
         "ok": True,
         "runDir": str(run_dir),
         "artifactManifest": str(run_dir / "artifact_manifest.json"),
-        "profile": pipeline_profile,
-        "profileResolution": profile_resolution,
+        "profile": "classification",
+        "profileResolution": run_profile_resolution,
         "images": results,
     }
     result_path = run_dir / "result.json"

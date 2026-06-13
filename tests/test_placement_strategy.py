@@ -296,6 +296,7 @@ class PlacementStrategyTest(unittest.TestCase):
             "length_change_report": {
                 "right_boundary": {
                     "pass": True,
+                    "space_sufficient": True,
                     "protected_gap_px": 12,
                     "minimum_safe_gap_px": 3,
                 }
@@ -335,8 +336,10 @@ class PlacementStrategyTest(unittest.TestCase):
         self.assertTrue(report["strategy_contract"]["protected_text_guard_checked"])
         self.assertTrue(report["strategy_contract"]["longer_text_appends_slots"])
         self.assertEqual(report["constraints"]["protected_text_overlap_pixels"], 0)
+        self.assertTrue(report["constraints"]["right_boundary_diagnostic_required"])
         self.assertEqual(report["actual_errors"]["protected_text_overlap_pixels"], 0)
         self.assertTrue(report["actual_errors"]["right_boundary_pass"])
+        self.assertTrue(report["actual_errors"]["right_boundary_space_sufficient"])
         self.assertTrue(report["pass"])
 
     def test_numeric_date_and_age_use_left_baseline_rhythm_and_field_width_constraints(self) -> None:

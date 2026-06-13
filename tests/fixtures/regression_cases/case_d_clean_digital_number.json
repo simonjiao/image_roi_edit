@@ -2,9 +2,27 @@
   "case_id": "case_d_clean_digital_number",
   "case_label": "Case D",
   "description": "Clean digital number edits must use clean_digital profile, avoid photo noise, and keep clean edges.",
-  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_d_source.png --instruction '编号12修改为34' --output output/regression/case_d.png --profile clean_digital",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_d_source.png --instruction '编号12修改为34' --output output/regression/case_d.png",
   "instruction": "编号12修改为34",
   "profile": "clean_digital",
+  "classification": {
+    "image_type": "clean_digital",
+    "scenario": "numeric_or_date_replace",
+    "script": "numeric_or_date",
+    "length_change": "same",
+    "roi_input": "auto",
+    "roi_policy": "auto",
+    "class_key": "clean_digital.numeric_or_date_replace",
+    "confidence": 0.88,
+    "evidence": {
+      "field_key": "number",
+      "source_explicit": true,
+      "manual_region_count": 0,
+      "classifier_version": 1
+    },
+    "internal_profile": "clean_digital",
+    "profile_source": "classification"
+  },
   "local_report": {
     "pass": true,
     "pipeline_profile": "clean_digital",
@@ -29,6 +47,22 @@
     ]
   },
   "expected_report_fields": [
+    {
+      "path": "classification.class_key",
+      "equals": "clean_digital.numeric_or_date_replace"
+    },
+    {
+      "path": "classification.internal_profile",
+      "equals": "clean_digital"
+    },
+    {
+      "path": "classification.profile_source",
+      "equals": "classification"
+    },
+    {
+      "path": "classification.roi_policy",
+      "equals": "auto"
+    },
     {
       "path": "instruction_details.field",
       "equals": "number"

@@ -34,7 +34,7 @@ class PreCandidateGatesTest(unittest.TestCase):
         report = pre_candidate_gate_report(
             candidate_count=0,
             regions=[{"id": "r1"}],
-            slot_quality_report={"pass": False, "issues": [{"type": "right_boundary_too_close_to_protected_text"}]},
+            slot_quality_report={"pass": False, "issues": [{"type": "target_roi_overlaps_protected_text"}]},
         )
         self.assertFalse(report["pass"])
         self.assertEqual(report["failed_gate"], "protected_text_guard")
@@ -43,6 +43,25 @@ class PreCandidateGatesTest(unittest.TestCase):
         self.assertTrue(report["statuses"]["field_roi_selection"]["pass"])
         self.assertTrue(report["statuses"]["slot_quality_gate"]["pass"])
         self.assertFalse(report["statuses"]["protected_text_guard"]["pass"])
+
+    def test_right_boundary_diagnostic_does_not_fail_pre_candidate_gate(self) -> None:
+        report = pre_candidate_gate_report(
+            candidate_count=3,
+            regions=[{"id": "r1"}],
+            slot_quality_report={
+                "pass": True,
+                "issues": [],
+                "length_change_report": {
+                    "right_boundary": {
+                        "diagnostic_only": True,
+                        "space_sufficient": False,
+                        "diagnostic_issue": {"type": "right_boundary_too_close_to_protected_text"},
+                    }
+                },
+            },
+        )
+        self.assertTrue(report["pass"])
+        self.assertIsNone(report["failed_gate"])
 
 
 if __name__ == "__main__":

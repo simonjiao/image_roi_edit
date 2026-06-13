@@ -1,8 +1,8 @@
 {
   "case_id": "case_c_longer_protected",
   "case_label": "Case C",
-  "description": "Longer replacement may expand ROI only under protected text limits and must solve shape or spacing before color tuning.",
-  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_c_source.png --instruction '姓名甲乙修改为丙丁戊' --output output/regression/case_c.png --profile photo_scan",
+  "description": "Longer replacement expands edit ROI without treating right-side protected distance as a pre-candidate blocker, then solves shape or spacing before color tuning.",
+  "command": ".venv/bin/python scripts/roi_image_edit_cli.py process --image tests/fixtures/regression_cases/case_c_source.png --instruction '姓名甲乙修改为丙丁戊' --output output/regression/case_c.png",
   "instruction": "姓名甲乙修改为丙丁戊",
   "profile": "photo_scan",
   "source_text": "甲乙",
@@ -38,22 +38,46 @@
   ],
   "expected_report_fields": [
     {
+      "path": "classification.class_key",
+      "equals": "photo_document.form_field_value_replace.cjk"
+    },
+    {
+      "path": "classification.length_change",
+      "equals": "longer"
+    },
+    {
+      "path": "classification.roi_policy",
+      "equals": "auto"
+    },
+    {
+      "path": "classification.internal_profile",
+      "equals": "photo_scan"
+    },
+    {
       "path": "slot_quality.length_change_report.length_change",
       "equals": "longer"
     },
     {
-      "path": "slot_quality.length_change_report.right_boundary.limited_by_protected_text",
+      "path": "slot_quality.length_change_report.right_boundary.diagnostic_only",
       "equals": true
     },
     {
       "path": "slot_quality.length_change_report.right_boundary.pass",
-      "equals": false
+      "equals": true
     },
     {
       "path": "slot_quality.issues",
-      "contains": {
+      "not_contains": {
         "type": "right_boundary_too_close_to_protected_text"
       }
+    },
+    {
+      "path": "plan.roi_plan.expansion_report.enabled",
+      "equals": true
+    },
+    {
+      "path": "candidate_count",
+      "greater_equal": 1
     },
     {
       "path": "stage_gate.blocking_stage",

@@ -330,8 +330,16 @@ def prompt_stage_context(report: dict[str, Any], profile: StageProfile | str | N
     blocking_stage = gate.get("blocking_stage")
     spec = stage_spec(str(blocking_stage)) if blocking_stage else None
     profile_summary = gate.get("profile_summary")
+    classification = report.get("classification") if isinstance(report, dict) else None
+    if not isinstance(classification, dict):
+        classification = {}
     return {
         "pipeline_profile": gate.get("profile"),
+        "classification": classification,
+        "class_key": classification.get("class_key") or (report.get("class_key") if isinstance(report, dict) else None),
+        "roi_policy": classification.get("roi_policy") or (report.get("roi_policy") if isinstance(report, dict) else None),
+        "internal_profile": classification.get("internal_profile") or gate.get("profile"),
+        "profile_source": classification.get("profile_source") or (report.get("profile_source") if isinstance(report, dict) else None),
         "profile_summary": profile_summary,
         "profile_constraints": {
             "enabled_stage_ids": (

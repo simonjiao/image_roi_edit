@@ -1177,7 +1177,7 @@ def expand_roi_for_longer_replacement(
 
     margin = 3
     left_limit = search_roi[0]
-    right_limit = search_roi[2]
+    right_limit = image_size[0]
     for box in protected_boxes:
         if not protected_box_overlaps_row(box, target_roi):
             continue
@@ -2592,7 +2592,11 @@ def build_region_plan(
     )
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
+    target_roi_before_length_policy = target_roi
+    expanded_edit_roi: tuple[int, int, int, int] | None = None
+    expansion_report: dict[str, Any] | None = None
     if target_count and source_count and target_count > source_count:
+        before_expand = target_roi
         target_roi = expand_roi_for_longer_replacement(
             target_roi,
             roi,
@@ -2602,7 +2606,7 @@ def build_region_plan(
             target_text=target_text,
             image_size=img.size,
         )
-        target_roi = clamp_box_to_container(target_roi, roi)
+        target_roi = clamp_box(target_roi, img.size)
         if slots and target_roi[1] <= roi[1] + 1:
             body_bounds = source_text_body_y_bounds(img, roi, slots)
             adjusted_y1 = max(
@@ -2611,6 +2615,22 @@ def build_region_plan(
             )
             if adjusted_y1 < target_roi[3]:
                 target_roi = (target_roi[0], adjusted_y1, target_roi[2], target_roi[3])
+        if target_roi != before_expand:
+            expanded_edit_roi = target_roi
+        expansion_report = {
+            "enabled": True,
+            "reason": "target_text_longer_than_source",
+            "original_edit_roi": list(before_expand),
+            "expanded_edit_roi": list(target_roi),
+            "expanded_beyond_search_roi": bool(
+                target_roi[0] < roi[0]
+                or target_roi[1] < roi[1]
+                or target_roi[2] > roi[2]
+                or target_roi[3] > roi[3]
+            ),
+            "width_delta_px": int((target_roi[2] - target_roi[0]) - (before_expand[2] - before_expand[0])),
+            "search_roi": list(roi),
+        }
     elif target_count and source_count and target_count < source_count:
         target_roi = expand_roi_for_shorter_replacement(
             target_roi,
@@ -2626,12 +2646,18 @@ def build_region_plan(
     slot_report = {
         **slot_report,
         "target_roi_after_length_policy": list(target_roi),
+        "target_roi_before_length_policy": list(target_roi_before_length_policy),
+        "expanded_edit_roi": list(expanded_edit_roi) if expanded_edit_roi else None,
+        "expansion_report": expansion_report,
         "source_reference_box_after_length_policy": list(source_reference_box),
         "protected_boxes": [list(box) for box in protected_boxes],
     }
     length_report = dict(slot_report.get("length_change_report") or {})
     if length_report:
+        length_report["target_roi_before_length_policy"] = list(target_roi_before_length_policy)
         length_report["target_roi_after_length_policy"] = list(target_roi)
+        length_report["expanded_edit_roi"] = list(expanded_edit_roi) if expanded_edit_roi else None
+        length_report["expansion_report"] = expansion_report
         length_report["source_reference_box_after_length_policy"] = list(source_reference_box)
         slot_report["length_change_report"] = length_report
     draw_mode = "auto"

@@ -36,6 +36,7 @@ from roi_image_edit.iterative_pipeline import (
 from roi_image_edit.prompt_assets import load_prompt, missing_prompt_names
 from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_auto_roi_overlay
 from roi_image_edit.failure_artifacts import failed_image_result
+from roi_image_edit.image_classification import classify_region_roi_policy, with_region_roi_policy
 
 from roi_image_edit.local_validation import (
     apply_local_acceptance_gate,
@@ -1784,6 +1785,7 @@ def process_region(
     pipeline_profile: str = "photo_scan",
     progress: ProgressCallback | None = None,
     field_context: dict[str, Any] | None = None,
+    classification: dict[str, Any] | None = None,
 ) -> tuple[Image.Image, Image.Image, list[dict[str, Any]], dict[str, Any], bool]:
     region_dir = run_dir / "regions" / re.sub(r"[^A-Za-z0-9_.-]+", "_", region_id or "region")
     region_dir.mkdir(parents=True, exist_ok=True)
@@ -1797,6 +1799,37 @@ def process_region(
         field_separator_text=str((field_context or {}).get("field_separator_text") or "") or None,
         protected_texts=tuple(str(item) for item in ((field_context or {}).get("protected_texts") or []) if str(item)),
     )
+    image_classification = classification or {}
+    region_roi_policy = classify_region_roi_policy(
+        image_classification=image_classification,
+        search_roi=plan.search_roi,
+        edit_roi=plan.target_roi,
+        source_text=source_text,
+    )
+    region_classification = with_region_roi_policy(
+        image_classification,
+        roi_policy=region_roi_policy,
+        internal_profile=pipeline_profile,
+    )
+    pipeline_profile = str(region_classification.get("internal_profile") or pipeline_profile)
+    length_report = (
+        plan.slot_quality_report.get("length_change_report")
+        if isinstance(plan.slot_quality_report, dict)
+        else {}
+    )
+    if not isinstance(length_report, dict):
+        length_report = {}
+    roi_plan = {
+        "search_roi": list(plan.search_roi),
+        "edit_roi": list(plan.target_roi),
+        "expanded_edit_roi": length_report.get("expanded_edit_roi"),
+        "target_roi_before_length_policy": length_report.get("target_roi_before_length_policy"),
+        "target_roi_after_length_policy": length_report.get("target_roi_after_length_policy") or list(plan.target_roi),
+        "expansion_report": length_report.get("expansion_report"),
+        "roi_policy": region_roi_policy,
+        "source_slot_count": len(plan.slot_boxes),
+        "target_slot_count": len(text_chars(target_text)),
+    }
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
     slot_report = plan.slot_quality_report or {}
@@ -1807,8 +1840,19 @@ def process_region(
     )
     slot_quality_report_path = region_dir / "slot_quality_report.json"
     pre_candidate_gate_report_path = region_dir / "pre_candidate_gate_report.json"
+    roi_plan_report_path = region_dir / "roi_plan_report.json"
     write_json(slot_quality_report_path, slot_report)
     write_json(pre_candidate_gate_report_path, pre_candidate_report)
+    write_json(
+        roi_plan_report_path,
+        {
+            **roi_plan,
+            "classification": region_classification,
+            "class_key": region_classification.get("class_key"),
+            "internal_profile": region_classification.get("internal_profile"),
+            "profile_source": region_classification.get("profile_source"),
+        },
+    )
     if source_count and not slot_report.get("pass", False):
         rejected_compare_path = region_dir / "slot_quality_rejected_compare.png"
         compare_region_preview(original, original, roi).save(rejected_compare_path)
@@ -1818,6 +1862,12 @@ def process_region(
                 {
                     "region_id": region_id,
                     "pipeline_profile": pipeline_profile,
+                    "classification": region_classification,
+                    "class_key": region_classification.get("class_key"),
+                    "roi_policy": region_classification.get("roi_policy"),
+                    "internal_profile": region_classification.get("internal_profile"),
+                    "profile_source": region_classification.get("profile_source"),
+                    "roi_plan": roi_plan,
                     "candidate_count": 0,
                     "failed_gate": pre_candidate_report["failed_gate"],
                     "pre_candidate_gate_report": pre_candidate_report,
@@ -1828,6 +1878,12 @@ def process_region(
                 {
                     "region_id": region_id,
                     "pipeline_profile": pipeline_profile,
+                    "classification": region_classification,
+                    "class_key": region_classification.get("class_key"),
+                    "roi_policy": region_classification.get("roi_policy"),
+                    "internal_profile": region_classification.get("internal_profile"),
+                    "profile_source": region_classification.get("profile_source"),
+                    "roi_plan": roi_plan,
                     "blocking_stage": "hard_boundary",
                     "slot_quality_report": slot_report,
                     "pre_candidate_gate_report": pre_candidate_report,
@@ -1845,6 +1901,13 @@ def process_region(
                 "protected_texts": list(plan.protected_texts),
                 "draw_mode": plan.draw_mode,
                 "pipeline_profile": pipeline_profile,
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
+                "profile_source": region_classification.get("profile_source"),
+                "roi_plan": roi_plan,
+                "expanded_edit_roi": roi_plan.get("expanded_edit_roi"),
                 "placement_strategy": plan.placement_strategy,
                 "placement_strategy_reason": plan.placement_strategy_reason,
                 "slot_quality_report": slot_report,
@@ -1899,6 +1962,7 @@ def process_region(
                 "slot_quality_report": str(slot_quality_report_path),
                 "pre_candidate_gate_report": str(pre_candidate_gate_report_path),
                 "display_image_is_candidate": True,
+                "roi_plan_report": str(roi_plan_report_path),
             },
             "rejected_fonts": [],
         }
@@ -2123,6 +2187,13 @@ def process_region(
                 "region_id": region_id,
                 "source_text": source_text,
                 "target_text": target_text,
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
+                "profile_source": region_classification.get("profile_source"),
+                "pipeline_profile": pipeline_profile,
+                "roi_plan": roi_plan,
                 "candidate_count": len(params_list),
             },
         )
@@ -2136,6 +2207,12 @@ def process_region(
             font_style_reference,
             pipeline_profile=pipeline_profile,
         )
+        report["classification"] = region_classification
+        report["class_key"] = region_classification.get("class_key")
+        report["roi_policy"] = region_classification.get("roi_policy")
+        report["internal_profile"] = region_classification.get("internal_profile")
+        report["profile_source"] = region_classification.get("profile_source")
+        report["roi_plan"] = roi_plan
         score = region_candidate_score(original, candidate, plan, report)
         if not report_strict_pass(report):
             score += 10000.0
@@ -2159,6 +2236,12 @@ def process_region(
                 "region_id": region_id,
                 "rendered": len(rendered),
                 "best_score": round(float(rendered[0][3]), 3) if rendered else None,
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
+                "profile_source": region_classification.get("profile_source"),
+                "roi_plan": roi_plan,
                 "stage_evidence": {
                     "summary": stage_evidence.get("summary"),
                     "available_stages": [
@@ -2198,6 +2281,12 @@ def process_region(
             font_style_reference,
             pipeline_profile=pipeline_profile,
         )
+        best_report["classification"] = region_classification
+        best_report["class_key"] = region_classification.get("class_key")
+        best_report["roi_policy"] = region_classification.get("roi_policy")
+        best_report["internal_profile"] = region_classification.get("internal_profile")
+        best_report["profile_source"] = region_classification.get("profile_source")
+        best_report["roi_plan"] = roi_plan
         best_score = region_candidate_score(original, best_image, plan, best_report)
     else:
         best_params, best_image, best_report, best_score = rendered[0]
@@ -2225,6 +2314,10 @@ def process_region(
                 "score": preview.get("score"),
                 "blocking_stage": preview.get("blocking_stage"),
                 "stage_severity": preview.get("stage_severity"),
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
                 "selection_reason": preview.get("selected_reason"),
                 "patcher_source": preview.get("patcher_source"),
                 "optimization_policy": preview.get("optimization_policy")
@@ -2270,6 +2363,10 @@ def process_region(
                 ),
                 "model_suggestions": [],
                 "patch": {},
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
                 **candidate_trace_summary(report),
                 "dataUrl": image_to_data_url(preview),
                 "metrics": {
@@ -2318,6 +2415,13 @@ def process_region(
                 "protected_texts": list(plan.protected_texts),
                 "draw_mode": plan.draw_mode,
                 "pipeline_profile": pipeline_profile,
+                "classification": region_classification,
+                "class_key": region_classification.get("class_key"),
+                "roi_policy": region_classification.get("roi_policy"),
+                "internal_profile": region_classification.get("internal_profile"),
+                "profile_source": region_classification.get("profile_source"),
+                "roi_plan": roi_plan,
+                "expanded_edit_roi": roi_plan.get("expanded_edit_roi"),
                 "stage_status": (best_report.get("stage_gate") or {}).get("stage_status"),
                 "placement_strategy": plan.placement_strategy,
                 "placement_strategy_reason": plan.placement_strategy_reason,
@@ -2346,6 +2450,7 @@ def process_region(
                 "selected_compare": str(selected_compare_path),
                 "slot_quality_report": str(slot_quality_report_path),
                 "pre_candidate_gate_report": str(pre_candidate_gate_report_path),
+                "roi_plan_report": str(roi_plan_report_path),
                 "stage_evidence": stage_evidence,
                 "display_image_is_candidate": not accepted,
             },

@@ -201,7 +201,7 @@ class SlotQualityTest(unittest.TestCase):
         self.assertEqual(report["actual_count"], 1)
         self.assertIn("slot_count_too_low", {issue["type"] for issue in report["issues"]})
 
-    def test_longer_replacement_right_boundary_blocks_protected_text_collision(self) -> None:
+    def test_longer_replacement_right_boundary_is_diagnostic_not_pre_candidate_blocker(self) -> None:
         slots = (slot(10), slot(26))
         report = slot_quality_report(
             image_with_slots(slots),
@@ -214,21 +214,22 @@ class SlotQualityTest(unittest.TestCase):
         length = report["length_change_report"]
         boundary = length["right_boundary"]
         issue_types = {issue["type"] for issue in report["issues"]}
-        self.assertFalse(report["pass"])
+        self.assertTrue(report["pass"])
         self.assertEqual(length["length_change"], "longer")
         self.assertTrue(boundary["enabled"])
         self.assertTrue(boundary["limited_by_protected_text"])
-        self.assertFalse(boundary["pass"])
+        self.assertTrue(boundary["pass"])
+        self.assertFalse(boundary["space_sufficient"])
+        self.assertTrue(boundary["diagnostic_only"])
         self.assertEqual(boundary["roi_right_edge"], 72)
         self.assertEqual(boundary["minimum_safe_gap_px"], 3)
         self.assertEqual(boundary["protected_gap_px"], 2)
         self.assertEqual(boundary["protected_distances_px"], [2])
         self.assertEqual(boundary["protected_right_boxes"], [[38, 9, 54, 25]])
         self.assertLess(boundary["available_right_px"], boundary["estimated_extra_width"])
-        boundary_issues = [issue for issue in report["issues"] if issue["type"] == "right_boundary_too_close_to_protected_text"]
-        self.assertEqual(len(boundary_issues), 1)
-        self.assertEqual(boundary_issues[0]["minimum_safe_gap_px"], 3)
-        self.assertIn("right_boundary_too_close_to_protected_text", issue_types)
+        self.assertEqual(boundary["diagnostic_issue"]["minimum_safe_gap_px"], 3)
+        self.assertEqual(boundary["diagnostic_issue"]["blocking"], False)
+        self.assertNotIn("right_boundary_too_close_to_protected_text", issue_types)
 
     def test_slot_overlapping_protected_text_is_a_gate_failure(self) -> None:
         slots = (slot(10),)

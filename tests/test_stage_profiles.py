@@ -8,6 +8,7 @@ from roi_image_edit.cli import build_parser
 from roi_image_edit.local_validation import apply_local_acceptance_gate
 from roi_image_edit.run_artifacts import result_audit_payload
 from roi_image_edit.stage_profiles import (
+    resolve_internal_stage_profile,
     resolve_stage_profile,
     stage_profile,
     stage_profile_choices,
@@ -190,21 +191,26 @@ class StageProfilesTest(unittest.TestCase):
         self.assertEqual(resolution["requested_profile"], "clean_digital")
         self.assertEqual(resolution["suggested_profile"], "photo_scan")
 
-    def test_explicit_profile_resolution_is_preserved_in_result_audit(self) -> None:
-        resolution = resolve_stage_profile("clean_digital", "photo_scan")
+    def test_internal_profile_resolution_is_preserved_in_result_audit(self) -> None:
+        resolution = resolve_internal_stage_profile(
+            {
+                "class_key": "clean_digital.numeric_or_date_replace",
+                "internal_profile": "clean_digital",
+                "profile_source": "classification",
+            }
+        )
         audit = result_audit_payload(
             {
                 "ok": True,
                 "runDir": "output/web/run1",
-                "profile": resolution["id"],
                 "profileResolution": resolution,
                 "images": [],
             }
         )
-        self.assertEqual(audit["profile"], "clean_digital")
-        self.assertEqual(audit["profileResolution"]["source"], "explicit_request")
-        self.assertEqual(audit["profileResolution"]["requested_profile"], "clean_digital")
-        self.assertEqual(audit["profileResolution"]["suggested_profile"], "photo_scan")
+        self.assertNotIn("profile", audit)
+        self.assertEqual(audit["profileResolution"]["id"], "clean_digital")
+        self.assertEqual(audit["profileResolution"]["source"], "classification")
+        self.assertEqual(audit["profileResolution"]["profile_source"], "classification")
 
     def test_same_image_profile_matrix_records_stage_order_difference(self) -> None:
         def audit_for(profile_id: str) -> dict:
@@ -213,8 +219,9 @@ class StageProfilesTest(unittest.TestCase):
                 {
                     "ok": True,
                     "runDir": f"output/web/{profile_id}",
-                    "profile": profile_id,
-                    "profileResolution": resolve_stage_profile(profile_id, None),
+                    "profileResolution": resolve_internal_stage_profile(
+                        {"internal_profile": profile_id, "profile_source": "classification"}
+                    ),
                     "images": [
                         {
                             "id": "same-image",
@@ -251,7 +258,7 @@ class StageProfilesTest(unittest.TestCase):
         self.assertIn("photo_texture", photo_order)
         self.assertNotIn("photo_texture", clean_order)
         self.assertEqual(clean["profileResolution"]["id"], "clean_digital")
-        self.assertEqual(clean["profileResolution"]["source"], "explicit_request")
+        self.assertEqual(clean["profileResolution"]["source"], "classification")
         self.assertEqual(
             clean["images"][0]["candidates"][0]["stage_context"]["stage_order"],
             clean_order,

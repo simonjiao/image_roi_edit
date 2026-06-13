@@ -35,6 +35,14 @@ def rejected_region_preview_candidate(
         "label": "拒绝任务对比图",
         "dataUrl": image_to_data_url(preview),
         "pipeline_profile": pipeline_profile,
+        "classification": plan.get("classification"),
+        "class_key": plan.get("class_key") or (plan.get("classification") or {}).get("class_key")
+        if isinstance(plan.get("classification"), dict)
+        else plan.get("class_key"),
+        "roi_policy": plan.get("roi_policy") or (plan.get("classification") or {}).get("roi_policy")
+        if isinstance(plan.get("classification"), dict)
+        else plan.get("roi_policy"),
+        "internal_profile": plan.get("internal_profile") or pipeline_profile,
         "blocking_stage": trace.get("final_blocking_stage") or "hard_boundary",
         "stage_severity": trace.get("final_stage_severity"),
         "score": None,
