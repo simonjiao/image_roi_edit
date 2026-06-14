@@ -21,6 +21,12 @@ English README: [`README.md`](README.md).
 修改 ROI 流水线时，如果工作流、硬门槛、迭代策略或视觉验收标准发生变化，
 需要同步更新这份规则文档。
 
+## 强化状态
+
+当前 workflow hardening 状态记录在
+[`docs/workflow_checklist.md`](docs/workflow_checklist.md)。
+当前行为必须以 checklist 和每个关闭条目记录的测试命令为准。
+
 ## 安装
 
 ```bash

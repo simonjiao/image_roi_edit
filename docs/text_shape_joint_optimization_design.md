@@ -267,7 +267,7 @@ shape_change_large =
 | 黑灰门禁 | 已覆盖：分层执行、四段灰度、核心过黑/过浅、同一行邻字仲裁、形态参数保护和黑灰剪枝原因均已有测试。 | 已覆盖：[黑灰比例搜索](workflow_checklist.md#i-黑灰比例搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
 | 照片质感 | 已覆盖：执行顺序、允许参数、照片质感指标、前置阶段回退检查、issue types 和剪枝原因均已有测试。 | 已覆盖：[照片质感搜索](workflow_checklist.md#j-照片质感搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
 | 背景处理 | 已覆盖：前置清除、后置融合、旧槽位残留和局部融合优先级已有测试。 | 已覆盖：[背景处理拆分](workflow_checklist.md#k-背景处理拆分)。 |
-| 视觉模型 | 已覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止和不可转化建议记录均已有测试。 | 已覆盖：[三层流程边界](workflow_checklist.md#a-三层流程边界)、[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)、[反模式门禁](workflow_checklist.md#r-反模式门禁)。 |
+| 视觉模型 | 部分覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止和 forced seed 审计已覆盖；`blocking_stage=null` 但 Vision fail 时的 `vision_target`、重复视觉问题升级、组合 recipe 和候选选择惩罚仍未关闭。 | 已覆盖：[三层流程边界](workflow_checklist.md#a-三层流程边界)、[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)、[反模式门禁](workflow_checklist.md#r-反模式门禁)；未完成：[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)。 |
 
 ## 分层联合优化设计
 
@@ -391,6 +391,21 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 }
 ```
 
+### 视觉诊断目标化
+
+当本地五阶段都通过或 `blocking_stage=null`，但最终视觉验收仍然 `revise` / `marginal`，
+不能把这类失败留成纯文本说明。流程应生成 `vision_disagreement` 和 `vision_target`：
+
+1. `vision_target.stage` 必须映射到五个公开 stage 之一，不能新增公开 stage。
+2. `vision_target.axes` 记录视觉问题轴，例如 `too_sharp`、`patch_visible`、`slightly_dark`、`white_specks`。
+3. `vision_target.bounds` 只记录方向和安全区间，例如小幅增加 blur、限制 edge breakup、禁止加深核心，不记录必须照抄的单点参数。
+4. 同一轴连续出现两轮以上时，候选选择器必须把它作为受限目标参与评分。
+5. 候选若向相反方向变化，必须在 rejection table 或 selection audit 中记录 penalty。
+6. 如果目标候选被本地约束拒绝，必须记录 stage filter、constraint、prior-stage regression 或 hard boundary 的具体原因。
+
+这条机制补的是“Vision 已经发现问题，但本地选择器没有跟随”的缺口。它不允许 Vision
+覆盖本地 hard gate，也不允许恢复跨阶段全量搜索。
+
 ### 受控跨阶段逃逸
 
 默认仍禁止跨阶段混合调参。只有在临界失败时，允许一个显式标记的 escape 族：
@@ -483,6 +498,7 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 - 增加 `near_threshold_overblack_micro_tuning`，与现有偏浅 micro tuning 对称。
 - micro tuning 候选不受常规 ink-gray top-N 轴优先剪枝吞掉，必须单独计数和审计。
 - 可转换的模型 `suggested_patch` / `parameter_suggestions` 必须生成 forced seed candidate。
+- 本地阶段通过但视觉终检失败时，必须生成 `vision_disagreement`、映射到现有 stage 的 `vision_target`，并让候选选择器记录 alignment/penalty。
 - 每轮 revision 必须输出 `candidate_rejection_table`，覆盖所有被渲染但不可选的候选。
 - `no_selectable_revision_candidate` 不能只写 stop reason；必须说明每个候选为什么不可选。
 - 增加 `controlled_escape` 候选族，但只能用于接近通过的当前阻塞阶段，并必须通过 prior-stage regression。
@@ -501,6 +517,7 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 - 失败也有足够中间产物供用户检查。
 - 近阈值过黑和近阈值偏浅都能进入 micro-search，并能证明该搜索没有改变字体、字号、位置、mask 或背景。
 - 每个可转换的视觉模型参数建议都能追溯到本地 forced seed candidate、去重记录或拒绝记录。
+- 本地 pass 但 Vision fail 的任务能生成 `vision_target`，并证明候选生成和选择已响应该目标或给出本地拒绝原因。
 - `no_selectable_revision_candidate` 必须伴随完整候选拒绝表，不能只靠停止原因解释失败。
 - 受控跨阶段逃逸只能在临界失败条件下启用，并且必须记录 primary/secondary stage、参数上限和 prior-stage regression。
 - 字数或复杂度增加的替换必须记录复杂度归一化阈值，且不能放宽 hard boundary。

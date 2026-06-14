@@ -70,11 +70,17 @@
 
 如果视觉模型给 `pass`，但本地 `blocking_stage != null`，最终仍必须 `revise`。
 
+如果本地 `blocking_stage == null` 或五个本地阶段全部通过，但视觉最终验收仍返回
+`revise` / `marginal` 并给出具体视觉问题，流程进入 `vision_disagreement` 状态。
+该状态不是第六个公开 stage，必须把视觉问题映射回现有五个 stage 之一，形成受限
+`vision_target`，再由本地候选生成、过滤、评分和拒绝诊断处理。
+
 ### 临界失败和模型建议不能只停在说明层
 
 视觉模型可以给出连续参数建议，但任何可转成本地 patch 或目标参数的建议都必须成为可审计的本地候选。
 如果建议被过滤、约束、去重或渲染后失败，运行产物必须记录失败原因；不能只把建议留在
-`final_acceptance_iterXX.json` 文本里。
+`final_acceptance_iterXX.json` 文本里。模型建议的落地分两层：单条参数建议生成
+`forced_model_seed` 或拒绝记录；重复出现的视觉问题生成 `vision_target`，参与下一轮候选评分。
 
 当本地失败只剩一个接近阈值的质量指标，例如 `ink_gray_balance` 下的
 `roi_core_too_black`、`changed_char_core_too_black` 或方向相反的近阈值偏浅问题时，
@@ -314,10 +320,11 @@ def filter_patch_by_stage(patch, stage_spec):
 视觉模型 prompt 应增加阶段顺序约束：
 
 1. 先判断当前 `blocking_stage` 是否真实存在。
-2. 只能针对当前 `blocking_stage` 给建议。
-3. 不能建议当前阶段禁止的参数。
-4. 如果它认为前置阶段已通过，必须说明依据。
-5. 如果建议 deliver，但本地 `blocking_stage` 不为空，本地仍改为 revise。
+2. 当 `blocking_stage` 存在时，只能针对当前 `blocking_stage` 给建议。
+3. 当本地 `blocking_stage` 不存在但视觉仍拒绝交付时，必须输出可映射到五个公开 stage 的 `vision_target_stage` 和依据。
+4. 不能建议当前阶段或映射目标阶段禁止的参数。
+5. 如果它认为前置阶段已通过，必须说明依据。
+6. 如果建议 deliver，但本地 `blocking_stage` 不为空，本地仍改为 revise。
 
 Prompt 输入应包含：
 

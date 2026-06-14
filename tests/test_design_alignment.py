@@ -70,7 +70,7 @@ class DesignAlignmentTest(unittest.TestCase):
             "黑灰门禁": "已覆盖",
             "照片质感": "已覆盖",
             "背景处理": "已覆盖",
-            "视觉模型": "已覆盖",
+            "视觉模型": "部分覆盖",
         }
         for ability, status in expected_status.items():
             matching = [row for row in rows if f"| {ability} |" in row]

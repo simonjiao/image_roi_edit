@@ -184,14 +184,18 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 2. 视觉模型可能把“黑、硬、淡、粗、细”的方向说反；本地指标必须能纠偏。
 3. 视觉模型返回的 JSON patch 只能作为建议，必须经过本地范围限制和硬校验。
 4. 当视觉模型要求 `opacity=0.86`、`blur=0.44` 等具体参数时，本地候选选择器应允许探索这些方向，但仍不能破坏硬指标。
-5. 如果视觉模型 `pass` 但本地发现深黑核心过量、灰边过多、ROI 外变化或字体风格失败，必须改成 `revise`。
-6. 如果视觉模型持续 `revise`，最终输出 rejected candidate，并保留每轮候选图和 `final_acceptance_iterXX.json`。
-7. 如果视觉模型在上一轮说过黑，而本地补丁把候选变得更黑，候选选择器必须惩罚这种回退；不能因为字体、字号或细化分支触发旧规则而覆盖当前视觉方向。
-8. 视觉模型给出的 `suggested_patch` 或 `parameter_suggestions` 只要能转换为本地参数，就必须生成至少一个 forced seed candidate。
+5. 如果本地 `blocking_stage=null` 或本地阶段全部通过，但视觉模型仍返回 `revise`/`marginal` 并指出具体问题，流程必须记录 `vision_disagreement`，把问题映射成现有五阶段之一的 `vision_target`；这不是第六个公开 stage。
+6. `vision_target` 只能表达方向和受限目标区间，不能把模型给出的单个参数值当作必须执行的最终参数。
+7. 如果视觉模型 `pass` 但本地发现深黑核心过量、灰边过多、ROI 外变化或字体风格失败，必须改成 `revise`。
+8. 如果视觉模型持续 `revise`，最终输出 rejected candidate，并保留每轮候选图、`final_acceptance_iterXX.json`、`vision_target` 和候选拒绝原因。
+9. 如果视觉模型在上一轮说过黑，而本地补丁把候选变得更黑，候选选择器必须惩罚这种回退；不能因为字体、字号或细化分支触发旧规则而覆盖当前视觉方向。
+10. 如果同一个视觉问题连续出现两轮以上，候选选择器必须把它升级为受限目标：朝该方向改善的候选应被优先比较，反方向候选必须记录惩罚或拒绝原因。
+11. 对 `too_sharp + patch_visible`、`too_dark + too_sharp`、`patch_visible + white_specks` 等组合问题，只允许使用有预算、有 primary/secondary stage 声明的组合候选，不能恢复全量跨阶段搜索。
+12. 视觉模型给出的 `suggested_patch` 或 `parameter_suggestions` 只要能转换为本地参数，就必须生成至少一个 forced seed candidate。
    - forced seed 可以被 stage filter、internal-strategy filter、constraint 或 prior-stage regression 拒绝，但拒绝必须写入 `revision_rounds[].forced_model_candidates` 或等价产物。
    - 如果模型建议被去重合并，应记录合并到哪个 candidate id；不能静默丢失。
-9. 视觉模型不能承担连续参数控制器职责。模型负责指出可见问题和候选偏好；本地 solver 负责把建议变成候选、评估指标、选择下一轮或解释为什么停止。
-10. 候选排序 prompt 和最终验收 prompt 不应要求模型同时完成审美排序、阶段仲裁和参数求解三件事；参数求解必须在本地报告中有确定性搜索和拒绝证据。
+13. 视觉模型不能承担连续参数控制器职责。模型负责指出可见问题和候选偏好；本地 solver 负责把建议变成候选、评估指标、选择下一轮或解释为什么停止。
+14. 候选排序 prompt 和最终验收 prompt 不应要求模型同时完成审美排序、阶段仲裁和参数求解三件事；参数求解必须在本地报告中有确定性搜索和拒绝证据。
 
 ## 调参规则
 
