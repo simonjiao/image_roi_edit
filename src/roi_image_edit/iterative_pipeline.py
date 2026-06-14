@@ -4,6 +4,7 @@ import argparse
 import base64
 import copy
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -272,6 +273,9 @@ class VisionClient:
         self.base_url = normalize_base_url(env.get("OPENAI_BASE_URL", "https://api.openai.com/v1"))
         self.model = env.get("OPENAI_JUDGE_MODEL") or env.get("OPENAI_MODEL") or "gpt-5.5"
         self.timeout = timeout
+        cache_flag = str(env.get("ROI_IMAGE_EDIT_VISION_CACHE", "1")).strip().lower()
+        self.cache_enabled = cache_flag not in {"0", "false", "no", "off"}
+        self.cache_dir = Path(env.get("ROI_IMAGE_EDIT_VISION_CACHE_DIR") or ".cache/roi_image_edit/vision")
         if not self.api_key:
             raise RuntimeError(f"OPENAI_API_KEY not found in {env_path}")
 
@@ -298,12 +302,20 @@ class VisionClient:
             "response_format": {"type": "json_object"},
         }
         audit_prompt_name = prompt_name or "unknown_prompt"
+        cache_key = self._cache_key(
+            prompt_name=audit_prompt_name,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            image_paths=image_paths,
+        )
 
         def write_audit(
             *,
             response_json: dict[str, Any] | None = None,
             error: str | None = None,
             fallback_used: bool = False,
+            cache_hit: bool = False,
+            elapsed_seconds: float | None = None,
         ) -> None:
             if audit_path is None:
                 return
@@ -317,26 +329,97 @@ class VisionClient:
                 response_json=response_json,
                 error=error,
                 fallback_used=fallback_used,
+                cache_hit=cache_hit,
+                cache_key=cache_key,
+                elapsed_seconds=elapsed_seconds,
             )
 
+        cached = self._read_cache(cache_key)
+        if cached is not None:
+            write_audit(response_json=cached, cache_hit=True, elapsed_seconds=0.0)
+            return copy.deepcopy(cached)
+
+        started_at = time.time()
         try:
             result = self._post_with_retry(payload)
-            write_audit(response_json=result)
+            self._write_cache(cache_key, result)
+            write_audit(response_json=result, elapsed_seconds=round(time.time() - started_at, 3))
             return result
         except RuntimeError as exc:
             if "response_format" not in str(exc) and "temperature" not in str(exc):
-                write_audit(error=str(exc))
+                write_audit(error=str(exc), elapsed_seconds=round(time.time() - started_at, 3))
                 raise
             fallback = copy.deepcopy(payload)
             fallback.pop("response_format", None)
             fallback.pop("temperature", None)
             try:
                 result = self._post_with_retry(fallback)
-                write_audit(response_json=result, fallback_used=True)
+                self._write_cache(cache_key, result)
+                write_audit(response_json=result, fallback_used=True, elapsed_seconds=round(time.time() - started_at, 3))
                 return result
             except RuntimeError as fallback_exc:
-                write_audit(error=str(fallback_exc), fallback_used=True)
+                write_audit(
+                    error=str(fallback_exc),
+                    fallback_used=True,
+                    elapsed_seconds=round(time.time() - started_at, 3),
+                )
                 raise
+
+    def _cache_key(
+        self,
+        *,
+        prompt_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        image_paths: list[Path],
+    ) -> str:
+        image_items: list[dict[str, Any]] = []
+        for path in image_paths:
+            digest = hashlib.sha256()
+            with Path(path).open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            image_items.append({"name": Path(path).name, "sha256": digest.hexdigest()})
+        request_identity = {
+            "schema_version": 1,
+            "base_url": getattr(self, "base_url", ""),
+            "model": getattr(self, "model", ""),
+            "prompt_name": prompt_name,
+            "system_prompt_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
+            "user_prompt_sha256": hashlib.sha256(user_prompt.encode("utf-8")).hexdigest(),
+            "images": image_items,
+        }
+        canonical = json.dumps(request_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _cache_path(self, cache_key: str) -> Path:
+        return Path(getattr(self, "cache_dir", Path(".cache/roi_image_edit/vision"))) / f"{cache_key}.json"
+
+    def _read_cache(self, cache_key: str) -> dict[str, Any] | None:
+        if not bool(getattr(self, "cache_enabled", False)):
+            return None
+        cache_path = self._cache_path(cache_key)
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        response = payload.get("response") if isinstance(payload, dict) else None
+        return copy.deepcopy(response) if isinstance(response, dict) else None
+
+    def _write_cache(self, cache_key: str, response: dict[str, Any]) -> None:
+        if not bool(getattr(self, "cache_enabled", False)):
+            return
+        cache_path = self._cache_path(cache_key)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "created_at_unix": time.time(),
+            "model": self.model,
+            "base_url": self.base_url,
+            "cache_key": cache_key,
+            "response": response,
+        }
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def _post_with_retry(self, payload: dict[str, Any]) -> dict[str, Any]:
         retry_markers = (

@@ -111,6 +111,9 @@ def write_vision_prompt_audit(
     response_json: dict[str, Any] | None = None,
     error: str | None = None,
     fallback_used: bool = False,
+    cache_hit: bool = False,
+    cache_key: str | None = None,
+    elapsed_seconds: float | None = None,
     save_prompt_text: bool = True,
 ) -> dict[str, Any]:
     audit_path = Path(audit_path)
@@ -146,6 +149,9 @@ def write_vision_prompt_audit(
             "response_format_json_requested": True,
             "temperature_zero_requested": True,
             "fallback_without_response_format_or_temperature": bool(fallback_used),
+            "cache_hit": bool(cache_hit),
+            "cache_key": cache_key,
+            "elapsed_seconds": elapsed_seconds,
         },
         "response": response_audit(response_json, error),
     }

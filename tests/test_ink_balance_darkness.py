@@ -97,7 +97,7 @@ class InkBalanceDarknessTest(unittest.TestCase):
                     "old_lt55_pixels": 233,
                     "lt55_delta": 5,
                     "old_lt90_pixels": 428,
-                    "lt90_delta": 371,
+                    "lt90_delta": 300,
                     "old_lt55_share_of_lt165": 0.1215,
                     "new_lt55_share_of_lt165": 0.1100,
                 }
@@ -106,26 +106,31 @@ class InkBalanceDarknessTest(unittest.TestCase):
 
         self.assertEqual(local_ink_balance_issues(report), [])
 
-    def test_longer_replacement_allows_sharp_alpha_candidate_near_core_cap(self) -> None:
+    def test_longer_replacement_flags_deep_core_overblack_from_user_rejected_final(self) -> None:
         report = {
-            "params": {"alpha_contrast": 0.30, "blur": 0.36},
+            "params": {"alpha_contrast": 0.30, "blur": 0.48},
             "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
             "reference_profile": {"dynamic_ink": {}},
-            "strict_gate": {"text_complexity_ratio": 1.4594},
+            "strict_gate": {"text_complexity_ratio": 1.4455},
             "char_gray_band_metrics": {"enabled": False},
             "strict_visual_metrics": {
                 "bands": {
                     "old_lt55_pixels": 233,
-                    "lt55_delta": 85,
+                    "lt55_delta": -33,
                     "old_lt90_pixels": 428,
-                    "lt90_delta": 379,
+                    "lt90_delta": 352,
                     "old_lt55_share_of_lt165": 0.1215,
-                    "new_lt55_share_of_lt165": 0.1603,
+                    "new_lt55_share_of_lt165": 0.0951,
                 }
             },
         }
 
-        self.assertEqual(local_ink_balance_issues(report), [])
+        issues = local_ink_balance_issues(report)
+
+        self.assertEqual(issues[0]["type"], "longer_mid_gray_body_too_black")
+        self.assertEqual(issues[0]["lt90_delta"], 352)
+        self.assertEqual(issues[0]["expected_lt90_delta"], 214)
+        self.assertLess(issues[0]["limit"], issues[0]["actual"])
 
     def test_longer_replacement_still_flags_sharp_alpha_candidate_well_over_core_cap(self) -> None:
         report = {

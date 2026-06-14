@@ -695,7 +695,7 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
             text_count_ratio = max(1.0, target_slot_count / float(source_slot_count))
             expected_lt90_delta = old_lt90 * (text_count_ratio - 1.0)
             excess_lt90_delta = lt90_delta - expected_lt90_delta
-            excess_lt90_limit = max(160.0, old_lt90 * 0.42)
+            excess_lt90_limit = max(96.0, old_lt90 * 0.26)
             if excess_lt90_delta > excess_lt90_limit:
                 issues.append(
                     {
