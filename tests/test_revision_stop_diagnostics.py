@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from roi_image_edit.region_processing import build_candidate_rejection_table
+from PIL import Image, ImageDraw
+
+from roi_image_edit.region_processing import (
+    build_candidate_rejection_table,
+    revision_visual_delta_report,
+)
 
 
 class RevisionStopDiagnosticsTest(unittest.TestCase):
@@ -91,6 +96,29 @@ class RevisionStopDiagnosticsTest(unittest.TestCase):
         self.assertEqual(entry["candidate_id"], "")
         self.assertEqual(entry["origin"], "unknown")
         self.assertIn(entry["rejection_reason"], ["strict_gate_failed", "selectable"])
+
+    def test_revision_visual_delta_marks_near_identical_roi_as_stalled(self) -> None:
+        before = Image.new("RGB", (80, 40), "white")
+        after = before.copy()
+        draw = ImageDraw.Draw(after)
+        draw.point((20, 15), fill=(253, 253, 253))
+
+        report = revision_visual_delta_report(before, after, [10, 10, 50, 30])
+
+        self.assertTrue(report["stalled"])
+        self.assertLess(report["mae"], 0.08)
+        self.assertLess(report["changed_ratio_gt2"], 0.01)
+
+    def test_revision_visual_delta_keeps_visible_roi_change_running(self) -> None:
+        before = Image.new("RGB", (80, 40), "white")
+        after = before.copy()
+        draw = ImageDraw.Draw(after)
+        draw.rectangle((20, 15, 35, 25), fill=(80, 80, 80))
+
+        report = revision_visual_delta_report(before, after, [10, 10, 50, 30])
+
+        self.assertFalse(report["stalled"])
+        self.assertGreater(report["changed_ratio_gt2"], 0.05)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from roi_image_edit.iterative_pipeline import (
     TextRun,
     char_alignment_metrics,
     char_gray_band_metrics,
+    char_pose_metrics,
     target_char_slots_for_plan,
 )
 from roi_image_edit.local_validation import (
@@ -305,6 +306,32 @@ class ShapeScoringTest(unittest.TestCase):
         self.assertEqual(third["slot_box"], [50, 10, 66, 28])
         self.assertEqual(third["reference_slot_box"], [31, 10, 47, 28])
         self.assertEqual(third["delta"]["lt165"], 0)
+
+    def test_longer_replacement_pose_uses_previous_source_slot_for_extra_char(self) -> None:
+        plan_value = longer_append_plan()
+        image = Image.new("RGB", (96, 44), (200, 200, 200))
+
+        def fake_shear(_gray, slot, *, threshold):
+            if slot.x1 == 12:
+                return 0.08
+            if slot.x1 == 31:
+                return 0.05
+            return None
+
+        with patch("roi_image_edit.iterative_pipeline.estimate_slot_edge_shear", side_effect=fake_shear):
+            metrics = char_pose_metrics(image, plan_value, params())
+
+        self.assertTrue(metrics["enabled"])
+        self.assertEqual(len(metrics["per_char"]), 3)
+        third = metrics["per_char"][2]
+        self.assertIsNone(third["source_char"])
+        self.assertEqual(third["target_char"], "戊")
+        self.assertTrue(third["changed"])
+        self.assertEqual(third["slot_box"], [50, 10, 66, 28])
+        self.assertEqual(third["source_slot_index"], 1)
+        self.assertEqual(third["source_slot_box"], [31, 10, 47, 28])
+        self.assertEqual(third["reference_shear"], 0.0575)
+        self.assertEqual(third["applied_shear"], 0.0483)
 
 
 if __name__ == "__main__":

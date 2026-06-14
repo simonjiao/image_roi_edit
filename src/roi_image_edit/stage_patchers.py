@@ -35,6 +35,7 @@ from roi_image_edit.stage_policy import (
     patch_keys_for_steps,
 )
 from roi_image_edit.stage_profiles import stage_profile
+from roi_image_edit.shape_arbitration import acceptance_shape_arbitration_advance_stage
 from roi_image_edit.stages import stage_gate_for_report
 
 
@@ -146,11 +147,11 @@ def patch_keys_declared_for_stage(stage_id: str, patch: dict[str, Any] | None) -
 def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
     if not isinstance(acceptance, dict):
         return None
-    stage = str(acceptance.get("blocking_stage") or "").strip()
-    if stage in STAGE_ORDER:
-        return stage
     findings = acceptance.get("visual_findings")
     if isinstance(findings, dict):
+        stroke_weight = str(findings.get("stroke_weight") or "").strip().lower()
+        if stroke_weight in {"too_bold", "too_thin", "slightly_bold", "slightly_thin"}:
+            return "text_shape"
         background = str(findings.get("background") or "").strip().lower()
         if background in {"patch_visible", "ghost_visible", "seam_visible", "too_smooth"}:
             return "background_cleanup"
@@ -158,8 +159,7 @@ def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
         if sharpness in {"too_sharp", "too_blurry"}:
             return "photo_texture"
         darkness = str(findings.get("darkness") or "").strip().lower()
-        stroke_weight = str(findings.get("stroke_weight") or "").strip().lower()
-        if darkness in {"too_dark", "too_light"} or stroke_weight in {"too_bold", "too_thin", "slightly_bold"}:
+        if darkness in {"too_dark", "too_light"}:
             return "ink_gray_balance"
         text_shape_values = {
             str(findings.get("char_positions") or "").strip().lower(),
@@ -170,6 +170,9 @@ def acceptance_blocking_stage(acceptance: dict[str, Any] | None) -> str | None:
         }
         if any(value and value not in {"ok", "pass"} for value in text_shape_values):
             return "text_shape"
+    stage = str(acceptance.get("blocking_stage") or "").strip()
+    if stage in STAGE_ORDER:
+        return stage
     return None
 
 
@@ -180,9 +183,14 @@ def effective_blocking_stage(
     local_stage = None
     if isinstance(report, dict):
         local_stage = (stage_gate_for_report(report) or {}).get("blocking_stage")
+    visual_stage = acceptance_blocking_stage(acceptance)
+    arbitrated_stage = acceptance_shape_arbitration_advance_stage(acceptance)
+    if local_stage == "text_shape" and arbitrated_stage:
+        return arbitrated_stage, False
+    if visual_stage == "text_shape" and local_stage in {None, "ink_gray_balance", "photo_texture", "background_cleanup"}:
+        return "text_shape", False
     if local_stage:
         return str(local_stage), True
-    visual_stage = acceptance_blocking_stage(acceptance)
     return visual_stage, False
 
 
@@ -673,6 +681,54 @@ def alignment_centering_patches(report: dict[str, Any] | None) -> list[dict[str,
     return []
 
 
+def stroke_weight_shape_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
+    if stroke_weight in {"too_bold", "slightly_bold"}:
+        return [
+            {"font_size_delta": -1},
+            {"stroke_opacity_delta": -0.03},
+            {"ink_gain_delta": -0.03},
+            {"font_size_delta": -1, "stroke_opacity_delta": -0.02},
+            {"font_size_delta": -1, "ink_gain_delta": -0.02},
+            {"stroke_opacity_delta": -0.04, "ink_gain_delta": -0.02},
+        ]
+    if stroke_weight in {"too_thin", "slightly_thin"}:
+        return [
+            {"font_size_delta": 1},
+            {"stroke_opacity_delta": 0.03},
+            {"ink_gain_delta": 0.03},
+            {"font_size_delta": 1, "stroke_opacity_delta": 0.02},
+            {"font_size_delta": 1, "ink_gain_delta": 0.02},
+            {"stroke_opacity_delta": 0.04, "ink_gain_delta": 0.02},
+        ]
+    return []
+
+
+def keep_patch_for_stroke_weight_shape(patch: dict[str, Any], acceptance: dict[str, Any]) -> bool:
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
+    if stroke_weight not in {"too_bold", "slightly_bold", "too_thin", "slightly_thin"}:
+        return False
+    allowed_keys = {"font_size_delta", "stroke_opacity_delta", "ink_gain_delta", "text_dx_delta", "text_dy_delta"}
+    patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
+    if not patch_keys or patch_keys - allowed_keys:
+        return False
+    try:
+        font_size_delta = int(round(float(patch.get("font_size_delta") or 0.0)))
+        stroke_opacity_delta = float(patch.get("stroke_opacity_delta") or 0.0)
+        ink_gain_delta = float(patch.get("ink_gain_delta") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if stroke_weight in {"too_bold", "slightly_bold"}:
+        return font_size_delta < 0 or stroke_opacity_delta < 0.0 or ink_gain_delta < 0.0
+    return font_size_delta > 0 or stroke_opacity_delta > 0.0 or ink_gain_delta > 0.0
+
+
 def neighbor_outer_gray_cleanup_patches() -> list[dict[str, Any]]:
     return [
         {
@@ -975,6 +1031,60 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
     }
     patches: list[dict[str, Any]] = []
     has_white_ghost = "background_white_ghost_residual" in issue_types
+    has_post_blend_dark_shadow = "post_blend_dark_shadow" in issue_types
+    has_post_blend_ghost = has_post_blend_dark_shadow or "post_blend_white_ghost" in issue_types
+    has_post_blend_patch = "post_blend_patch_visible" in issue_types or "post_blend_roi_edge_seam" in issue_types
+    if has_post_blend_dark_shadow:
+        patches.extend(
+            [
+                {
+                    "mask_threshold_delta": 8,
+                    "inpaint_radius_delta": 1,
+                    "jpeg_quality_delta": 2,
+                },
+                {
+                    "mask_threshold_delta": 10,
+                    "photo_noise_delta": 0.018,
+                    "edge_breakup_delta": 0.006,
+                    "jpeg_quality_delta": -4,
+                },
+                {
+                    "mask_threshold_delta": 12,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.006,
+                    "edge_breakup_delta": -0.004,
+                    "jpeg_quality_delta": 4,
+                },
+                {
+                    "mask_threshold_delta": 16,
+                    "mask_dilate_iterations_delta": 1,
+                    "inpaint_radius_delta": 1,
+                    "jpeg_quality_delta": 6,
+                },
+                {
+                    "mask_threshold_delta": 8,
+                    "inpaint_radius_delta": 1,
+                    "photo_noise_delta": -0.004,
+                    "jpeg_quality_delta": 3,
+                },
+                {
+                    "mask_threshold_delta": 10,
+                    "mask_dilate_iterations_delta": 1,
+                    "photo_noise_delta": -0.008,
+                    "edge_breakup_delta": -0.004,
+                    "jpeg_quality_delta": 5,
+                },
+            ]
+        )
+    elif has_post_blend_patch:
+        patches.extend(
+            [
+                {"mask_threshold_delta": 10, "mask_dilate_iterations_delta": 1, "inpaint_radius_delta": 1},
+                {"mask_threshold_delta": 14, "inpaint_radius_delta": 1, "jpeg_quality_delta": 4},
+                {"mask_threshold_delta": 8, "mask_dilate_iterations_delta": 1, "photo_noise_delta": -0.004},
+            ]
+        )
     if has_white_ghost:
         patches.extend(
             [
@@ -1021,6 +1131,7 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
         )
     if (
         not has_white_ghost
+        and not has_post_blend_ghost
         and (
             "background_fill_too_smooth" in issue_types
             or "background_fill_low_texture_variance" in issue_types
@@ -1059,6 +1170,52 @@ def visual_background_cleanup_patches(acceptance: dict[str, Any]) -> list[dict[s
         findings = {}
     sharpness = str(findings.get("sharpness") or "").strip().lower()
     background = str(findings.get("background") or "").strip().lower()
+    darkness = str(findings.get("darkness") or "").strip().lower()
+    if background == "ghost_visible":
+        patches = [
+            {
+                "mask_threshold_delta": 8,
+                "inpaint_radius_delta": 1,
+                "jpeg_quality_delta": 2,
+            },
+            {
+                "mask_threshold_delta": 10,
+                "photo_noise_delta": 0.018,
+                "edge_breakup_delta": 0.006,
+                "jpeg_quality_delta": -4,
+            },
+            {
+                "mask_threshold_delta": 12,
+                "mask_dilate_iterations_delta": 1,
+                "inpaint_radius_delta": 1,
+                "photo_noise_delta": -0.006,
+                "edge_breakup_delta": -0.004,
+                "jpeg_quality_delta": 4,
+            },
+            {
+                "mask_threshold_delta": 16,
+                "mask_dilate_iterations_delta": 1,
+                "inpaint_radius_delta": 1,
+                "jpeg_quality_delta": 6,
+            },
+            {
+                "mask_threshold_delta": 8,
+                "inpaint_radius_delta": 1,
+                "photo_noise_delta": -0.004,
+                "jpeg_quality_delta": 3,
+            },
+        ]
+        if darkness == "too_dark":
+            patches.append(
+                {
+                    "mask_threshold_delta": 10,
+                    "mask_dilate_iterations_delta": 1,
+                    "photo_noise_delta": -0.008,
+                    "edge_breakup_delta": -0.004,
+                    "jpeg_quality_delta": 5,
+                }
+            )
+        return patches
     if sharpness == "too_sharp" and background in {"patch_visible", "too_smooth"}:
         return [
             {
@@ -1100,7 +1257,16 @@ def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[d
         if isinstance(issue, dict)
     }
     patches: list[dict[str, Any]] = []
-    core_too_light = "core_mean_gray_too_light" in issue_types or "core_lighten_too_high" in issue_types
+    core_too_light = bool(
+        issue_types
+        & {
+            "core_mean_gray_too_light",
+            "core_lighten_too_high",
+            "changed_char_core_too_light",
+            "changed_char_core_too_gray",
+            "ink_too_light",
+        }
+    )
     outer_gray_halo = "changed_char_neighbor_outer_gray_halo_too_high" in issue_types
     if core_too_light and outer_gray_halo:
         patches.extend(
@@ -1265,6 +1431,17 @@ def text_shape_patches(
     rank_patch: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     patches: list[dict[str, Any]] = []
+    stroke_weight_patches = stroke_weight_shape_patches(acceptance)
+    if stroke_weight_patches:
+        patches.extend(stroke_weight_patches)
+        patches.extend(
+            patch
+            for patch in numeric_revision_patches(params, acceptance)
+            if keep_patch_for_stroke_weight_shape(patch, acceptance)
+        )
+        if isinstance(rank_patch, dict) and keep_patch_for_stroke_weight_shape(rank_patch, acceptance):
+            patches.append(rank_patch)
+        return patches
     if report_has_outer_gray_halo(report):
         patches.extend(neighbor_outer_gray_cleanup_patches())
         patches.extend(
@@ -1436,14 +1613,21 @@ def select_stage_patcher(
     local_blocking_stage = stage_gate.get("blocking_stage")
     visual_blocking_stage = acceptance_blocking_stage(acceptance)
     disabled_visual_stage = None
-    if local_blocking_stage:
+    visual_stage_enabled = bool(visual_blocking_stage and visual_blocking_stage in profile.enabled_stage_ids)
+    if visual_blocking_stage and not visual_stage_enabled:
+        disabled_visual_stage = visual_blocking_stage
+    if (
+        visual_stage_enabled
+        and visual_blocking_stage == "text_shape"
+        and local_blocking_stage in {None, "ink_gray_balance", "photo_texture", "background_cleanup"}
+    ):
+        blocking_stage = visual_blocking_stage
+    elif local_blocking_stage:
         blocking_stage = local_blocking_stage
-    elif visual_blocking_stage and visual_blocking_stage in profile.enabled_stage_ids:
+    elif visual_stage_enabled:
         blocking_stage = visual_blocking_stage
     else:
         blocking_stage = None
-        if visual_blocking_stage:
-            disabled_visual_stage = visual_blocking_stage
     patcher_stage = str(blocking_stage) if blocking_stage in STAGE_PATCHER_SPECS else None
     selection_reason = "blocking_stage" if patcher_stage else "final_acceptance_fallback"
     if patcher_stage is None and report_has_excess_black_core(report):

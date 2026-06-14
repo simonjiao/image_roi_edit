@@ -8,7 +8,10 @@ import unittest
 from PIL import Image
 
 from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan
-from roi_image_edit.region_processing import select_vision_rendered_candidates
+from roi_image_edit.region_processing import (
+    initial_candidate_stage_frontier,
+    select_vision_rendered_candidates,
+)
 from roi_image_edit.processing_service import run_region_vision_checks
 
 
@@ -47,6 +50,53 @@ class FakeVisionClient:
 
 
 class VisionCandidateBoundaryTest(unittest.TestCase):
+    def staged_report(self, blocking_stage: str | None) -> dict:
+        stage_status = {
+            "hard_boundary": {"id": "hard_boundary", "pass": True, "issues": []},
+            "text_shape": {"id": "text_shape", "pass": True, "issues": []},
+            "ink_gray_balance": {"id": "ink_gray_balance", "pass": True, "issues": []},
+            "photo_texture": {"id": "photo_texture", "pass": True, "issues": []},
+            "background_cleanup": {"id": "background_cleanup", "pass": True, "issues": []},
+        }
+        if blocking_stage:
+            stage_status[blocking_stage] = {
+                "id": blocking_stage,
+                "pass": False,
+                "issues": [{"type": f"{blocking_stage}_issue"}],
+            }
+        return {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "strict_gate": {"pass": True, "issues": []},
+            "stage_gate": {
+                "pass": blocking_stage is None,
+                "blocking_stage": blocking_stage,
+                "stage_status": stage_status,
+                "stages": list(stage_status.values()),
+            },
+        }
+
+    def rendered_item(
+        self,
+        candidate_id: str,
+        score: float,
+        blocking_stage: str | None,
+        image: Image.Image,
+    ) -> tuple[CandidateParams, Image.Image, dict, float]:
+        return (
+            CandidateParams(
+                candidate_id=candidate_id,
+                font_name="test",
+                font_path="/tmp/test.ttf",
+                font_size=12,
+                opacity=0.8,
+                blur=0.1,
+            ),
+            image.copy(),
+            self.staged_report(blocking_stage),
+            score,
+        )
+
     def test_region_vision_request_uses_top_candidates_with_stage_context(self) -> None:
         original = Image.new("RGB", (16, 16), (220, 220, 220))
         plan = RenderPlan(
@@ -109,6 +159,100 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
         self.assertNotIn('"slot_quality_report"', final_prompt)
         self.assertNotIn('"strict_visual_metrics"', final_prompt)
         self.assertTrue(summary["candidate_rank"]["local_stage_context"]["stage_context_by_candidate"])
+
+    def test_initial_candidate_frontier_orders_later_stage_before_lower_score_ink_candidate(self) -> None:
+        image = Image.new("RGB", (16, 16), (220, 220, 220))
+        ink = self.rendered_item("ink", 0.1, "ink_gray_balance", image)
+        background = self.rendered_item("background", 9.0, "background_cleanup", image)
+
+        selected = select_vision_rendered_candidates([ink, background], 2)
+
+        self.assertEqual([item[0].candidate_id for item in selected], ["background", "ink"])
+        self.assertGreater(
+            initial_candidate_stage_frontier(background[2]),
+            initial_candidate_stage_frontier(ink[2]),
+        )
+
+    def test_model_choice_at_later_stage_is_not_overridden_by_full_stage_pass_requirement(self) -> None:
+        original = Image.new("RGB", (40, 40), (220, 220, 220))
+        plan = RenderPlan(
+            target_text="乙",
+            source_text="甲",
+            search_roi=(0, 0, 40, 40),
+            target_roi=(4, 4, 24, 24),
+            slot_boxes=(),
+            protected_boxes=(),
+            source_reference_box=None,
+            style_reference_box=None,
+            style_reference_text=None,
+            draw_mode="replace",
+        )
+        rendered = [
+            self.rendered_item("c1", 0.1, "ink_gray_balance", original),
+            self.rendered_item("c2", 9.0, "background_cleanup", original),
+        ]
+        fake_client = FakeVisionClient(best_candidate="c2")
+        with tempfile.TemporaryDirectory() as tmp:
+            chosen, summary = run_region_vision_checks(
+                original=original,
+                rendered=rendered,
+                plan=plan,
+                region_dir=Path(tmp),
+                vision_client=fake_client,  # type: ignore[arg-type]
+                prompts=("master", "candidate {hard_check_report}", "final {final_params} {hard_check_report}"),
+                candidate_limit=8,
+                font_style_reference={},
+                max_revision_rounds=0,
+                pipeline_profile="photo_scan",
+            )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen.candidate_id, "c2")
+        self.assertNotIn("model_choice_overridden", summary["candidate_rank"])
+        self.assertEqual(
+            summary["candidate_rank"]["local_initial_selection"]["selection_rule"],
+            "stage_frontier_then_stage_severity_then_local_score",
+        )
+
+    def test_model_choice_at_earlier_stage_is_overridden_by_frontier_fallback(self) -> None:
+        original = Image.new("RGB", (40, 40), (220, 220, 220))
+        plan = RenderPlan(
+            target_text="乙",
+            source_text="甲",
+            search_roi=(0, 0, 40, 40),
+            target_roi=(4, 4, 24, 24),
+            slot_boxes=(),
+            protected_boxes=(),
+            source_reference_box=None,
+            style_reference_box=None,
+            style_reference_text=None,
+            draw_mode="replace",
+        )
+        rendered = [
+            self.rendered_item("c1", 0.1, "ink_gray_balance", original),
+            self.rendered_item("c2", 9.0, "background_cleanup", original),
+        ]
+        fake_client = FakeVisionClient(best_candidate="c1")
+        with tempfile.TemporaryDirectory() as tmp:
+            chosen, summary = run_region_vision_checks(
+                original=original,
+                rendered=rendered,
+                plan=plan,
+                region_dir=Path(tmp),
+                vision_client=fake_client,  # type: ignore[arg-type]
+                prompts=("master", "candidate {hard_check_report}", "final {final_params} {hard_check_report}"),
+                candidate_limit=8,
+                font_style_reference={},
+                max_revision_rounds=0,
+                pipeline_profile="photo_scan",
+            )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen.candidate_id, "c2")
+        self.assertEqual(
+            summary["candidate_rank"]["model_choice_overridden"]["reason"],
+            "model selected an earlier-stage candidate than the best local stage frontier",
+        )
 
     def test_final_acceptance_uses_compact_single_image_and_short_prompt_payload(self) -> None:
         original = Image.new("RGB", (120, 80), (220, 220, 220))

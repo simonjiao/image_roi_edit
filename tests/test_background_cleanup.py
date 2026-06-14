@@ -18,6 +18,7 @@ from roi_image_edit.iterative_pipeline import (
     build_source_slot_cleanup_mask,
     feather_roi_boundary,
 )
+from roi_image_edit.local_validation import local_background_texture_issues
 from roi_image_edit.stages import stage_gate_for_report
 
 
@@ -269,6 +270,102 @@ class BackgroundCleanupTest(unittest.TestCase):
         self.assertTrue(report["pass"])
         self.assertNotIn("post_blend_texture_break", issue_types)
         self.assertEqual(report["artifact_axes"]["texture_break"]["limit"], 1.50)
+
+    def test_stage_gate_blocks_post_blend_dark_shadow(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "background_cleanup_report": {
+                    "pass": False,
+                    "issues": [
+                        {
+                            "type": "post_blend_dark_shadow",
+                            "value": 0.47167,
+                            "limit": 0.28,
+                        }
+                    ],
+                },
+                "local_background_texture_issues": [],
+            },
+            "photo_scan",
+        )
+
+        self.assertFalse(gate["pass"])
+        self.assertEqual(gate["blocking_stage"], "background_cleanup")
+        self.assertEqual(gate["stage_status"]["background_cleanup"]["reason"], "post_blend_dark_shadow")
+
+    def test_longer_cjk_clean_post_blend_does_not_block_on_mild_low_texture_variance(self) -> None:
+        report = {
+            "reference_profile": {
+                "source_text": "陈芸",
+                "target_text": "赵真真",
+            },
+            "post_blend_report": {
+                "pass": True,
+            },
+            "background_texture_metrics": {
+                "enabled": True,
+                "new_reference_mean_delta": 4.3,
+                "old_reference_mean_delta": -8.0,
+                "std_ratio": 0.46,
+                "residual_ratio": 0.92,
+                "reference_residual_mean": 2.6,
+                "white_ghost_probe": {
+                    "enabled": True,
+                    "probe_pixels": 180,
+                    "bright_over_background_p95_ratio": 0.0,
+                    "bright_over_background_p99_ratio": 0.0,
+                    "dark_under_background_p10_ratio": 0.0,
+                    "dark_under_background_p25_ratio": 0.0,
+                    "probe_p10_delta": 0.0,
+                    "probe_p25_delta": 0.0,
+                    "probe_p95_delta": 0.0,
+                    "probe_p99_delta": 0.0,
+                    "probe_background_mean_delta": 0.0,
+                },
+            },
+        }
+
+        issues = local_background_texture_issues(report)
+
+        self.assertNotIn("background_fill_low_texture_variance", {issue["type"] for issue in issues})
+
+    def test_longer_cjk_low_texture_still_blocks_when_post_blend_has_shadow(self) -> None:
+        report = {
+            "reference_profile": {
+                "source_text": "陈芸",
+                "target_text": "赵真真",
+            },
+            "post_blend_report": {
+                "pass": False,
+            },
+            "background_texture_metrics": {
+                "enabled": True,
+                "new_reference_mean_delta": 4.3,
+                "old_reference_mean_delta": -8.0,
+                "std_ratio": 0.46,
+                "residual_ratio": 0.92,
+                "reference_residual_mean": 2.6,
+                "white_ghost_probe": {
+                    "enabled": True,
+                    "probe_pixels": 180,
+                    "bright_over_background_p95_ratio": 0.0,
+                    "bright_over_background_p99_ratio": 0.0,
+                    "dark_under_background_p10_ratio": 0.34,
+                    "dark_under_background_p25_ratio": 0.3,
+                    "probe_p10_delta": -1.0,
+                    "probe_p25_delta": -1.0,
+                    "probe_p95_delta": 0.0,
+                    "probe_p99_delta": 0.0,
+                    "probe_background_mean_delta": -1.0,
+                },
+            },
+        }
+
+        issues = local_background_texture_issues(report)
+
+        self.assertIn("background_fill_low_texture_variance", {issue["type"] for issue in issues})
 
     def test_pre_cleanup_failure_takes_priority_over_post_blend_naturalness(self) -> None:
         stage_report = background_cleanup_stage_report(

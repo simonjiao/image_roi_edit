@@ -65,6 +65,86 @@ class InkBalanceDarknessTest(unittest.TestCase):
         self.assertEqual(issues[0]["length_change"], "longer")
         self.assertGreater(issues[0]["actual"], issues[0]["limit"])
 
+    def test_longer_cjk_replacement_flags_gray_haze_with_weak_black_core(self) -> None:
+        report = {
+            "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+            "reference_profile": {"dynamic_ink": {}},
+            "strict_gate": {"text_complexity_ratio": 1.4455},
+            "strict_visual_metrics": {
+                "bands": {
+                    "old_lt55_pixels": 233,
+                    "lt55_delta": -144,
+                    "old_lt90_pixels": 428,
+                    "lt90_delta": 205,
+                    "old_lt55_share_of_lt165": 0.1215,
+                    "new_lt55_share_of_lt165": 0.0343,
+                }
+            },
+            "char_gray_band_metrics": {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "source_char": "陈",
+                        "target_char": "赵",
+                        "old": {"lt55": 157, "lt90": 255, "lt165": 581},
+                        "delta": {
+                            "lt55": -125,
+                            "lt90": -10,
+                            "lt165": 101,
+                            "band_55_70": 67,
+                            "band_70_90": 48,
+                            "band_90_120": 25,
+                            "band_120_165": 86,
+                        },
+                    },
+                    {
+                        "index": 1,
+                        "source_char": "芸",
+                        "target_char": "真",
+                        "old": {"lt55": 76, "lt90": 173, "lt165": 532},
+                        "delta": {
+                            "lt55": -45,
+                            "lt90": 22,
+                            "lt165": 77,
+                            "band_55_70": 48,
+                            "band_70_90": 19,
+                            "band_90_120": -18,
+                            "band_120_165": 73,
+                        },
+                    },
+                    {
+                        "index": 2,
+                        "source_char": None,
+                        "target_char": "真",
+                        "old": {"lt55": 76, "lt90": 173, "lt165": 532},
+                        "delta": {
+                            "lt55": -50,
+                            "lt90": 20,
+                            "lt165": 188,
+                            "band_55_70": 58,
+                            "band_70_90": 12,
+                            "band_90_120": -12,
+                            "band_120_165": 180,
+                        },
+                    },
+                ],
+            },
+        }
+
+        issues = local_ink_balance_issues(report)
+
+        self.assertEqual(
+            [issue["type"] for issue in issues],
+            [
+                "changed_char_core_too_gray",
+                "changed_char_core_too_gray",
+                "changed_char_core_too_gray",
+            ],
+        )
+        self.assertTrue(all(issue["length_change"] == "longer" for issue in issues))
+        self.assertTrue(all(issue["gray_haze_delta"] > issue["limit"] for issue in issues))
+
     def test_longer_replacement_allows_count_normalized_lighter_mid_gray_body(self) -> None:
         report = {
             "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
@@ -155,6 +235,133 @@ class InkBalanceDarknessTest(unittest.TestCase):
 
         self.assertEqual(issues[0]["type"], "roi_core_too_black")
         self.assertGreater(issues[0]["actual"], issues[0]["limit"])
+
+    def test_longer_cjk_replacement_flags_deep_near_black_body_without_core_overcap(self) -> None:
+        report = {
+            "params": {"alpha_contrast": 0.30, "blur": 0.36},
+            "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+            "reference_profile": {"dynamic_ink": {}},
+            "strict_gate": {"text_complexity_ratio": 1.4455},
+            "strict_visual_metrics": {"bands": {}},
+            "char_gray_band_metrics": {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "source_char": "甲",
+                        "target_char": "丙",
+                        "old": {"lt55": 157, "lt165": 581},
+                        "delta": {
+                            "lt55": -48,
+                            "band_55_70": 68,
+                            "band_70_90": 18,
+                            "band_90_120": -48,
+                            "lt165": -158,
+                        },
+                    },
+                    {
+                        "index": 1,
+                        "source_char": "乙",
+                        "target_char": "丁",
+                        "old": {"lt55": 76, "lt165": 532},
+                        "delta": {
+                            "lt55": 20,
+                            "band_55_70": 83,
+                            "band_70_90": -22,
+                            "band_90_120": -88,
+                            "lt165": -172,
+                        },
+                    },
+                    {
+                        "index": 2,
+                        "source_char": None,
+                        "target_char": "丁",
+                        "old": {"lt55": 76, "lt165": 532},
+                        "delta": {
+                            "lt55": 26,
+                            "band_55_70": 94,
+                            "band_70_90": -36,
+                            "band_90_120": -91,
+                            "lt165": 83,
+                        },
+                    },
+                ],
+            },
+        }
+
+        issues = local_ink_balance_issues(report)
+
+        self.assertEqual(
+            [issue["type"] for issue in issues],
+            ["changed_char_deep_gray_too_dark", "changed_char_deep_gray_too_dark"],
+        )
+        self.assertEqual([issue["index"] for issue in issues], [1, 2])
+        self.assertTrue(all(issue["actual"] > issue["limit"] for issue in issues))
+
+    def test_longer_cjk_deep_near_black_body_is_stroke_body_too_bold_shape_issue(self) -> None:
+        report = {
+            "params": {"alpha_contrast": 0.30, "blur": 0.36},
+            "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+            "strict_gate": {"text_complexity_ratio": 1.4455},
+            "strict_visual_metrics": {"bands": {}},
+            "char_gray_band_metrics": {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 1,
+                        "source_char": "乙",
+                        "target_char": "丁",
+                        "old": {"lt55": 76, "lt165": 532},
+                        "delta": {
+                            "lt55": 20,
+                            "lt165": -172,
+                            "band_55_70": 83,
+                            "band_70_90": -22,
+                            "band_90_120": -88,
+                            "band_120_165": -165,
+                        },
+                    }
+                ],
+            },
+        }
+
+        issues = local_stroke_body_issues(report, allow_excess_black_core=True)
+
+        self.assertEqual([issue["type"] for issue in issues], ["changed_char_stroke_body_too_bold"])
+        self.assertEqual(issues[0]["index"], 1)
+        self.assertGreater(issues[0]["actual"], issues[0]["limit"])
+
+    def test_longer_cjk_high_opacity_blur_body_expansion_is_stroke_body_too_bold(self) -> None:
+        report = {
+            "params": {"opacity": 0.70, "blur": 0.55, "alpha_contrast": 0.0},
+            "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+            "strict_gate": {"text_complexity_ratio": 1.4455},
+            "strict_visual_metrics": {"bands": {}},
+            "char_gray_band_metrics": {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "source_char": "甲",
+                        "target_char": "丙",
+                        "old": {"lt55": 157, "lt165": 581},
+                        "delta": {
+                            "lt55": -73,
+                            "lt165": 82,
+                            "band_55_70": 87,
+                            "band_70_90": 33,
+                            "band_90_120": -20,
+                            "band_120_165": 55,
+                        },
+                    }
+                ],
+            },
+        }
+
+        issues = local_stroke_body_issues(report, allow_excess_black_core=True)
+
+        self.assertEqual([issue["type"] for issue in issues], ["changed_char_stroke_body_too_bold"])
+        self.assertEqual(issues[0]["basis"], "high_opacity_high_blur_cjk_longer_body_expansion")
 
     def test_longer_replacement_allows_sharp_alpha_body_compression_when_roi_body_is_preserved(self) -> None:
         report = {

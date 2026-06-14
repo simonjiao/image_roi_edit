@@ -34,8 +34,10 @@ from roi_image_edit.iterative_pipeline import (
     params_label,
     replacement_char_bboxes,
     render_candidate,
+    source_slot_for_target_index,
     strict_gate_issues,
     strict_visual_metrics,
+    target_char_slots_for_plan,
 )
 from roi_image_edit.placement_strategy import placement_strategy_report
 from roi_image_edit.roi_locator import (
@@ -51,6 +53,7 @@ from roi_image_edit.shape_metrics import (
     neighbor_stability,
 )
 from roi_image_edit.shape_scoring import shape_score_breakdown
+from roi_image_edit.shape_arbitration import local_shape_visual_arbitration_report
 from roi_image_edit.stages import stage_gate_for_report as canonical_stage_gate_for_report
 
 
@@ -342,6 +345,194 @@ def row_baseline_metrics(
     }
 
 
+def stroke_body_shape_metrics(
+    original: Image.Image,
+    plan: RenderPlan,
+    params: CandidateParams,
+) -> dict[str, Any]:
+    source_chars = text_chars(plan.source_text or "")
+    target_chars = text_chars(plan.target_text)
+    if not source_chars or not target_chars or not plan.slot_boxes:
+        return {"enabled": False, "reason": "missing_source_target_or_slots"}
+    target_slots = target_char_slots_for_plan(plan)
+    if not target_slots:
+        return {"enabled": False, "reason": "missing_target_slots"}
+    try:
+        layer = draw_replacement_layer(size=original.size, plan=plan, params=params, original=original)
+    except OSError as exc:
+        return {"enabled": False, "reason": "font_render_failed", "error": str(exc)}
+    alpha = np.array(layer.getchannel("A"), dtype=np.uint8)
+    alpha_max = int(alpha.max()) if alpha.size else 0
+    if alpha_max <= 0:
+        return {"enabled": False, "reason": "empty_replacement_alpha"}
+    body_threshold = max(6, int(round(alpha_max * 0.12)))
+    core_threshold = max(16, int(round(alpha_max * 0.35)))
+    gray = cv2.cvtColor(np.array(original.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    h, w = gray.shape[:2]
+
+    def slot_crop_box(slot: Any) -> tuple[int, int, int, int] | None:
+        x1 = max(0, min(w, int(slot.x1)))
+        y1 = max(0, min(h, int(slot.y1)))
+        x2 = max(0, min(w, int(slot.x2)))
+        y2 = max(0, min(h, int(slot.y2)))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return x1, y1, x2, y2
+
+    items: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    for idx, target_char in enumerate(target_chars[: len(target_slots)]):
+        target_slot = target_slots[idx]
+        source_slot = source_slot_for_target_index(plan, idx)
+        if source_slot is None:
+            continue
+        source_box = slot_crop_box(source_slot)
+        target_box = slot_crop_box(target_slot)
+        if source_box is None or target_box is None:
+            continue
+        sx1, sy1, sx2, sy2 = source_box
+        tx1, ty1, tx2, ty2 = target_box
+        old_body = gray[sy1:sy2, sx1:sx2] < 165
+        old_core = gray[sy1:sy2, sx1:sx2] < 90
+        new_alpha = alpha[ty1:ty2, tx1:tx2]
+        new_body = new_alpha > body_threshold
+        new_core = new_alpha > core_threshold
+        old_body_area = int(np.count_nonzero(old_body))
+        old_core_area = int(np.count_nonzero(old_core))
+        new_body_area = int(np.count_nonzero(new_body))
+        new_core_area = int(np.count_nonzero(new_core))
+        if old_body_area <= 0:
+            continue
+        body_ratio = float(new_body_area) / float(old_body_area)
+        core_ratio = float(new_core_area) / float(max(1, old_core_area))
+        source_char = source_chars[idx] if idx < len(source_chars) else None
+        changed = source_char != target_char
+        direction = "ok"
+        if changed and body_ratio > 0.72:
+            direction = "too_bold"
+            issues.append(
+                {
+                    "type": "changed_char_alpha_stroke_body_too_bold",
+                    "index": idx,
+                    "source_char": source_char,
+                    "target_char": target_char,
+                    "body_area_ratio": round(body_ratio, 4),
+                    "limit": 0.72,
+                    "basis": "replacement_alpha_body_area_vs_source_slot_dark_body",
+                }
+            )
+        elif changed and body_ratio < 0.58:
+            direction = "too_thin"
+            issues.append(
+                {
+                    "type": "changed_char_alpha_stroke_body_too_thin",
+                    "index": idx,
+                    "source_char": source_char,
+                    "target_char": target_char,
+                    "body_area_ratio": round(body_ratio, 4),
+                    "limit": 0.58,
+                    "basis": "replacement_alpha_body_area_vs_source_slot_dark_body",
+                }
+            )
+        elif changed and body_ratio < 0.60:
+            direction = "slightly_thin"
+        elif changed and body_ratio > 0.64:
+            direction = "slightly_bold"
+            issues.append(
+                {
+                    "type": "changed_char_alpha_stroke_body_slightly_bold",
+                    "index": idx,
+                    "source_char": source_char,
+                    "target_char": target_char,
+                    "body_area_ratio": round(body_ratio, 4),
+                    "limit": 0.64,
+                    "basis": "replacement_alpha_body_area_vs_source_slot_dark_body",
+                }
+            )
+        items.append(
+            {
+                "index": idx,
+                "source_char": source_char,
+                "target_char": target_char,
+                "changed": changed,
+                "slot_box": [tx1, ty1, tx2, ty2],
+                "source_slot_box": [sx1, sy1, sx2, sy2],
+                "old_body_area": old_body_area,
+                "new_body_area": new_body_area,
+                "old_core_area": old_core_area,
+                "new_core_area": new_core_area,
+                "body_area_ratio": round(body_ratio, 4),
+                "core_alpha_to_old_core_ratio": round(core_ratio, 4),
+                "stroke_weight_direction": direction,
+            }
+        )
+    if not items:
+        return {"enabled": False, "reason": "missing_measurable_changed_slots"}
+    return {
+        "enabled": True,
+        "basis": "replacement_alpha_body_area_vs_source_slot_dark_body",
+        "body_threshold": body_threshold,
+        "core_threshold": core_threshold,
+        "alpha_max": alpha_max,
+        "per_char": items,
+        "issues": issues,
+    }
+
+
+def stroke_weight_fit_score(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {"enabled": False, "score": 9999.0, "selection_bucket": 9, "reason": "missing_report"}
+    metrics = report.get("stroke_body_shape_metrics")
+    if not isinstance(metrics, dict) or not metrics.get("enabled"):
+        return {"enabled": False, "score": 9999.0, "selection_bucket": 9, "reason": "missing_stroke_body_shape_metrics"}
+    per_char = [
+        item for item in metrics.get("per_char", [])
+        if isinstance(item, dict) and item.get("changed")
+    ]
+    if not per_char:
+        return {"enabled": False, "score": 9999.0, "selection_bucket": 9, "reason": "missing_changed_char_metrics"}
+
+    score = 0.0
+    directions: list[str] = []
+    ratios: list[float] = []
+    for item in per_char:
+        try:
+            ratio = float(item.get("body_area_ratio") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        ratios.append(ratio)
+        direction = str(item.get("stroke_weight_direction") or "ok")
+        directions.append(direction)
+        if ratio > 0.66:
+            score += 130.0 + (ratio - 0.66) * 900.0
+        elif ratio < 0.58:
+            score += 90.0 + (0.58 - ratio) * 360.0
+        elif ratio < 0.60:
+            score += 16.0 + (0.60 - ratio) * 120.0
+        else:
+            score += abs(ratio - 0.64) * 45.0
+    if not ratios:
+        return {"enabled": False, "score": 9999.0, "selection_bucket": 9, "reason": "missing_body_area_ratios"}
+    score = score / float(len(ratios))
+    mean_ratio = float(np.mean(np.array(ratios, dtype=np.float32)))
+    if any(direction == "too_bold" for direction in directions) or mean_ratio > 0.64 or max(ratios) > 0.70:
+        selection_bucket = 3
+    elif any(direction == "too_thin" for direction in directions) or min(ratios) < 0.58:
+        selection_bucket = 1
+    else:
+        selection_bucket = 0
+    return {
+        "enabled": True,
+        "basis": "slightly_thin_to_coarse_alpha_stroke_fit",
+        "score": round(float(score), 4),
+        "selection_bucket": selection_bucket,
+        "mean_body_area_ratio": round(mean_ratio, 4),
+        "min_body_area_ratio": round(float(min(ratios)), 4),
+        "max_body_area_ratio": round(float(max(ratios)), 4),
+        "directions": directions,
+    }
+
+
 def build_reference_profile(
     original: Image.Image,
     plan: RenderPlan,
@@ -606,6 +797,65 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
                             "length_change": "shorter",
                         }
                     )
+            gray_haze_delta = band_55_70_delta + max(0.0, band_70_90_delta)
+            lt70_delta = lt55_delta + band_55_70_delta
+            if (
+                longer_replacement
+                and is_mostly_cjk(str(item.get("target_char") or ""))
+                and old_lt55 >= 32.0
+                and old_lt165 > 0.0
+            ):
+                core_deficit = -lt55_delta
+                core_deficit_limit = max(36.0, old_lt55 * 0.35)
+                gray_haze_limit = max(28.0, old_lt55 * 0.24)
+                body_delta_limit = max(24.0, old_lt165 * 0.08)
+                if (
+                    core_deficit > core_deficit_limit
+                    and gray_haze_delta > gray_haze_limit
+                    and (lt165_delta > body_delta_limit or gray_haze_delta > max(52.0, old_lt55 * 0.38))
+                ):
+                    issues.append(
+                        {
+                            "type": "changed_char_core_too_gray",
+                            "index": item.get("index"),
+                            "source_char": item.get("source_char"),
+                            "target_char": item.get("target_char"),
+                            "actual": round(gray_haze_delta, 3),
+                            "limit": round(gray_haze_limit, 3),
+                            "gray_haze_delta": round(gray_haze_delta, 3),
+                            "core_deficit": round(core_deficit, 3),
+                            "core_deficit_limit": round(core_deficit_limit, 3),
+                            "lt55_delta": round(lt55_delta, 3),
+                            "lt165_delta": round(lt165_delta, 3),
+                            "body_delta_limit": round(body_delta_limit, 3),
+                            "band_55_70_delta": round(band_55_70_delta, 3),
+                            "band_70_90_delta": round(band_70_90_delta, 3),
+                            "length_change": "longer",
+                        }
+                    )
+                deep_gray_limit = max(48.0, old_lt55 * 0.62)
+                lt70_delta_limit = max(62.0, old_lt55 * 0.72)
+                if (
+                    lt55_delta >= -8.0
+                    and band_55_70_delta > deep_gray_limit
+                    and lt70_delta > lt70_delta_limit
+                ):
+                    issues.append(
+                        {
+                            "type": "changed_char_deep_gray_too_dark",
+                            "index": item.get("index"),
+                            "source_char": item.get("source_char"),
+                            "target_char": item.get("target_char"),
+                            "actual": round(band_55_70_delta, 3),
+                            "limit": round(deep_gray_limit, 3),
+                            "lt70_delta": round(lt70_delta, 3),
+                            "lt70_delta_limit": round(lt70_delta_limit, 3),
+                            "lt55_delta": round(lt55_delta, 3),
+                            "band_55_70_delta": round(band_55_70_delta, 3),
+                            "band_70_90_delta": round(band_70_90_delta, 3),
+                            "length_change": "longer",
+                        }
+                    )
             if old_lt55 <= 0 or old_lt165 <= 0:
                 continue
 
@@ -695,8 +945,16 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
             text_count_ratio = max(1.0, target_slot_count / float(source_slot_count))
             expected_lt90_delta = old_lt90 * (text_count_ratio - 1.0)
             excess_lt90_delta = lt90_delta - expected_lt90_delta
-            excess_lt90_limit = max(96.0, old_lt90 * 0.26)
-            if excess_lt90_delta > excess_lt90_limit:
+            excess_lt90_limit = max(72.0, old_lt90 * 0.20)
+            try:
+                old_core_share = float(bands.get("old_lt55_share_of_lt165") or 0.0)
+                new_core_share = float(bands.get("new_lt55_share_of_lt165") or 0.0)
+            except (TypeError, ValueError):
+                old_core_share = 0.0
+                new_core_share = 0.0
+            core_share_drop = old_core_share - new_core_share
+            core_not_recovered = lt55_delta < -8.0 or core_share_drop > 0.025
+            if excess_lt90_delta > excess_lt90_limit and core_not_recovered:
                 issues.append(
                     {
                         "type": "longer_mid_gray_body_too_black",
@@ -705,6 +963,8 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
                         "lt90_delta": round(lt90_delta, 3),
                         "expected_lt90_delta": round(expected_lt90_delta, 3),
                         "text_count_ratio": round(text_count_ratio, 3),
+                        "lt55_delta": round(lt55_delta, 3),
+                        "core_share_drop": round(core_share_drop, 4),
                         "length_change": "longer",
                     }
                 )
@@ -729,6 +989,17 @@ def local_stroke_body_issues(
         return issues
     if not allow_excess_black_core and report_has_excess_black_core(report):
         return issues
+
+    alpha_shape = report.get("stroke_body_shape_metrics")
+    if isinstance(alpha_shape, dict) and alpha_shape.get("enabled"):
+        issues.extend(
+            {
+                **issue,
+                "basis_metric": "stroke_body_shape_metrics",
+            }
+            for issue in alpha_shape.get("issues", [])
+            if isinstance(issue, dict)
+        )
 
     char_bands = report.get("char_gray_band_metrics")
     if not isinstance(char_bands, dict) or not char_bands.get("enabled"):
@@ -764,6 +1035,7 @@ def local_stroke_body_issues(
         old = item.get("old") or {}
         try:
             old_lt165 = float(old.get("lt165") or 0.0)
+            old_lt55 = float(old.get("lt55") or 0.0)
             lt55_delta = float(delta.get("lt55") or 0.0)
             lt165_delta = float(delta.get("lt165") or 0.0)
             band_55_70_delta = float(delta.get("band_55_70") or 0.0)
@@ -778,6 +1050,7 @@ def local_stroke_body_issues(
 
         middle_delta = band_70_90_delta + band_90_120_delta
         gray_body_delta = band_55_70_delta + middle_delta
+        lt70_delta = lt55_delta + band_55_70_delta
         min_body_delta = min(12.0, old_lt165 * 0.03)
         strict_gate = report.get("strict_gate")
         complexity_ratio = 1.0
@@ -788,14 +1061,17 @@ def local_stroke_body_issues(
                 complexity_ratio = 1.0
         params = report.get("params")
         stroke_opacity = 0.0
+        opacity = 0.0
         blur = 0.0
         alpha_contrast = 0.0
         if isinstance(params, dict):
             try:
+                opacity = float(params.get("opacity") or 0.0)
                 stroke_opacity = float(params.get("stroke_opacity") or 0.0)
                 blur = float(params.get("blur") or 0.0)
                 alpha_contrast = float(params.get("alpha_contrast") or 0.0)
             except (TypeError, ValueError):
+                opacity = 0.0
                 stroke_opacity = 0.0
                 blur = 0.0
                 alpha_contrast = 0.0
@@ -806,6 +1082,66 @@ def local_stroke_body_issues(
             and alpha_contrast >= 0.25
             and blur <= 0.50
         )
+        deep_gray_body_limit = max(48.0, old_lt55 * 0.62)
+        lt70_delta_limit = max(62.0, old_lt55 * 0.72)
+        if (
+            longer_replacement
+            and is_mostly_cjk(str(item.get("target_char") or ""))
+            and old_lt55 >= 32.0
+            and lt55_delta >= -8.0
+            and band_55_70_delta > deep_gray_body_limit
+            and lt70_delta > lt70_delta_limit
+        ):
+            issues.append(
+                {
+                    "type": "changed_char_stroke_body_too_bold",
+                    "index": item.get("index"),
+                    "source_char": item.get("source_char"),
+                    "target_char": item.get("target_char"),
+                    "actual": round(band_55_70_delta, 3),
+                    "limit": round(deep_gray_body_limit, 3),
+                    "lt70_delta": round(lt70_delta, 3),
+                    "lt70_delta_limit": round(lt70_delta_limit, 3),
+                    "lt55_delta": round(lt55_delta, 3),
+                    "band_55_70_delta": round(band_55_70_delta, 3),
+                    "middle_gray_delta": round(middle_delta, 3),
+                    "text_complexity_ratio": round(complexity_ratio, 4),
+                    "length_change": "longer",
+                }
+            )
+            continue
+        high_opacity_blur_body_limit = max(54.0, old_lt55 * 0.46)
+        high_opacity_body_delta_limit = max(40.0, old_lt165 * 0.08)
+        high_opacity_blur_body = (
+            longer_replacement
+            and is_mostly_cjk(str(item.get("target_char") or ""))
+            and opacity >= 0.68
+            and blur >= 0.52
+            and band_55_70_delta > high_opacity_blur_body_limit
+            and lt165_delta > high_opacity_body_delta_limit
+        )
+        if high_opacity_blur_body:
+            issues.append(
+                {
+                    "type": "changed_char_stroke_body_too_bold",
+                    "index": item.get("index"),
+                    "source_char": item.get("source_char"),
+                    "target_char": item.get("target_char"),
+                    "actual": round(band_55_70_delta, 3),
+                    "limit": round(high_opacity_blur_body_limit, 3),
+                    "lt165_delta": round(lt165_delta, 3),
+                    "lt165_delta_limit": round(high_opacity_body_delta_limit, 3),
+                    "lt55_delta": round(lt55_delta, 3),
+                    "band_55_70_delta": round(band_55_70_delta, 3),
+                    "middle_gray_delta": round(middle_delta, 3),
+                    "opacity": round(opacity, 3),
+                    "blur": round(blur, 3),
+                    "text_complexity_ratio": round(complexity_ratio, 4),
+                    "length_change": "longer",
+                    "basis": "high_opacity_high_blur_cjk_longer_body_expansion",
+                }
+            )
+            continue
         if lt165_delta < -6.0:
             if sharp_alpha_longer_candidate:
                 continue
@@ -1377,12 +1713,15 @@ def local_photo_texture_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "jpeg_weight": round(jpeg_weight, 4),
             }
         )
-    if edge_ratio < 0.18 and blur > 0.70:
+    blurry_edge_limit = 0.72 if old_edge_mean >= 60.0 else 0.62 if old_edge_mean >= 45.0 else 0.24
+    if source_photo_like and edge_ratio < blurry_edge_limit and blur >= 0.45:
         issues.append(
             {
                 "type": "photo_texture_too_blurry",
                 "edge_laplacian_ratio": round(edge_ratio, 4),
+                "limit": blurry_edge_limit,
                 "blur": round(blur, 3),
+                "old_edge_laplacian_mean": round(old_edge_mean, 3),
             }
         )
     return issues
@@ -1681,6 +2020,23 @@ def local_background_texture_issues(report: dict[str, Any]) -> list[dict[str, An
             }
         )
     texture_variance_limit = 0.62 if reference_residual >= 2.4 else 0.48
+    reference_profile = report.get("reference_profile")
+    if not isinstance(reference_profile, dict):
+        reference_profile = {}
+    source_text = str(reference_profile.get("source_text") or "")
+    target_text = str(reference_profile.get("target_text") or "")
+    longer_cjk_replacement = bool(
+        source_text
+        and target_text
+        and len(text_chars(target_text)) > len(text_chars(source_text))
+        and is_mostly_cjk(target_text)
+    )
+    post_blend = report.get("post_blend_report")
+    if not isinstance(post_blend, dict):
+        post_blend = {}
+    post_blend_clean = bool(post_blend.get("pass"))
+    if longer_cjk_replacement and post_blend_clean and residual_ratio >= 0.86 and abs(mean_delta) <= 8.0:
+        texture_variance_limit = min(texture_variance_limit, 0.44)
     structured_ghost = any(
         issue.get("type") in {"background_white_ghost_residual", "background_shadow_ghost_residual"}
         for issue in issues
@@ -1703,28 +2059,33 @@ def strict_gate_stage_issues(report: dict[str, Any]) -> dict[str, list[dict[str,
         "background_cleanup": [],
     }
     strict_gate = report.get("strict_gate")
-    if not isinstance(strict_gate, dict):
-        return stages
-
-    for issue in strict_gate.get("issues", []):
-        if not isinstance(issue, dict):
-            continue
-        issue_type = str(issue.get("type") or "")
-        if (
-            issue_type.startswith("char_")
-            or issue_type.startswith("replacement_")
-            or issue_type.startswith("font_")
-            or issue_type.startswith("bbox_")
-            or issue_type.startswith("centroid_")
-            or issue_type.startswith("ink_area_ratio_")
-            or issue_type.startswith("row_baseline_")
-            or "font_" in issue_type
-        ):
-            stages["text_shape"].append(issue)
-        elif issue_type.startswith("extra_source_slot_") or issue_type.startswith("source_slot_"):
-            stages["background_cleanup"].append(issue)
-        else:
-            stages["ink_gray_balance"].append(issue)
+    if isinstance(strict_gate, dict):
+        for issue in strict_gate.get("issues", []):
+            if not isinstance(issue, dict):
+                continue
+            issue_type = str(issue.get("type") or "")
+            if (
+                issue_type.startswith("char_")
+                or issue_type.startswith("changed_char_alpha_stroke_body_")
+                or issue_type.startswith("changed_char_stroke_body_")
+                or issue_type.startswith("replacement_")
+                or issue_type.startswith("font_")
+                or issue_type.startswith("bbox_")
+                or issue_type.startswith("centroid_")
+                or issue_type.startswith("ink_area_ratio_")
+                or issue_type.startswith("row_baseline_")
+                or "font_" in issue_type
+            ):
+                stages["text_shape"].append(issue)
+            elif issue_type.startswith("extra_source_slot_") or issue_type.startswith("source_slot_"):
+                stages["background_cleanup"].append(issue)
+            else:
+                stages["ink_gray_balance"].append(issue)
+    background_cleanup = report.get("background_cleanup_report")
+    if isinstance(background_cleanup, dict):
+        for issue in background_cleanup.get("issues", []):
+            if isinstance(issue, dict):
+                stages["background_cleanup"].append(issue)
     return stages
 
 
@@ -1780,6 +2141,18 @@ def ink_stage_issue_severity(report: dict[str, Any] | None) -> float:
                 severity += max(0.0, float(issue.get("actual") or 0.0) - float(issue.get("limit") or 0.0)) * 1800.0
             elif issue_type in {"changed_char_core_too_black", "changed_char_core_too_black_hard"}:
                 severity += max(0.0, float(issue.get("lt55_delta") or 0.0) - float(issue.get("limit") or 0.0)) * 2.2
+            elif issue_type == "changed_char_core_too_gray":
+                severity += max(0.0, float(issue.get("actual") or 0.0) - float(issue.get("limit") or 0.0)) * 2.4
+                severity += max(
+                    0.0,
+                    float(issue.get("core_deficit") or 0.0) - float(issue.get("core_deficit_limit") or 0.0),
+                ) * 1.4
+            elif issue_type == "changed_char_deep_gray_too_dark":
+                severity += max(0.0, float(issue.get("actual") or 0.0) - float(issue.get("limit") or 0.0)) * 2.0
+                severity += max(
+                    0.0,
+                    float(issue.get("lt70_delta") or 0.0) - float(issue.get("lt70_delta_limit") or 0.0),
+                ) * 1.1
             elif issue_type == "roi_core_too_black":
                 severity += max(0.0, float(issue.get("lt55_delta") or 0.0) - float(issue.get("limit") or 0.0)) * 2.8
             elif issue_type == "roi_black_core_share_too_high":
@@ -1822,6 +2195,18 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
                     severity += max(0.0, float(issue.get("limit") or 0.0) - float(issue.get("residual_ratio") or 0.0)) * 520.0
                 elif issue_type == "background_fill_low_texture_variance":
                     severity += max(0.0, float(issue.get("limit") or 0.0) - float(issue.get("std_ratio") or 0.0)) * 420.0
+                elif issue_type == "post_blend_dark_shadow":
+                    severity += max(0.0, float(issue.get("value") or 0.0) - float(issue.get("limit") or 0.0)) * 900.0
+                elif issue_type == "post_blend_white_ghost":
+                    severity += max(0.0, float(issue.get("value") or 0.0) - float(issue.get("limit") or 0.0)) * 900.0
+                elif issue_type == "post_blend_patch_visible":
+                    severity += max(0.0, float(issue.get("value") or 0.0) - float(issue.get("limit") or 0.0)) * 36.0
+                elif issue_type == "post_blend_smooth_smear":
+                    severity += max(0.0, float(issue.get("min") or 0.0) - float(issue.get("value") or 0.0)) * 720.0
+                elif issue_type == "post_blend_texture_break":
+                    severity += max(0.0, float(issue.get("value") or 0.0) - float(issue.get("limit") or 0.0)) * 360.0
+                elif issue_type == "post_blend_roi_edge_seam":
+                    severity += max(0.0, float(issue.get("value") or 0.0) - float(issue.get("limit") or 0.0)) * 42.0
                 else:
                     severity += 90.0
             except (TypeError, ValueError):
@@ -1837,7 +2222,8 @@ def stage_issue_severity(report: dict[str, Any] | None, stage_id: str | None) ->
                 elif issue_type == "photo_texture_too_clean":
                     severity += max(0.0, 0.42 - float(issue.get("residual_ratio") or 0.0)) * 420.0
                 elif issue_type == "photo_texture_too_blurry":
-                    severity += max(0.0, 0.18 - float(issue.get("edge_laplacian_ratio") or 0.0)) * 520.0
+                    limit = float(issue.get("limit") or 0.18)
+                    severity += max(0.0, limit - float(issue.get("edge_laplacian_ratio") or 0.0)) * 520.0
                 elif issue_type == "photo_texture_edge_breakup_missing":
                     severity += max(0.0, 0.004 - float(issue.get("edge_breakup") or 0.0)) * 9000.0
                     severity += max(0.0, 0.035 - float(issue.get("texture_strength") or 0.0)) * 1200.0
@@ -1945,6 +2331,51 @@ def report_stage_pass(report: dict[str, Any]) -> bool:
     return bool(stage_gate.get("pass"))
 
 
+def _arbitrated_ink_stage_gate(
+    stage_gate: dict[str, Any],
+    arbitration: dict[str, Any],
+    ink_issues: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(arbitration, dict) or not arbitration.get("active"):
+        return stage_gate
+    gate = dict(stage_gate)
+    stage_status = {
+        str(key): dict(value) if isinstance(value, dict) else value
+        for key, value in (stage_gate.get("stage_status") or {}).items()
+    }
+    text_shape = stage_status.get("text_shape")
+    if isinstance(text_shape, dict):
+        text_shape["pass"] = True
+        text_shape["reason"] = "visual_shape_arbitrated"
+        text_shape["issues"] = []
+        text_shape["deferred_issues"] = list(arbitration.get("deferred_issues") or [])
+        text_shape["deferred_issue_count"] = len(text_shape["deferred_issues"])
+        text_shape["pass_with_deferred"] = True
+        text_shape["deferred_to_stage"] = "ink_gray_balance"
+        text_shape["visual_arbitration"] = {
+            "active": True,
+            "basis": arbitration.get("reason"),
+        }
+    ink_stage = stage_status.get("ink_gray_balance")
+    if isinstance(ink_stage, dict):
+        issue_items = [issue for issue in ink_issues if isinstance(issue, dict)]
+        ink_stage["pass"] = False
+        ink_stage["issues"] = issue_items
+        ink_stage["reason"] = str(issue_items[0].get("type") or "ink_gray_balance_failed") if issue_items else "ink_gray_balance_failed"
+    gate["stage_status"] = stage_status
+    gate["stages"] = [
+        stage_status.get(str(stage.get("id")), stage)
+        if isinstance(stage, dict)
+        else stage
+        for stage in stage_gate.get("stages", [])
+    ]
+    gate["blocking_stage"] = "ink_gray_balance"
+    gate["blocking_stage_blocks_next"] = True
+    gate["pass"] = False
+    gate["local_shape_arbitration"] = arbitration
+    return gate
+
+
 def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
     stage_gate = _stage_gate_for_report(report)
     shape_stage_issues = stage_issues({"stage_gate": stage_gate}, "text_shape")
@@ -1972,10 +2403,23 @@ def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, An
     pose_issues = [] if ink_issues and not shape_blocking else local_pose_issues(report)
     photo_issues = stage_issues({"stage_gate": stage_gate}, "photo_texture")
     background_issues = stage_issues({"stage_gate": stage_gate}, "background_cleanup")
+    shape_arbitration = local_shape_visual_arbitration_report(
+        report,
+        acceptance,
+        stage_gate=stage_gate,
+        ink_issues=ink_issues,
+    )
+    if shape_arbitration.get("active"):
+        shape_blocking = False
+        body_issues = []
+        neighbor_issues = []
+        pose_issues = []
     uncovered_shape_issue_count = max(
         0,
         len(shape_stage_issues) - len(body_issues) - len(neighbor_issues) - len(pose_issues),
     )
+    if shape_arbitration.get("active"):
+        uncovered_shape_issue_count = 0
     if (
         stage_gate.get("pass")
         and not ink_issues
@@ -1989,13 +2433,51 @@ def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, An
         return acceptance
 
     gated = dict(acceptance or {})
-    gated["stage_gate"] = stage_gate
+    gated["stage_gate"] = _arbitrated_ink_stage_gate(stage_gate, shape_arbitration, ink_issues)
+    if shape_arbitration.get("active"):
+        gated["local_shape_arbitration"] = shape_arbitration
+        gated["blocking_stage"] = shape_arbitration.get("advance_to_stage")
+        stage_assessment = gated.get("stage_assessment")
+        if isinstance(stage_assessment, dict):
+            stage_assessment = dict(stage_assessment)
+            stage_assessment["current_blocking_stage"] = shape_arbitration.get("advance_to_stage")
+            stage_assessment["suggestion_target_stage"] = shape_arbitration.get("advance_to_stage")
+            stage_assessment["basis"] = (
+                str(stage_assessment.get("basis") or "").strip()
+                + " Vision 形态字段已通过，本地可仲裁 text_shape 指标转入 ink_gray_balance。"
+            ).strip()
+            gated["stage_assessment"] = stage_assessment
     findings = gated.get("visual_findings")
     findings = dict(findings) if isinstance(findings, dict) else {}
     if ink_issues and not shape_blocking:
-        findings.setdefault("stroke_weight", "too_bold")
-        findings.setdefault("darkness", "too_dark")
-        findings.setdefault("sharpness", "too_sharp")
+        ink_issue_types = {str(issue.get("type") or "") for issue in ink_issues if isinstance(issue, dict)}
+        core_light_issue_types = {
+            "changed_char_core_too_gray",
+            "changed_char_core_too_light",
+            "core_mean_gray_too_light",
+            "core_lighten_too_high",
+            "ink_too_light",
+        }
+        overblack_issue_types = {
+            "changed_char_core_too_black",
+            "changed_char_core_too_black_hard",
+            "roi_core_too_black",
+            "roi_black_core_share_too_high",
+            "longer_mid_gray_body_too_black",
+            "changed_char_mid_gray_too_black",
+            "changed_char_deep_gray_too_dark",
+        }
+        core_light_dominates = "changed_char_core_too_gray" in ink_issue_types or (
+            bool(ink_issue_types & core_light_issue_types) and not bool(ink_issue_types & overblack_issue_types)
+        )
+        if core_light_dominates:
+            findings.setdefault("stroke_weight", "too_thin")
+            findings.setdefault("darkness", "too_light")
+            findings.setdefault("sharpness", "too_blurry")
+        else:
+            findings.setdefault("stroke_weight", "too_bold")
+            findings.setdefault("darkness", "too_dark")
+            findings.setdefault("sharpness", "too_sharp")
     elif body_issues or neighbor_issues:
         findings["stroke_weight"] = "too_thin"
         findings.setdefault("darkness", "ok")
@@ -2038,8 +2520,16 @@ def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, An
         local_reason = "本地形态阶段发现新字笔画身体仍偏窄或中间灰阶不足；必须先修粗细和字形，再进入黑度阶段。"
     elif shape_blocking and neighbor_issues:
         local_reason = "本地形态阶段发现新字相对同一行保留字核心密度或外灰边不一致；必须先修邻字风格匹配。"
+    elif shape_arbitration.get("active") and ink_issues:
+        local_reason = "Vision 形态仲裁已确认字体、字号、字距、基线和笔画粗细可作为基准；本轮转入 ink_gray_balance，只做字内黑度/灰阶微调，不再用外扩描边修形态。"
     elif ink_issues:
-        local_reason = "本地硬指标发现新字深黑核心过量或灰阶过渡不足，需要继续降低核心黑块并补照片质感。"
+        ink_issue_types = {str(issue.get("type") or "") for issue in ink_issues if isinstance(issue, dict)}
+        if "changed_char_core_too_gray" in ink_issue_types:
+            local_reason = "本地硬指标发现新字真黑核心不足，同时中灰灰雾偏多；必须先让笔画核心接近原字和同排参考字，再继续背景或照片质感修复。"
+        elif "changed_char_deep_gray_too_dark" in ink_issue_types:
+            local_reason = "本地硬指标发现新字 55-70 深灰近黑带过重；即使真黑核心未超标，也必须先降低深灰体量，让黑度分布接近原字和同排参考字。"
+        else:
+            local_reason = "本地硬指标发现新字深黑核心过量或灰阶过渡不足，需要继续降低核心黑块并补照片质感。"
     elif photo_issues:
         local_reason = "本地照片质感阶段发现新字与原图的拍照模糊、边缘断裂、噪声或压缩质感不一致，需要先补齐照片质感再交付。"
     elif background_issues:
@@ -2063,7 +2553,13 @@ def apply_local_acceptance_gate(acceptance: dict[str, Any], report: dict[str, An
     if not isinstance(must_fix, list):
         must_fix = []
     if ink_issues and not shape_blocking:
-        must_fix.append("Reduce excessive <55 core pixels and recover mid-gray scanned edges before accepting.")
+        ink_issue_types = {str(issue.get("type") or "") for issue in ink_issues if isinstance(issue, dict)}
+        if "changed_char_core_too_gray" in ink_issue_types:
+            must_fix.append("Recover true-black stroke cores against the source slots and same-row references while reducing gray haze.")
+        elif "changed_char_deep_gray_too_dark" in ink_issue_types:
+            must_fix.append("Reduce excessive 55-70 near-black body in changed CJK glyphs before accepting; true-black core alone is not sufficient evidence.")
+        else:
+            must_fix.append("Reduce excessive <55 core pixels and recover mid-gray scanned edges before accepting.")
     elif body_issues:
         must_fix.append("Increase stroke body and mid-gray coverage while keeping <55 core pixels bounded.")
     if neighbor_issues:
@@ -2511,6 +3007,8 @@ def candidate_report(
     report["reference_profile"] = reference_profile
     report["strict_visual_metrics"] = strict_metrics
     report["char_gray_band_metrics"] = char_gray_band_metrics(original, candidate, plan)
+    report["stroke_body_shape_metrics"] = stroke_body_shape_metrics(original, plan, params)
+    report["stroke_weight_fit"] = stroke_weight_fit_score(report)
     report["char_pose_metrics"] = char_pose_metrics(original, plan, params)
     report["photo_texture_metrics"] = photo_texture_metrics(original, candidate, plan, params)
     report["background_texture_metrics"] = background_texture_metrics(original, candidate, plan, params)

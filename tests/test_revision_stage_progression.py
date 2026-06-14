@@ -83,6 +83,17 @@ class RevisionStageProgressionTest(unittest.TestCase):
             )
         )
 
+    def test_candidate_that_moves_to_prior_stage_does_not_progress(self) -> None:
+        report = staged_report(ink_pass=True, blocking_stage="text_shape")
+
+        self.assertFalse(
+            progresses_past_blocking_stage(
+                report,
+                current_blocking_stage="ink_gray_balance",
+                next_blocking_stage="text_shape",
+            )
+        )
+
     def test_candidate_still_blocked_at_current_stage_does_not_progress(self) -> None:
         report = staged_report(ink_pass=False, blocking_stage="ink_gray_balance")
 

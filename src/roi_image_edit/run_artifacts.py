@@ -824,6 +824,30 @@ def _patch_direction_source(
     }
 
 
+def _controlled_escape_direction_source(
+    round_record: dict[str, Any],
+    *,
+    basis_blocking_stage: str | None,
+) -> dict[str, Any] | None:
+    escape_report = round_record.get("controlled_escape_grid")
+    if not isinstance(escape_report, dict):
+        return None
+    candidate_count = _positive_int(escape_report.get("candidate_count"))
+    primary_stage = escape_report.get("primary_stage")
+    stage_matches_basis = bool(basis_blocking_stage and primary_stage == basis_blocking_stage)
+    if not escape_report.get("enabled") or candidate_count <= 0 or not stage_matches_basis:
+        return None
+    return {
+        "source": "controlled_escape_grid",
+        "stage_id": primary_stage,
+        "secondary_stage": escape_report.get("secondary_stage"),
+        "optimization_step": "controlled_escape",
+        "escape_strategy": escape_report.get("escape_strategy"),
+        "candidate_count": candidate_count,
+        "stage_matches_basis": stage_matches_basis,
+    }
+
+
 def revision_round_continuation_contract(
     round_record: dict[str, Any],
     *,
@@ -852,6 +876,10 @@ def revision_round_continuation_contract(
             _grid_direction_source(
                 round_record,
                 "photo_texture_candidate_grid",
+                basis_blocking_stage=basis_stage,
+            ),
+            _controlled_escape_direction_source(
+                round_record,
                 basis_blocking_stage=basis_stage,
             ),
             _patch_direction_source(round_record, basis_blocking_stage=basis_stage),

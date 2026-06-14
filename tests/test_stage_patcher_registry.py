@@ -9,6 +9,7 @@ from roi_image_edit.iterative_pipeline import CandidateParams
 import roi_image_edit.stage_patchers as stage_patchers_module
 from roi_image_edit.stage_patchers import (
     dispatch_revision_patches,
+    effective_blocking_stage,
     patch_key_audit_for_stage_patcher,
     revision_patches_for_round,
     select_stage_patcher,
@@ -149,6 +150,54 @@ class StagePatcherRegistryTest(unittest.TestCase):
         for patch in patches:
             self.assertNotIn("opacity_delta", patch)
             audit = patch_key_audit_for_stage_patcher("photo_texture", patch)
+            self.assertTrue(audit["declared"], audit)
+
+    def test_visual_too_bold_uses_shape_thinning_before_ink_darkness(self) -> None:
+        dispatch = dispatch_revision_patches(
+            self.params,
+            {
+                "visual_findings": {"stroke_weight": "too_bold", "darkness": "too_dark"},
+                "parameter_suggestions": [
+                    {"name": "opacity", "delta": -0.08},
+                    {"name": "blur", "delta": 0.08},
+                    {"name": "core_ink_gain", "delta": -0.08},
+                    {"name": "font_size", "delta": -1},
+                    {"name": "stroke_opacity", "delta": -0.03},
+                ],
+            },
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "local_ink_balance_issues": [
+                    {"type": "changed_char_deep_gray_too_dark"},
+                ],
+            },
+            rank_patch={"opacity_delta": -0.06, "core_ink_gain_delta": -0.08},
+        )
+
+        self.assertEqual(dispatch["patcher_stage"], "text_shape")
+        patches = dispatch["patches"]
+        self.assertTrue(patches)
+        forbidden = {
+            "opacity_delta",
+            "blur_delta",
+            "alpha_contrast_delta",
+            "core_ink_gain_delta",
+            "core_darken_strength_delta",
+            "core_darken_threshold_delta",
+            "core_darken_target_gray_delta",
+        }
+        self.assertFalse(any(set(patch) & forbidden for patch in patches), patches)
+        self.assertTrue(
+            any(
+                float(patch.get("font_size_delta") or 0.0) < 0.0
+                or float(patch.get("stroke_opacity_delta") or 0.0) < 0.0
+                or float(patch.get("ink_gain_delta") or 0.0) < 0.0
+                for patch in patches
+            )
+        )
+        for patch in patches:
+            audit = patch_key_audit_for_stage_patcher("text_shape", patch)
             self.assertTrue(audit["declared"], audit)
 
     def test_photo_texture_patcher_declares_only_small_texture_parameter_family(self) -> None:
@@ -330,6 +379,45 @@ class StagePatcherRegistryTest(unittest.TestCase):
             )
         )
 
+    def test_background_cleanup_dark_shadow_patches_expand_mask_without_blur(self) -> None:
+        acceptance = {
+            "visual_findings": {
+                "background": "ghost_visible",
+                "darkness": "too_dark",
+                "sharpness": "ok",
+            },
+            "visual_findings_text": "目标文字周围背景仍有暗影残留。",
+        }
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "background_cleanup_report": {
+                "pass": False,
+                "issues": [
+                    {
+                        "type": "post_blend_dark_shadow",
+                        "value": 0.47167,
+                        "limit": 0.28,
+                    }
+                ],
+            },
+            "local_background_texture_issues": [],
+        }
+
+        dispatch = dispatch_revision_patches(self.params, acceptance, report)
+
+        self.assertEqual(dispatch["patcher_stage"], "background_cleanup")
+        priority_patches = dispatch["patches"][:4]
+        self.assertTrue(
+            any(
+                patch.get("mask_threshold_delta", 0) > 0
+                and patch.get("inpaint_radius_delta", 0) >= 1
+                for patch in priority_patches
+            )
+        )
+        self.assertFalse(any("blur_delta" in patch for patch in priority_patches))
+        self.assertFalse(any(patch.get("mask_threshold_delta", 0) < 0 for patch in priority_patches))
+
     def test_no_runtime_switch_points_to_old_mixed_revision_path(self) -> None:
         src_root = Path(__file__).resolve().parents[1] / "src" / "roi_image_edit"
         violations: list[str] = []
@@ -374,7 +462,28 @@ class StagePatcherRegistryTest(unittest.TestCase):
                     ):
                         violations.append(f"{path.name}:{node.lineno}: runtime revision fallback env {value}")
 
-        self.assertEqual(violations, [])
+            self.assertEqual(violations, [])
+
+    def test_effective_blocking_stage_uses_visual_shape_arbitration(self) -> None:
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "strict_gate": {
+                "pass": False,
+                "issues": [{"type": "font_family_style_score_ratio", "actual": 1.31, "limit": 1.25}],
+            },
+        }
+        acceptance = {
+            "pass": False,
+            "final_decision": "revise",
+            "local_shape_arbitration": {
+                "active": True,
+                "from_stage": "text_shape",
+                "advance_to_stage": "ink_gray_balance",
+            },
+        }
+
+        self.assertEqual(effective_blocking_stage(report, acceptance), ("ink_gray_balance", False))
 
     def test_select_stage_patcher_reports_selection_reason(self) -> None:
         report = {

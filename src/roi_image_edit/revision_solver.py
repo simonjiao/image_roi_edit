@@ -699,6 +699,7 @@ def ink_gray_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
                 "core_mean_gray_too_light",
                 "core_lighten_too_high",
                 "changed_char_core_too_light",
+                "changed_char_core_too_gray",
                 "ink_too_light",
             }
         ),
@@ -745,6 +746,7 @@ def _build_micro_tuning_report(
                 "core_mean_gray_too_light",
                 "core_lighten_too_high",
                 "changed_char_core_too_light",
+                "changed_char_core_too_gray",
                 "ink_too_light",
             }
         ),
@@ -951,10 +953,29 @@ def ink_gray_micro_tuning_candidates(
     return _core_light_micro_variants(params)
 
 
-def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dict[str, tuple[Any, ...]]:
+def ink_gray_axes(
+    params: CandidateParams,
+    report: dict[str, Any] | None,
+    *,
+    visual_shape_arbitration: bool = False,
+) -> dict[str, tuple[Any, ...]]:
     flags = ink_gray_issue_flags(report)
     combined_core_light_outer_halo = flags["core_too_light"] and flags["outer_gray_halo"]
-    if flags["excess_black_core"] or flags["needs_thinner_strokes"]:
+    if visual_shape_arbitration and flags["core_too_light"]:
+        opacity_deltas = (0.0, 0.04, 0.08, 0.12)
+        stroke_deltas = (0.0,)
+        ink_deltas = (0.0, 0.04)
+        alpha_deltas = (0.04, 0.08)
+        core_deltas = (
+            (0.08, 0.08, 8, -6),
+            (0.14, 0.12, 8, -10),
+            (0.22, 0.18, 4, -14),
+            (0.34, 0.26, 0, -20),
+            (0.48, 0.38, -8, -28),
+            (0.64, 0.52, -16, -28),
+            (0.80, 0.70, -24, -28),
+        )
+    elif flags["excess_black_core"] or flags["needs_thinner_strokes"]:
         opacity_deltas = (0.0, -0.02, -0.04, -0.06)
         stroke_deltas = (0.0, -0.02, -0.04, 0.01)
         ink_deltas = (0.0, -0.02)
@@ -979,6 +1000,7 @@ def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dic
         alpha_deltas = (0.0, 0.04)
         core_deltas = ((0.0, 0.0, 0, 0), (0.04, 0.04, 6, -4), (0.08, 0.06, 10, -8), (0.02, 0.08, 4, -10))
 
+    stroke_target_len = 1 if visual_shape_arbitration and flags["core_too_light"] else 4
     core_axis = tuple(
         (
             _float_axis(params.core_ink_gain, (core_delta,), low=0.0, high=1.0, target_len=1)[0],
@@ -990,7 +1012,7 @@ def ink_gray_axes(params: CandidateParams, report: dict[str, Any] | None) -> dic
     )
     return {
         "opacity": _float_axis(params.opacity, opacity_deltas, low=0.2, high=1.0, target_len=4),
-        "stroke_opacity": _float_axis(params.stroke_opacity, stroke_deltas, low=0.0, high=1.0, target_len=4),
+        "stroke_opacity": _float_axis(params.stroke_opacity, stroke_deltas, low=0.0, high=1.0, target_len=stroke_target_len),
         "ink_gain": _float_axis(params.ink_gain, ink_deltas, low=0.0, high=1.0, target_len=2),
         "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=2),
         "core_tone": core_axis,
@@ -1004,16 +1026,20 @@ def ink_gray_candidate_grid(
     limit: int = INK_GRAY_GRID_TOP_LIMIT,
     parent_shape_candidate_id: str | None = None,
     allow_text_shape_guard: bool = False,
+    allow_visual_shape_arbitration: bool = False,
 ) -> InkGrayCandidateGrid:
     guard_for_text_shape = (
         bool(allow_text_shape_guard)
         and report_blocks_text_shape(report)
         and report_has_excess_black_core(report)
     )
-    if not report_blocks_ink_gray(report) and not guard_for_text_shape:
+    visual_shape_arbitrated = bool(allow_visual_shape_arbitration) and report_blocks_text_shape(report)
+    if not report_blocks_ink_gray(report) and not guard_for_text_shape and not visual_shape_arbitrated:
         reason = "ink_gray_balance_not_blocking"
         if allow_text_shape_guard and report_blocks_text_shape(report):
             reason = "text_shape_without_excess_black_core"
+        elif allow_visual_shape_arbitration and report_blocks_text_shape(report):
+            reason = "visual_shape_arbitration_not_active"
         return InkGrayCandidateGrid(
             candidates=[],
             report={
@@ -1028,7 +1054,11 @@ def ink_gray_candidate_grid(
 
     micro_tuning = ink_gray_near_threshold_micro_tuning(report)
     micro_variants = ink_gray_micro_tuning_candidates(params, report)
-    axes = ink_gray_axes(params, report)
+    axes = ink_gray_axes(
+        params,
+        report,
+        visual_shape_arbitration=visual_shape_arbitrated,
+    )
     opacity_values = axes["opacity"]
     stroke_values = axes["stroke_opacity"]
     ink_values = axes["ink_gain"]
@@ -1105,6 +1135,8 @@ def ink_gray_candidate_grid(
         "required_parent_state": (
             "text_shape_not_yet_passed_but_ink_must_not_regress"
             if guard_for_text_shape
+            else "text_shape_visually_arbitrated_before_ink_gray"
+            if visual_shape_arbitrated
             else "text_shape_passed_before_ink_gray"
         ),
         "current_blocking_stage": stage_gate.get("blocking_stage"),
@@ -1113,12 +1145,15 @@ def ink_gray_candidate_grid(
         "parent_shape_source": (
             "current_text_shape_candidate_with_excess_black_core"
             if guard_for_text_shape
+            else "vision_shape_arbitrated_current_candidate"
+            if visual_shape_arbitrated
             else "current_candidate_after_text_shape_pass"
         ),
         "parent_shape_stage_passed": bool(
             isinstance(text_shape_status, dict) and text_shape_status.get("pass")
         ),
         "guard_allows_unpassed_text_shape": bool(guard_for_text_shape),
+        "visual_shape_arbitration_allows_unpassed_text_shape": bool(visual_shape_arbitrated),
         "candidate_parent_trace_complete": all(
             record.get("parent_shape_candidate_id") == shape_parent_id
             for record in candidate_records
@@ -1145,6 +1180,7 @@ def ink_gray_candidate_grid(
             "optimization_step": "ink_guard" if guard_for_text_shape else "ink_gray_balance",
             "guards_stage": "text_shape" if guard_for_text_shape else None,
             "guard_mode": "text_shape_excess_black_core" if guard_for_text_shape else None,
+            "visual_shape_arbitration": bool(visual_shape_arbitrated),
             "guard_contract": (
                 {
                     "purpose": "protect ink-gray balance while text_shape remains the primary blocking stage",
@@ -1155,6 +1191,16 @@ def ink_gray_candidate_grid(
                     "selection_rule": "candidate must not regress text_shape and must reduce ink_gray_balance severity",
                 }
                 if guard_for_text_shape
+                else {
+                    "purpose": "continue from a Vision-approved shape baseline into ink-gray balance without changing font geometry",
+                    "primary_blocking_stage": "ink_gray_balance",
+                    "arbitrated_stage": "text_shape",
+                    "protected_stage": "text_shape",
+                    "allowed_delta_keys": sorted(INK_GRAY_GRID_ALLOWED_DELTA_KEYS),
+                    "blocked_delta_keys": sorted(INK_GRAY_GRID_BLOCKED_DELTA_KEYS),
+                    "selection_rule": "candidate may tune ink-gray parameters only; font geometry stays fixed",
+                }
+                if visual_shape_arbitrated
                 else None
             ),
             "parent_candidate_id": params.candidate_id,
@@ -1176,6 +1222,9 @@ def ink_gray_candidate_grid(
                 "ink_gain_count": len(ink_values),
                 "alpha_contrast_count": len(alpha_values),
                 "core_tone_count": len(core_values),
+                "visual_shape_arbitration_core_recovery": bool(
+                    visual_shape_arbitrated and issue_flags["core_too_light"]
+                ),
                 "near_threshold_micro_tuning": micro_tuning,
                 "near_threshold_micro_candidate_count": len(micro_variants),
                 "near_threshold_micro_candidate_ids": micro_candidate_ids,
@@ -1391,7 +1440,11 @@ def _current_stage_near_threshold(
         return False
     if blocking_stage == "ink_gray_balance":
         micro = ink_gray_near_threshold_micro_tuning(report)
-        return bool(micro.get("enabled"))
+        return bool(micro.get("enabled")) or bool(
+            _longer_mid_gray_body_escape_report(report).get("enabled")
+        ) or bool(
+            _overblack_body_shape_escape_report(report).get("enabled")
+        )
     if blocking_stage == "photo_texture":
         issues = stage_issues(report, "photo_texture")
         issue_types = {str(issue.get("type") or "") for issue in issues}
@@ -1407,6 +1460,165 @@ def _current_stage_near_threshold(
 
 
 CONTROLLED_ESCAPE_LIMIT = 4
+
+
+def _slot_count(report: dict[str, Any] | None, key: str) -> int | None:
+    if not isinstance(report, dict):
+        return None
+    roi_plan = report.get("roi_plan")
+    if not isinstance(roi_plan, dict):
+        return None
+    try:
+        return int(roi_plan.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_cjk_longer_form_report(report: dict[str, Any] | None) -> bool:
+    if not isinstance(report, dict):
+        return False
+    classification = report.get("classification")
+    if not isinstance(classification, dict):
+        classification = {}
+    class_key = str(report.get("class_key") or classification.get("class_key") or "")
+    script = str(classification.get("script") or "")
+    image_type = str(classification.get("image_type") or "")
+    scenario = str(classification.get("scenario") or "")
+    length_change = str(classification.get("length_change") or "")
+    source_count = _slot_count(report, "source_slot_count")
+    target_count = _slot_count(report, "target_slot_count")
+    longer = length_change == "longer" or (
+        source_count is not None and target_count is not None and target_count > source_count
+    )
+    return bool(
+        longer
+        and (script == "cjk" or class_key.endswith(".cjk") or ".cjk" in class_key)
+        and (image_type == "photo_document" or class_key.startswith("photo_document."))
+        and (scenario == "form_field_value_replace" or ".form_field_value_replace." in class_key)
+    )
+
+
+def _overblack_body_shape_escape_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    issues = stage_issues(report, "ink_gray_balance")
+    issue_types = {str(issue.get("type") or "") for issue in issues if isinstance(issue, dict)}
+    overblack_issue_types = {"roi_core_too_black", "changed_char_core_too_black"}
+    target_issues = [
+        issue
+        for issue in issues
+        if isinstance(issue, dict) and str(issue.get("type") or "") in overblack_issue_types
+    ]
+    if not target_issues:
+        return {
+            "enabled": False,
+            "reason": "no_overblack_core_issue",
+            "issue_types": sorted(issue_types),
+        }
+    if not _is_cjk_longer_form_report(report):
+        return {
+            "enabled": False,
+            "reason": "not_cjk_longer_form_report",
+            "issue_types": sorted(issue_types),
+        }
+    gaps: list[float] = []
+    gap_ratios: list[float] = []
+    for issue in target_issues:
+        try:
+            actual = float(issue.get("actual"))
+            limit = float(issue.get("limit"))
+        except (TypeError, ValueError):
+            continue
+        gap = actual - limit
+        if gap <= 0:
+            continue
+        gaps.append(gap)
+        gap_ratios.append(gap / max(limit, 1.0))
+    if not gaps:
+        return {
+            "enabled": False,
+            "reason": "overblack_issue_has_no_positive_gap",
+            "issue_types": sorted(issue_types),
+        }
+    stage_gate = stage_gate_for_report(report or {})
+    text_shape_status = (
+        stage_gate.get("stage_status", {}).get("text_shape")
+        if isinstance(stage_gate.get("stage_status"), dict)
+        else {}
+    )
+    text_shape_passed = isinstance(text_shape_status, dict) and bool(text_shape_status.get("pass"))
+    if not text_shape_passed:
+        return {
+            "enabled": False,
+            "reason": "text_shape_not_passed_for_shape_escape",
+            "issue_types": sorted(issue_types),
+        }
+    deferred = (
+        text_shape_status.get("deferred_issues", [])
+        if isinstance(text_shape_status, dict) and isinstance(text_shape_status.get("deferred_issues"), list)
+        else []
+    )
+    return {
+        "enabled": True,
+        "reason": "cjk_longer_overblack_needs_shape_ink_escape",
+        "issue_types": sorted(issue_types),
+        "candidate_family": "overblack_body_shape_escape",
+        "max_gap": round(max(gaps), 3),
+        "max_gap_ratio": round(max(gap_ratios), 4),
+        "text_shape_deferred_issue_types": sorted(
+            {
+                str(issue.get("type") or "")
+                for issue in deferred
+                if isinstance(issue, dict)
+            }
+        ),
+        "target_issue_count": len(target_issues),
+    }
+
+
+def _longer_mid_gray_body_escape_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    issues = stage_issues(report, "ink_gray_balance")
+    issue_types = {str(issue.get("type") or "") for issue in issues if isinstance(issue, dict)}
+    target_issue_types = {"longer_mid_gray_body_too_black"}
+    blocking_issue_types = {
+        "roi_core_too_black",
+        "roi_black_core_share_too_high",
+        "changed_char_core_too_black",
+        "changed_char_core_too_black_hard",
+        "changed_char_core_too_gray",
+        "core_mean_gray_too_light",
+        "core_lighten_too_high",
+        "ink_too_light",
+    }
+    target_issues = [
+        issue
+        for issue in issues
+        if isinstance(issue, dict) and str(issue.get("type") or "") in target_issue_types
+    ]
+    if not target_issues:
+        return {
+            "enabled": False,
+            "reason": "no_longer_mid_gray_body_issue",
+            "issue_types": sorted(issue_types),
+        }
+    if issue_types & blocking_issue_types:
+        return {
+            "enabled": False,
+            "reason": "core_or_lightness_issue_must_remain_primary",
+            "issue_types": sorted(issue_types),
+        }
+    for issue in target_issues:
+        if str(issue.get("length_change") or "") != "longer":
+            return {
+                "enabled": False,
+                "reason": "issue_is_not_longer_replacement",
+                "issue_types": sorted(issue_types),
+            }
+    return {
+        "enabled": True,
+        "reason": "longer_mid_gray_body_needs_shape_area_escape",
+        "issue_types": sorted(issue_types),
+        "candidate_family": "longer_mid_gray_font_size_micro_escape",
+        "target_issue_count": len(target_issues),
+    }
 
 
 def controlled_escape_candidate_grid(
@@ -1439,9 +1651,94 @@ def controlled_escape_candidate_grid(
     candidates: list[CandidateParams] = []
     secondary_stage: str | None = None
     allowed_delta_bounds: dict[str, Any] = {}
+    escape_strategy: str | None = None
+    mid_gray_escape = _longer_mid_gray_body_escape_report(report)
+    overblack_shape_escape = _overblack_body_shape_escape_report(report)
 
-    if blocking_stage == "ink_gray_balance":
+    if blocking_stage == "ink_gray_balance" and params is not None and overblack_shape_escape.get("enabled"):
+        secondary_stage = "text_shape"
+        escape_strategy = str(overblack_shape_escape.get("candidate_family") or "overblack_body_shape_escape")
+        allowed_delta_bounds = {
+            "font_size": (-1, 0),
+            "opacity": (-0.12, -0.05),
+            "blur": (-0.28, -0.12),
+            "alpha_contrast": (0.04, 0.12),
+            "stroke_opacity": (0.0, 0.025),
+        }
+        next_font_size = max(8, params.font_size - 1)
+        candidates = [
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.06,
+                blur=params.blur - 0.20,
+                alpha_contrast=params.alpha_contrast + 0.08,
+            ),
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.09,
+                blur=params.blur - 0.25,
+                alpha_contrast=params.alpha_contrast + 0.10,
+            ),
+            mutate_params(
+                params,
+                opacity=params.opacity - 0.09,
+                blur=params.blur - 0.23,
+                alpha_contrast=params.alpha_contrast + 0.08,
+            ),
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.10,
+                blur=params.blur - 0.27,
+                stroke_opacity=params.stroke_opacity + 0.025,
+                alpha_contrast=params.alpha_contrast + 0.08,
+            ),
+        ]
+    elif blocking_stage == "ink_gray_balance" and params is not None and mid_gray_escape.get("enabled"):
+        secondary_stage = "text_shape"
+        escape_strategy = str(mid_gray_escape.get("candidate_family") or "longer_mid_gray_font_size_micro_escape")
+        allowed_delta_bounds = {
+            "font_size": (-1, -1),
+            "opacity": (-0.035, -0.015),
+            "blur": (0.03, 0.06),
+            "alpha_contrast": (0.0, 0.03),
+        }
+        next_font_size = max(8, params.font_size - 1)
+        candidates = [
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.025,
+                blur=params.blur + 0.05,
+                alpha_contrast=params.alpha_contrast + 0.02,
+            ),
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.030,
+                blur=params.blur + 0.04,
+                alpha_contrast=params.alpha_contrast + 0.02,
+            ),
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.020,
+                blur=params.blur + 0.05,
+                alpha_contrast=params.alpha_contrast + 0.02,
+            ),
+            mutate_params(
+                params,
+                font_size=next_font_size,
+                opacity=params.opacity - 0.015,
+                blur=params.blur + 0.06,
+                alpha_contrast=params.alpha_contrast + 0.02,
+            ),
+        ]
+    elif blocking_stage == "ink_gray_balance" and params is not None:
         secondary_stage = "photo_texture"
+        escape_strategy = "ink_gray_near_threshold_photo_texture_escape"
         allowed_delta_bounds = {
             "blur": (-0.03, 0.03),
             "alpha_contrast": (-0.02, 0.02),
@@ -1455,10 +1752,23 @@ def controlled_escape_candidate_grid(
         ]
     elif blocking_stage == "photo_texture":
         secondary_stage = "background_cleanup"
+        escape_strategy = "photo_texture_near_threshold_background_escape"
         allowed_delta_bounds = {"post_blend_strength": (-0.02, 0.02)}
         candidates = []  # photo → bg cleanup escape would need bg cleanup params
 
     candidates = candidates[:CONTROLLED_ESCAPE_LIMIT]
+    candidate_delta_audit = []
+    if params is not None:
+        for candidate in candidates:
+            candidate_delta_audit.append(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "delta_keys": sorted(params_delta_keys(params, candidate)),
+                    "controlled_escape": True,
+                    "primary_stage": blocking_stage,
+                    "secondary_stage": secondary_stage,
+                }
+            )
     return {
         "enabled": bool(candidates),
         "reason": (
@@ -1469,6 +1779,12 @@ def controlled_escape_candidate_grid(
         "controlled_escape": True,
         "primary_stage": blocking_stage,
         "secondary_stage": secondary_stage,
+        "escape_strategy": escape_strategy,
+        "trigger": (
+            overblack_shape_escape
+            if blocking_stage == "ink_gray_balance" and overblack_shape_escape.get("enabled")
+            else mid_gray_escape if blocking_stage == "ink_gray_balance" else None
+        ),
         "allowed_secondary_delta_bounds": allowed_delta_bounds,
         "near_threshold": True,
         "hard_boundary_passed": hard_boundary_passed,
@@ -1476,6 +1792,7 @@ def controlled_escape_candidate_grid(
         "escape_limit": CONTROLLED_ESCAPE_LIMIT,
         "candidate_count": len(candidates),
         "candidates": candidates,
+        "candidate_delta_audit": candidate_delta_audit,
         "cross_stage_cartesian_disabled": True,
     }
 

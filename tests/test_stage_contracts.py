@@ -377,6 +377,97 @@ class StageContractsTest(unittest.TestCase):
         self.assertFalse(text_shape["pass_with_deferred"])
         self.assertEqual(text_shape["issues"][0]["type"], "char_center_dx")
 
+    def test_stroke_body_too_bold_blocks_as_text_shape_before_ink_balance(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "params": {"alpha_contrast": 0.30, "blur": 0.36},
+                "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+                "strict_gate": {"text_complexity_ratio": 1.4455},
+                "strict_visual_metrics": {"bands": {}},
+                "char_gray_band_metrics": {
+                    "enabled": True,
+                    "per_char": [
+                        {
+                            "index": 1,
+                            "source_char": "乙",
+                            "target_char": "丁",
+                            "old": {"lt55": 76, "lt165": 532},
+                            "delta": {
+                                "lt55": 20,
+                                "lt165": -172,
+                                "band_55_70": 83,
+                                "band_70_90": -22,
+                                "band_90_120": -88,
+                                "band_120_165": -165,
+                            },
+                        }
+                    ],
+                },
+                "local_ink_balance_issues": [
+                    {
+                        "type": "changed_char_deep_gray_too_dark",
+                        "index": 1,
+                        "actual": 83.0,
+                        "limit": 48.0,
+                    }
+                ],
+            },
+            "photo_scan",
+        )
+
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        text_shape = gate["stage_status"]["text_shape"]
+        self.assertFalse(text_shape["pass"])
+        self.assertEqual(text_shape["issues"][0]["type"], "changed_char_stroke_body_too_bold")
+
+    def test_high_opacity_blur_body_expansion_blocks_as_text_shape_before_ink_balance(self) -> None:
+        gate = stage_gate_for_report(
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "params": {"opacity": 0.70, "blur": 0.55, "alpha_contrast": 0.0},
+                "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+                "strict_gate": {"text_complexity_ratio": 1.4455},
+                "strict_visual_metrics": {"bands": {}},
+                "char_gray_band_metrics": {
+                    "enabled": True,
+                    "per_char": [
+                        {
+                            "index": 0,
+                            "source_char": "甲",
+                            "target_char": "丙",
+                            "old": {"lt55": 157, "lt165": 581},
+                            "delta": {
+                                "lt55": -73,
+                                "lt165": 82,
+                                "band_55_70": 87,
+                                "band_70_90": 33,
+                                "band_90_120": -20,
+                                "band_120_165": 55,
+                            },
+                        }
+                    ],
+                },
+                "local_ink_balance_issues": [
+                    {
+                        "type": "changed_char_core_too_gray",
+                        "index": 0,
+                        "actual": 120.0,
+                        "limit": 37.68,
+                    }
+                ],
+            },
+            "photo_scan",
+        )
+
+        self.assertEqual(gate["blocking_stage"], "text_shape")
+        self.assertEqual(
+            gate["stage_status"]["text_shape"]["issues"][0]["basis"],
+            "high_opacity_high_blur_cjk_longer_body_expansion",
+        )
+
     def test_ink_gray_stage_rejects_photo_noise_as_primary_fix(self) -> None:
         gate = stage_gate_for_report(
             {

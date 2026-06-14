@@ -125,6 +125,50 @@ def near_threshold_core_light_report() -> dict:
     }
 
 
+def visually_arbitrated_text_shape_report() -> dict:
+    return {
+        "pass": True,
+        "pipeline_profile": "photo_scan",
+        "local_ink_balance_issues": [
+            {
+                "type": "changed_char_core_too_gray",
+                "lt55_delta": -42.0,
+                "limit": -24.0,
+            }
+        ],
+        "stage_gate": {
+            "pass": False,
+            "blocking_stage": "text_shape",
+            "stage_status": {
+                "hard_boundary": {"id": "hard_boundary", "pass": True, "issues": []},
+                "text_shape": {
+                    "id": "text_shape",
+                    "pass": False,
+                    "issues": [{"type": "font_family_style_score_ratio", "actual": 1.31, "limit": 1.25}],
+                },
+                "ink_gray_balance": {
+                    "id": "ink_gray_balance",
+                    "pass": False,
+                    "issues": [{"type": "changed_char_core_too_gray"}],
+                },
+            },
+            "stages": [
+                {"id": "hard_boundary", "pass": True, "issues": []},
+                {
+                    "id": "text_shape",
+                    "pass": False,
+                    "issues": [{"type": "font_family_style_score_ratio", "actual": 1.31, "limit": 1.25}],
+                },
+                {
+                    "id": "ink_gray_balance",
+                    "pass": False,
+                    "issues": [{"type": "changed_char_core_too_gray"}],
+                },
+            ],
+        },
+    }
+
+
 class InkGrayCandidateGridTest(unittest.TestCase):
     def test_ink_gray_grid_reports_budget_parent_and_allowed_delta_keys(self) -> None:
         base = params()
@@ -219,6 +263,55 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             grid.report["guard_contract"]["selection_rule"],
             "candidate must not regress text_shape and must reduce ink_gray_balance severity",
         )
+
+    def test_visual_shape_arbitration_enables_ink_grid_without_shape_geometry_changes(self) -> None:
+        base = params()
+        grid = ink_gray_candidate_grid(
+            base,
+            visually_arbitrated_text_shape_report(),
+            limit=8,
+            allow_visual_shape_arbitration=True,
+        )
+
+        self.assertTrue(grid.report["enabled"])
+        self.assertEqual(grid.report["stage_id"], "ink_gray_balance")
+        self.assertTrue(grid.report["visual_shape_arbitration"])
+        self.assertTrue(grid.report["axes"]["visual_shape_arbitration_core_recovery"])
+        self.assertEqual(grid.report["axes"]["stroke_opacity_count"], 1)
+        self.assertEqual(
+            grid.report["parent_shape_contract"]["required_parent_state"],
+            "text_shape_visually_arbitrated_before_ink_gray",
+        )
+        self.assertTrue(
+            grid.report["parent_shape_contract"]["visual_shape_arbitration_allows_unpassed_text_shape"]
+        )
+        self.assertEqual(
+            grid.report["guard_contract"]["selection_rule"],
+            "candidate may tune ink-gray parameters only; font geometry stays fixed",
+        )
+        self.assertTrue(grid.candidates)
+        self.assertTrue(
+            any(
+                candidate.core_ink_gain >= base.core_ink_gain + 0.20
+                and candidate.core_darken_strength >= base.core_darken_strength + 0.16
+                for candidate in grid.candidates
+            )
+        )
+        self.assertTrue(
+            any(
+                candidate.core_darken_threshold <= base.core_darken_threshold - 8
+                and candidate.core_darken_target_gray <= base.core_darken_target_gray - 20
+                for candidate in grid.candidates
+            )
+        )
+        for candidate in grid.candidates:
+            self.assertEqual(candidate.font_name, base.font_name)
+            self.assertEqual(candidate.font_path, base.font_path)
+            self.assertEqual(candidate.font_size, base.font_size)
+            self.assertEqual(candidate.stroke_opacity, base.stroke_opacity)
+            self.assertEqual(candidate.text_dx, base.text_dx)
+            self.assertEqual(candidate.text_dy, base.text_dy)
+            self.assertEqual(candidate.char_offsets, base.char_offsets)
         for candidate in grid.candidates:
             self.assertEqual(candidate.font_name, base.font_name)
             self.assertEqual(candidate.font_path, base.font_path)

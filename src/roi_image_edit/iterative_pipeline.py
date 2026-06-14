@@ -1690,10 +1690,13 @@ def target_char_slots_for_plan(plan: RenderPlan) -> tuple[TextRun, ...]:
 
 
 def source_slot_for_target_index(plan: RenderPlan, index: int) -> TextRun | None:
-    source_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
-    if not source_slots:
+    slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    if not slots:
         return None
     source_chars = text_chars(plan.source_text)
+    source_slots = slots[: len(source_chars)] if source_chars else slots
+    if not source_slots:
+        source_slots = slots
     if source_chars and index < len(source_chars):
         return source_slots[min(index, len(source_slots) - 1)]
     return source_slots[-1]
@@ -1811,24 +1814,23 @@ def reference_slot_shear(
     if original is None or not plan.slot_boxes:
         return 0.0
     source_chars = text_chars(plan.source_text)
-    target_chars = text_chars(plan.target_text)
-    if not source_chars or len(source_chars) != len(target_chars):
+    if not source_chars:
         return 0.0
 
     ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
-    if idx >= len(ordered_slots):
+    if not ordered_slots:
         return 0.0
+    source_idx = min(max(0, idx), len(ordered_slots) - 1)
 
     gray = gray_array(original)
-    primary = estimate_slot_edge_shear(gray, ordered_slots[idx], threshold=params.mask_threshold)
+    primary = estimate_slot_edge_shear(gray, ordered_slots[source_idx], threshold=params.mask_threshold)
 
-    changed_indices = changed_text_slot_indices(plan) or set()
     neighbor_shears: list[float] = []
     for distance in range(1, len(ordered_slots)):
-        for neighbor_idx in (idx - distance, idx + distance):
+        for neighbor_idx in (source_idx - distance, source_idx + distance):
             if neighbor_idx < 0 or neighbor_idx >= len(ordered_slots):
                 continue
-            if neighbor_idx in changed_indices:
+            if neighbor_idx == source_idx:
                 continue
             value = estimate_slot_edge_shear(
                 gray,
@@ -1862,29 +1864,41 @@ def char_pose_metrics(
         return {"enabled": False, "reason": "original image not available"}
     source_chars = text_chars(plan.source_text)
     target_chars = text_chars(plan.target_text)
-    if not source_chars or len(source_chars) != len(target_chars):
-        return {"enabled": False, "reason": "source and target chars are not one-to-one"}
+    if not source_chars or not target_chars:
+        return {"enabled": False, "reason": "missing source or target chars"}
     if not plan.slot_boxes:
         return {"enabled": False, "reason": "missing per-character slots"}
 
-    ordered_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    source_slots = tuple(sorted(plan.slot_boxes, key=lambda item: item.x1))
+    target_slots = target_char_slots_for_plan(plan)
+    if not target_slots:
+        return {"enabled": False, "reason": "missing target character slots"}
     gray = gray_array(original)
-    changed_indices = changed_text_slot_indices(plan) or set()
+    if len(source_chars) == len(target_chars):
+        changed_indices = changed_text_slot_indices(plan) or set()
+    else:
+        changed_indices = {
+            idx
+            for idx, target_char in enumerate(target_chars)
+            if idx >= len(source_chars) or source_chars[idx] != target_char
+        }
     items: list[dict[str, Any]] = []
-    for idx, target_char in enumerate(target_chars[: len(ordered_slots)]):
-        slot = ordered_slots[idx]
-        source_shear = estimate_slot_edge_shear(gray, slot, threshold=params.mask_threshold)
+    for idx, target_char in enumerate(target_chars[: len(target_slots)]):
+        slot = target_slots[idx]
+        source_idx = min(idx, len(source_slots) - 1)
+        source_slot = source_slots[source_idx]
+        source_shear = estimate_slot_edge_shear(gray, source_slot, threshold=params.mask_threshold)
         neighbor_shear = None
         neighbor_index = None
-        for distance in range(1, len(ordered_slots)):
-            for candidate_index in (idx - distance, idx + distance):
-                if candidate_index < 0 or candidate_index >= len(ordered_slots):
+        for distance in range(1, len(source_slots)):
+            for candidate_index in (source_idx - distance, source_idx + distance):
+                if candidate_index < 0 or candidate_index >= len(source_slots):
                     continue
-                if candidate_index in changed_indices:
+                if candidate_index == source_idx:
                     continue
                 value = estimate_slot_edge_shear(
                     gray,
-                    ordered_slots[candidate_index],
+                    source_slots[candidate_index],
                     threshold=params.mask_threshold,
                 )
                 if value is not None:
@@ -1907,6 +1921,8 @@ def char_pose_metrics(
                 "target_char": target_char,
                 "changed": idx in changed_indices,
                 "slot_box": [slot.x1, slot.y1, slot.x2, slot.y2],
+                "source_slot_index": source_idx,
+                "source_slot_box": [source_slot.x1, source_slot.y1, source_slot.x2, source_slot.y2],
                 "source_slot_shear": None if source_shear is None else round(float(source_shear), 4),
                 "neighbor_index": neighbor_index,
                 "neighbor_shear": None if neighbor_shear is None else round(float(neighbor_shear), 4),

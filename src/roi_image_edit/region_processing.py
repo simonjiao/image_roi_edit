@@ -9,7 +9,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageStat, ImageOps
 
 from roi_image_edit.iterative_pipeline import (
     STRICT_ACCEPTANCE_APPENDIX,
@@ -40,7 +40,12 @@ from roi_image_edit.historical_acceptance import (
     apply_historical_false_pass_gate,
     historical_false_pass_target,
 )
-from roi_image_edit.image_classification import classify_region_roi_policy, with_region_roi_policy
+from roi_image_edit.image_classification import (
+    classify_region_roi_policy,
+    length_change_for_texts,
+    script_for_texts,
+    with_region_roi_policy,
+)
 
 from roi_image_edit.local_validation import (
     apply_local_acceptance_gate,
@@ -58,6 +63,7 @@ from roi_image_edit.local_validation import (
     save_region_context,
     stage_issue_severity,
     stage_issues,
+    stroke_weight_fit_score,
 )
 
 from roi_image_edit.forced_model_seeds import forced_model_seed_audit
@@ -129,6 +135,7 @@ from roi_image_edit.stage_policy import (
     selected_optimization_step,
     stage_optimization_summary,
 )
+from roi_image_edit.shape_arbitration import text_shape_visual_arbitration_candidate
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -196,6 +203,119 @@ def longer_replacement_soft_scan_candidates(
     return candidates
 
 
+def cjk_longer_form_first_batch_candidates(
+    current: CandidateParams,
+    *,
+    font_candidates: list[tuple[str, str]],
+    font_style_reference: dict[str, Any],
+    max_font_size: int,
+) -> list[CandidateParams]:
+    best_sizes = {
+        item["font_path"]: int(item["font_size"])
+        for item in font_style_reference.get("ranked_fonts", [])
+        if item.get("font_path") and item.get("font_size")
+    }
+    # First-pass seeds for photographed CJK form values must start near the
+    # source text's ink density. High-opacity/high-blur variants are left to
+    # later revision, not the initial frontier.
+    seed_grid = (
+        (0.66, 0.36, 0.00, 0.00, 0.18),
+        (0.64, 0.28, 0.00, 0.00, 0.22),
+        (0.69, 0.30, 0.00, 0.00, 0.08),
+        (0.70, 0.34, 0.00, 0.00, 0.10),
+        (0.72, 0.42, 0.00, 0.00, 0.06),
+        (0.62, 0.40, 0.00, 0.00, 0.14),
+        (0.66, 0.34, 0.01, 0.00, 0.12),
+        (0.68, 0.38, 0.01, 0.00, 0.10),
+    )
+    internal_darken_grid = (
+        (0.72, 0.32, 0.00, 0.00, 0.10, 0.06, 0.04),
+        (0.74, 0.32, 0.00, 0.00, 0.12, 0.08, 0.05),
+        (0.76, 0.30, 0.00, 0.00, 0.12, 0.10, 0.06),
+        (0.78, 0.30, 0.00, 0.00, 0.14, 0.12, 0.08),
+    )
+    candidates: list[CandidateParams] = []
+
+    def append_seed_group(
+        font_items: list[tuple[str, str]],
+        grid: tuple[tuple[float, ...], ...],
+        *,
+        size_deltas: tuple[int, ...],
+    ) -> None:
+        for font_name, font_path in font_items:
+            base_size = best_sizes.get(font_path, current.font_size)
+            for size_delta in size_deltas:
+                font_size = max(8, min(max_font_size, base_size + size_delta))
+                for item in grid:
+                    if len(item) == 5:
+                        opacity, blur, stroke_opacity, ink_gain, alpha_contrast = item
+                        core_ink_gain = 0.0
+                        core_darken_strength = 0.0
+                    else:
+                        (
+                            opacity,
+                            blur,
+                            stroke_opacity,
+                            ink_gain,
+                            alpha_contrast,
+                            core_ink_gain,
+                            core_darken_strength,
+                        ) = item
+                    candidates.append(
+                        mutate_params(
+                            current,
+                            font_name=font_name,
+                            font_path=font_path,
+                            font_size=font_size,
+                            opacity=opacity,
+                            blur=blur,
+                            stroke_opacity=stroke_opacity,
+                            ink_gain=ink_gain,
+                            alpha_contrast=alpha_contrast,
+                            core_ink_gain=core_ink_gain,
+                            core_darken_strength=core_darken_strength,
+                            char_offsets=current.char_offsets,
+                        )
+                    )
+
+    ranked_font_items = font_candidates[: min(4, len(font_candidates))]
+    primary_font_items = ranked_font_items[:1]
+    alternate_font_items = ranked_font_items[1:]
+    append_seed_group(primary_font_items, seed_grid, size_deltas=(-1, 0, 1, 2, -2, -3))
+    append_seed_group(alternate_font_items, internal_darken_grid, size_deltas=(-1, 0, 1, 2))
+    append_seed_group(alternate_font_items, seed_grid, size_deltas=(-1, 0, 1, 2, -2, -3))
+    return candidates
+
+
+def cjk_longer_form_first_batch_enabled(
+    classification: dict[str, Any] | None,
+    roi_plan: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(classification, dict):
+        return False
+    class_key = str(classification.get("class_key") or "")
+    script = str(classification.get("script") or "")
+    image_type = str(classification.get("image_type") or "")
+    scenario = str(classification.get("scenario") or "")
+    length_change = str(classification.get("length_change") or "")
+    source_count = target_count = None
+    if isinstance(roi_plan, dict):
+        try:
+            source_count = int(roi_plan.get("source_slot_count"))
+            target_count = int(roi_plan.get("target_slot_count"))
+        except (TypeError, ValueError):
+            source_count = target_count = None
+    longer = length_change == "longer" or (
+        source_count is not None and target_count is not None and target_count > source_count
+    )
+    return bool(
+        longer
+        and (script == "cjk" or class_key.endswith(".cjk") or ".cjk" in class_key)
+        and (image_type == "photo_document" or class_key.startswith("photo_document."))
+        and (scenario == "form_field_value_replace" or ".form_field_value_replace." in class_key)
+    )
+
+
 def report_stage_status_pass(report: dict[str, Any] | None, stage_id: str | None) -> bool:
     if not isinstance(report, dict) or not stage_id:
         return False
@@ -216,6 +336,9 @@ def progresses_past_blocking_stage(
 ) -> bool:
     if not current_blocking_stage or current_blocking_stage == "text_shape":
         return False
+    if next_blocking_stage and next_blocking_stage in STAGE_ORDER:
+        if STAGE_ORDER.index(next_blocking_stage) < STAGE_ORDER.index(current_blocking_stage):
+            return False
     if not report_stage_status_pass(report, current_blocking_stage):
         return False
     return next_blocking_stage != current_blocking_stage
@@ -599,6 +722,75 @@ def prior_stage_regression_report(
     }
 
 
+REVISION_VISUAL_STALL_MAE_LIMIT = 0.18
+REVISION_VISUAL_STALL_RMS_LIMIT = 1.4
+REVISION_VISUAL_STALL_CHANGED_RATIO_LIMIT = 0.018
+
+
+def revision_visual_delta_report(
+    before: Image.Image,
+    after: Image.Image,
+    roi: list[int] | tuple[int, ...] | None,
+) -> dict[str, Any]:
+    width, height = before.size
+    if after.size != before.size:
+        return {
+            "stalled": False,
+            "reason": "size_changed",
+            "before_size": list(before.size),
+            "after_size": list(after.size),
+        }
+    box: tuple[int, int, int, int]
+    if roi and len(roi) == 4:
+        try:
+            x1, y1, x2, y2 = [int(round(float(value))) for value in roi]
+        except (TypeError, ValueError):
+            x1, y1, x2, y2 = 0, 0, width, height
+        x1 = max(0, min(width, x1))
+        y1 = max(0, min(height, y1))
+        x2 = max(x1 + 1, min(width, x2))
+        y2 = max(y1 + 1, min(height, y2))
+        box = (x1, y1, x2, y2)
+    else:
+        box = (0, 0, width, height)
+
+    before_crop = before.convert("RGB").crop(box)
+    after_crop = after.convert("RGB").crop(box)
+    diff = ImageChops.difference(before_crop, after_crop)
+    stat = ImageStat.Stat(diff)
+    mae = sum(float(value) for value in stat.mean) / 3.0
+    rms = (sum(float(value) ** 2 for value in stat.rms) / 3.0) ** 0.5
+    changed = 0
+    diff_pixels = diff.load()
+    crop_width, crop_height = diff.size
+    for y in range(crop_height):
+        for x in range(crop_width):
+            if max(diff_pixels[x, y]) > 2:
+                changed += 1
+    total = max(1, crop_width * crop_height)
+    changed_ratio = changed / float(total)
+    stalled = (
+        mae <= REVISION_VISUAL_STALL_MAE_LIMIT
+        and rms <= REVISION_VISUAL_STALL_RMS_LIMIT
+        and changed_ratio <= REVISION_VISUAL_STALL_CHANGED_RATIO_LIMIT
+    )
+    return {
+        "stalled": stalled,
+        "reason": "near_identical_roi" if stalled else "visible_roi_delta",
+        "roi": list(box),
+        "mae": round(mae, 4),
+        "rms": round(rms, 4),
+        "changed_pixels_gt2": changed,
+        "pixel_count": total,
+        "changed_ratio_gt2": round(changed_ratio, 6),
+        "thresholds": {
+            "mae": REVISION_VISUAL_STALL_MAE_LIMIT,
+            "rms": REVISION_VISUAL_STALL_RMS_LIMIT,
+            "changed_ratio_gt2": REVISION_VISUAL_STALL_CHANGED_RATIO_LIMIT,
+        },
+    }
+
+
 def build_candidate_rejection_table(
     revision_attempts: list[dict[str, Any]],
     current_blocking_stage: str | None,
@@ -653,40 +845,92 @@ def select_vision_rendered_candidates(
     limit: int,
 ) -> list[tuple[CandidateParams, Image.Image, dict[str, Any], float]]:
     effective_limit = max(1, int(limit or 1))
+    longer_replacement_pool = any(report_is_longer_replacement(item[2]) for item in rendered)
     stage_passed = [
         item for item in rendered
         if report_strict_pass(item[2]) and report_stage_pass(item[2])
     ]
+    if longer_replacement_pool:
+        strict_or_arbitrable = [
+            item
+            for item in rendered
+            if report_strict_pass(item[2])
+            or text_shape_visual_arbitration_candidate(item[2]).get("eligible")
+        ]
+        hard_boundary_passed = [item for item in rendered if isinstance(item[2], dict) and item[2].get("pass")]
+        longer_stroke_sorted = sorted(
+            strict_or_arbitrable or hard_boundary_passed or rendered,
+            key=longer_stroke_candidate_selection_key,
+        )
+        selected: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]] = []
+        seen: set[str] = set()
+
+        def add(items: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]], count: int | None = None) -> None:
+            added = 0
+            for params, image, report, score in items:
+                if params.candidate_id in seen:
+                    continue
+                selected.append((params, image, report, score))
+                seen.add(params.candidate_id)
+                added += 1
+                if len(selected) >= effective_limit:
+                    return
+                if count is not None and added >= count:
+                    return
+
+        add(longer_stroke_sorted[: min(4, effective_limit)])
+        add(stage_passed[: min(2, effective_limit)])
+        mid_blur_alpha = [
+            item for item in stage_passed
+            if 0.40 <= float(item[0].blur) <= 0.50 and float(item[0].alpha_contrast) >= 0.20
+        ]
+        add(mid_blur_alpha[:3])
+        add(longer_stroke_sorted)
+        return selected[:effective_limit]
     if stage_passed:
-        if any(report_is_longer_replacement(item[2]) for item in stage_passed):
-            selected: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]] = []
-            seen: set[str] = set()
-
-            def add(items: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]], count: int | None = None) -> None:
-                for params, image, report, score in items:
-                    if params.candidate_id in seen:
-                        continue
-                    selected.append((params, image, report, score))
-                    seen.add(params.candidate_id)
-                    if len(selected) >= effective_limit:
-                        return
-                    if count is not None and sum(1 for item in selected if item[0].candidate_id in seen) >= count:
-                        return
-
-            add(stage_passed[: min(3, effective_limit)])
-            mid_blur_alpha = [
-                item for item in stage_passed
-                if 0.40 <= float(item[0].blur) <= 0.50 and float(item[0].alpha_contrast) >= 0.20
-            ]
-            add(mid_blur_alpha[:3])
-            add(stage_passed)
-            return selected[:effective_limit]
         return stage_passed[:effective_limit]
 
     strict_passed = [item for item in rendered if report_strict_pass(item[2])]
     if strict_passed:
-        return strict_passed[:effective_limit]
+        return sorted(strict_passed, key=initial_candidate_selection_key)[:effective_limit]
     return rendered[:effective_limit]
+
+
+def initial_candidate_stage_frontier(report: dict[str, Any] | None) -> int:
+    if not isinstance(report, dict) or not report_strict_pass(report):
+        return -1
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    blocking_stage = stage_gate.get("blocking_stage")
+    if stage_gate.get("pass") and not blocking_stage:
+        return len(STAGE_ORDER)
+    if isinstance(blocking_stage, str) and blocking_stage in STAGE_ORDER:
+        return STAGE_ORDER.index(blocking_stage)
+    return 0
+
+
+def initial_candidate_selection_key(
+    item: tuple[CandidateParams, Image.Image, dict[str, Any], float],
+) -> tuple[float, ...]:
+    _params, _image, report, score = item
+    if report_is_longer_replacement(report):
+        return longer_stroke_candidate_selection_key(item)
+    frontier = initial_candidate_stage_frontier(report)
+    stage_gate = report.get("stage_gate") if isinstance(report, dict) else {}
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report if isinstance(report, dict) else {})
+    blocking_stage = stage_gate.get("blocking_stage")
+    severity = stage_issue_severity(report, str(blocking_stage)) if blocking_stage else 0.0
+    return (-frontier, float(severity), float(score))
+
+
+def initial_candidate_fallback_tuple(
+    rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
+) -> tuple[CandidateParams, Image.Image, dict[str, Any], float]:
+    strict_passed = [item for item in rendered if report_strict_pass(item[2])]
+    pool = strict_passed or rendered
+    return min(pool, key=initial_candidate_selection_key)
 
 
 def report_is_longer_replacement(report: dict[str, Any]) -> bool:
@@ -699,6 +943,22 @@ def report_is_longer_replacement(report: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         return False
     return bool(source_count and target_count > source_count)
+
+
+def longer_stroke_candidate_selection_key(
+    item: tuple[CandidateParams, Image.Image, dict[str, Any], float],
+) -> tuple[float, ...]:
+    _params, _image, report, score = item
+    fit = stroke_weight_fit_score(report)
+    selection_bucket = float(fit.get("selection_bucket") if isinstance(fit, dict) else 9)
+    fit_score = float(fit.get("score") if isinstance(fit, dict) else 9999.0)
+    frontier = initial_candidate_stage_frontier(report)
+    stage_gate = report.get("stage_gate") if isinstance(report, dict) else {}
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report if isinstance(report, dict) else {})
+    blocking_stage = str(stage_gate.get("blocking_stage") or "")
+    stage_severity = stage_issue_severity(report, blocking_stage) if blocking_stage else 0.0
+    return (selection_bucket, fit_score, -float(frontier), float(stage_severity), float(score))
 
 
 def run_region_vision_checks(
@@ -723,6 +983,34 @@ def run_region_vision_checks(
     context_box = region_context_box(plan.search_roi, original.size)
     original_context_path = region_dir / "vision_original_context.png"
     save_region_context(original, context_box, original_context_path)
+
+    def attach_region_report_context(report: dict[str, Any]) -> dict[str, Any]:
+        classification = report.get("classification") if isinstance(report.get("classification"), dict) else {}
+        if not classification.get("class_key"):
+            script = script_for_texts(plan.source_text, plan.target_text, plan.field_key)
+            scenario = "form_field_value_replace" if plan.field_key or plan.source_text else "inline_text_replace"
+            image_type = "clean_digital" if pipeline_profile == "clean_digital" else "photo_document"
+            classification = {
+                **classification,
+                "image_type": image_type,
+                "scenario": scenario,
+                "script": script,
+                "length_change": length_change_for_texts(plan.source_text, plan.target_text),
+                "class_key": f"{image_type}.{scenario}.{script}",
+                "internal_profile": report.get("internal_profile") or pipeline_profile,
+                "profile_source": classification.get("profile_source") or report.get("profile_source") or "classification",
+            }
+        existing_roi_plan = report.get("roi_plan") if isinstance(report.get("roi_plan"), dict) else {}
+        report["classification"] = classification
+        report["class_key"] = report.get("class_key") or classification.get("class_key")
+        report["internal_profile"] = report.get("internal_profile") or classification.get("internal_profile")
+        report["profile_source"] = report.get("profile_source") or classification.get("profile_source")
+        report["roi_plan"] = {
+            **existing_roi_plan,
+            "source_slot_count": existing_roi_plan.get("source_slot_count") or len(plan.slot_boxes),
+            "target_slot_count": existing_roi_plan.get("target_slot_count") or len(text_chars(plan.target_text)),
+        }
+        return report
 
     effective_candidate_limit = normalize_vision_candidate_limit(candidate_limit, len(rendered))
     vision_rendered = select_vision_rendered_candidates(rendered, effective_candidate_limit)
@@ -789,27 +1077,42 @@ def run_region_vision_checks(
         candidate_rank_json,
         [(params, image, report) for params, image, report, _score in vision_rendered],
     )
+    fallback_tuple = initial_candidate_fallback_tuple(rendered)
+    fallback_frontier = initial_candidate_stage_frontier(fallback_tuple[2])
+    chosen_tuple = fallback_tuple
     if model_best is not None:
         model_tuple = next(
             (item for item in rendered if item[0].candidate_id == model_best.candidate_id),
             None,
         )
-        if model_tuple is None or not report_strict_pass(model_tuple[2]) or not report_stage_pass(model_tuple[2]):
+        model_frontier = initial_candidate_stage_frontier(model_tuple[2]) if model_tuple is not None else -1
+        if model_tuple is None or not report_strict_pass(model_tuple[2]):
             candidate_rank_json["model_choice_overridden"] = {
                 "candidate_id": model_best.candidate_id,
-                "reason": "model selected a candidate that failed hard_check, strict_gate, or ordered stage_gate",
+                "reason": "model selected a candidate that failed hard_check or strict_gate",
             }
             model_best = None
-    strict_fallback = next(
-        (item[0] for item in rendered if report_strict_pass(item[2]) and report_stage_pass(item[2])),
-        next((item[0] for item in rendered if report_strict_pass(item[2])), rendered[0][0]),
-    )
-    chosen_params = model_best or strict_fallback
+        elif model_frontier < fallback_frontier:
+            candidate_rank_json["model_choice_overridden"] = {
+                "candidate_id": model_best.candidate_id,
+                "reason": "model selected an earlier-stage candidate than the best local stage frontier",
+                "model_stage_frontier": model_frontier,
+                "best_local_stage_frontier": fallback_frontier,
+                "fallback_candidate_id": fallback_tuple[0].candidate_id,
+            }
+            model_best = None
+        else:
+            chosen_tuple = model_tuple
+    chosen_params = chosen_tuple[0]
+    candidate_rank_json["local_initial_selection"] = {
+        "selection_rule": "stage_frontier_then_stage_severity_then_local_score",
+        "chosen_candidate_id": chosen_params.candidate_id,
+        "chosen_stage_frontier": initial_candidate_stage_frontier(chosen_tuple[2]),
+        "fallback_candidate_id": fallback_tuple[0].candidate_id,
+        "fallback_stage_frontier": fallback_frontier,
+        "model_candidate_id": model_best.candidate_id if model_best is not None else None,
+    }
     write_json(region_dir / "visual_eval_candidate_rank.json", candidate_rank_json)
-    chosen_tuple = next(
-        (item for item in rendered if item[0].candidate_id == chosen_params.candidate_id),
-        rendered[0],
-    )
     final_params, final_image, final_report, final_score = chosen_tuple
     final_context_path = region_dir / "vision_final_context.png"
     final_compare_path = region_dir / "vision_final_compare.png"
@@ -824,6 +1127,7 @@ def run_region_vision_checks(
         compare_path: Path,
         out_path: Path,
     ) -> dict[str, Any]:
+        attach_region_report_context(report)
         save_region_context(image, context_box, context_path)
         save_region_compare(original, image, context_box, compare_path)
         compact_path = out_path.with_name(f"{out_path.stem}_vision_compact.png")
@@ -863,7 +1167,7 @@ def run_region_vision_checks(
             audit_path=out_path.with_name(f"{out_path.stem}_prompt_audit.json"),
         )
         final_json = apply_local_acceptance_gate(final_json, report)
-        final_json = apply_historical_false_pass_gate(final_json, historical_target)
+        final_json = apply_historical_false_pass_gate(final_json, historical_target, report=report)
         write_json(out_path, final_json)
         return final_json
 
@@ -1098,11 +1402,17 @@ def run_region_vision_checks(
                 limit=48,
             )
             shape_reset_params = shape_candidate_grid.candidates
+            visual_shape_arbitration_active = bool(
+                isinstance(current_acceptance.get("local_shape_arbitration"), dict)
+                and current_acceptance["local_shape_arbitration"].get("active")
+                and basis_blocking_stage == "ink_gray_balance"
+            )
             ink_candidate_grid = ink_gray_candidate_grid(
                 current_params,
                 current_report,
                 limit=16,
                 parent_shape_candidate_id=current_shape_parent_candidate_id,
+                allow_visual_shape_arbitration=visual_shape_arbitration_active,
             )
             ink_gray_params = ink_candidate_grid.candidates
             if report_blocks_text_shape(current_report):
@@ -1216,8 +1526,11 @@ def run_region_vision_checks(
                     "controlled_escape": escape_grid.get("controlled_escape"),
                     "primary_stage": escape_grid.get("primary_stage"),
                     "secondary_stage": escape_grid.get("secondary_stage"),
+                    "escape_strategy": escape_grid.get("escape_strategy"),
+                    "trigger": escape_grid.get("trigger"),
                     "candidate_count": escape_grid.get("candidate_count"),
                     "escape_limit": escape_grid.get("escape_limit"),
+                    "candidate_delta_audit": escape_grid.get("candidate_delta_audit"),
                     "cross_stage_cartesian_disabled": escape_grid.get("cross_stage_cartesian_disabled"),
                 },
                 "forced_model_seed_count": forced_seed_report.get("forced_seed_count", 0),
@@ -1269,6 +1582,7 @@ def run_region_vision_checks(
                 and not ink_gray_params
                 and not ink_guard_params
                 and not photo_texture_params
+                and not escape_candidates
             ):
                 round_record["stop_reason"] = "no_revision_candidates"
                 revision_rounds.append(round_record)
@@ -1400,6 +1714,8 @@ def run_region_vision_checks(
                     suffix = "g"
                 elif candidate_origin == "photo_texture_grid":
                     suffix = "p"
+                elif candidate_origin == "controlled_escape":
+                    suffix = "e"
                 patched_params = mutate_params(
                     patched_params,
                     candidate_id=f"{current_params.candidate_id}_{suffix}{round_idx:02d}_{candidate_idx:02d}",
@@ -1417,6 +1733,7 @@ def run_region_vision_checks(
                     font_style_reference,
                     pipeline_profile=pipeline_profile,
                 )
+                attach_region_report_context(patched_report)
                 patched_score = region_candidate_score(
                     original,
                     patched_image,
@@ -1812,6 +2129,47 @@ def run_region_vision_checks(
             )
             attempt_record["final_acceptance"] = patched_acceptance
             round_delivered = final_acceptance_delivers(patched_acceptance)
+            after_blocking_stage = (patched_report.get("stage_gate") or {}).get("blocking_stage") or patched_acceptance.get(
+                "blocking_stage"
+            )
+            visual_delta_report = revision_visual_delta_report(
+                current_image,
+                patched_image,
+                (patched_report.get("roi") or current_report.get("roi") if isinstance(current_report, dict) else None),
+            )
+            previous_round = revision_rounds[-1] if revision_rounds else {}
+            previous_visual_delta = (
+                previous_round.get("visual_delta_report") if isinstance(previous_round, dict) else None
+            )
+            try:
+                stage_improvement = float(attempt_record.get("current_stage_improvement") or 0.0)
+            except (TypeError, ValueError):
+                stage_improvement = 0.0
+            previous_same_stage = bool(
+                isinstance(previous_round, dict)
+                and previous_round.get("basis_blocking_stage") == basis_blocking_stage
+                and previous_round.get("blocking_stage") == after_blocking_stage
+            )
+            stalled_revision = bool(
+                not round_delivered
+                and visual_delta_report.get("stalled")
+                and isinstance(previous_visual_delta, dict)
+                and previous_visual_delta.get("stalled")
+                and previous_same_stage
+                and stage_improvement < 2.0
+            )
+            visual_delta_report.update(
+                {
+                    "basis_blocking_stage": basis_blocking_stage,
+                    "next_blocking_stage": after_blocking_stage,
+                    "previous_round_stalled": bool(
+                        isinstance(previous_visual_delta, dict) and previous_visual_delta.get("stalled")
+                    ),
+                    "previous_same_stage": previous_same_stage,
+                    "current_stage_improvement": round(stage_improvement, 3),
+                    "stop_after_round": stalled_revision,
+                }
+            )
             if progress:
                 progress(
                     "revision_round_finished",
@@ -1837,7 +2195,9 @@ def run_region_vision_checks(
                         "acceptance_level": patched_acceptance.get("acceptance_level"),
                         "final_decision": patched_acceptance.get("final_decision"),
                         "revision_continuation_contract": selected_continuation_contract,
-                        "blocking_stage": (patched_report.get("stage_gate") or {}).get("blocking_stage"),
+                        "blocking_stage": after_blocking_stage,
+                        "visual_delta_report": visual_delta_report,
+                        "stop_reason": "stalled_revision_no_visual_delta" if stalled_revision else None,
                         **stage_progress_fields(patched_report),
                     },
                 )
@@ -1864,7 +2224,9 @@ def run_region_vision_checks(
                     "acceptance_level": patched_acceptance.get("acceptance_level"),
                     "final_decision": patched_acceptance.get("final_decision"),
                     "revision_continuation_contract": selected_continuation_contract,
-                    "blocking_stage": (patched_report.get("stage_gate") or {}).get("blocking_stage"),
+                    "blocking_stage": after_blocking_stage,
+                    "visual_delta_report": visual_delta_report,
+                    "stop_reason": "stalled_revision_no_visual_delta" if stalled_revision else None,
                 }
             )
             revision_rounds.append(round_record)
@@ -1915,6 +2277,8 @@ def run_region_vision_checks(
             if round_delivered:
                 accepted = True
                 break
+            if stalled_revision:
+                break
 
     if report_strict_pass(final_report) and not accepted:
         final_font_candidates = final_font_revision_candidates(
@@ -1959,6 +2323,7 @@ def run_region_vision_checks(
                 font_style_reference,
                 pipeline_profile=pipeline_profile,
             )
+            attach_region_report_context(alt_report)
             alt_score = region_candidate_score(original, alt_image, plan, alt_report)
             alt_strict = report_strict_pass(alt_report)
             attempt_record = {
@@ -2249,6 +2614,8 @@ def save_stage_candidate_evidence(
             "params": asdict(params),
             "strict_gate": report.get("strict_gate"),
             "shape_change_report": report.get("shape_change_report"),
+            "stroke_body_shape_metrics": report.get("stroke_body_shape_metrics"),
+            "stroke_weight_fit": report.get("stroke_weight_fit"),
             "row_baseline_metrics": report.get("row_baseline_metrics"),
             "placement_strategy_report": report.get("placement_strategy_report"),
             "ink_gray_metrics": report.get("char_gray_band_metrics"),
@@ -2315,6 +2682,19 @@ def process_region(
         internal_profile=pipeline_profile,
     )
     pipeline_profile = str(region_classification.get("internal_profile") or pipeline_profile)
+    if not region_classification.get("class_key"):
+        script = script_for_texts(source_text, target_text, plan.field_key)
+        scenario = "form_field_value_replace" if plan.field_key or source_text else "inline_text_replace"
+        image_type = "clean_digital" if pipeline_profile == "clean_digital" else "photo_document"
+        region_classification = {
+            **region_classification,
+            "image_type": image_type,
+            "scenario": scenario,
+            "script": script,
+            "length_change": length_change_for_texts(source_text, target_text),
+            "class_key": f"{image_type}.{scenario}.{script}",
+            "profile_source": region_classification.get("profile_source") or "classification",
+        }
     length_report = (
         plan.slot_quality_report.get("length_change_report")
         if isinstance(plan.slot_quality_report, dict)
@@ -2333,6 +2713,22 @@ def process_region(
         "source_slot_count": len(plan.slot_boxes),
         "target_slot_count": len(text_chars(target_text)),
     }
+
+    def attach_region_report_context(report: dict[str, Any]) -> dict[str, Any]:
+        existing_roi_plan = report.get("roi_plan") if isinstance(report.get("roi_plan"), dict) else {}
+        report["classification"] = region_classification
+        report["class_key"] = region_classification.get("class_key")
+        report["roi_policy"] = region_classification.get("roi_policy")
+        report["internal_profile"] = region_classification.get("internal_profile")
+        report["profile_source"] = region_classification.get("profile_source")
+        report["roi_plan"] = {
+            **existing_roi_plan,
+            **roi_plan,
+            "source_slot_count": len(plan.slot_boxes),
+            "target_slot_count": len(text_chars(target_text)),
+        }
+        return report
+
     source_count = len(text_chars(source_text))
     target_count = len(text_chars(target_text))
     raw_slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
@@ -2565,6 +2961,38 @@ def process_region(
             )
         )
         params_list = dedupe_params(params_list, max_candidates + 80)
+    initial_candidate_policy = {
+        "enabled": False,
+        "reason": "default_initial_candidate_grid",
+        "class_key": region_classification.get("class_key"),
+    }
+    if cjk_longer_form_first_batch_enabled(region_classification, roi_plan):
+        first_batch_seeds = cjk_longer_form_first_batch_candidates(
+            current,
+            font_candidates=font_candidates,
+            font_style_reference=font_style_reference,
+            max_font_size=max_font_size,
+        )
+        params_list = dedupe_params(first_batch_seeds, max_candidates)
+        initial_candidate_policy = {
+            "enabled": True,
+            "rule": "photo_document.form_field_value_replace.cjk.longer.first_batch",
+            "class_key": region_classification.get("class_key"),
+            "seed_count": len(first_batch_seeds),
+            "retained_candidate_limit": max_candidates,
+            "general_candidate_pool": "excluded_from_first_batch",
+            "font_count": min(4, len(font_candidates)),
+            "primary_font_size_deltas": [-1, 0, 1, 2, -2, -3],
+            "alternate_internal_darken_font_size_deltas": [-1, 0, 1, 2],
+            "opacity_range": [0.62, 0.78],
+            "blur_range": [0.28, 0.42],
+            "alpha_contrast_range": [0.06, 0.22],
+            "stroke_opacity_policy": "zero_or_minimal_seed_only; no outline stroke for internal darken candidates",
+            "internal_darken_pool": "alternate thin fonts receive only small internal core darkening before alternate low-core seeds",
+            "internal_darken_params": ["opacity", "core_ink_gain", "core_darken_strength"],
+            "selection_rule": "stroke_weight_fit_then_stage_frontier_then_stage_severity_then_local_score",
+        }
+    write_json(region_dir / "initial_candidate_policy.json", initial_candidate_policy)
     if centered:
         best_sizes = {
             item["font_path"]: int(item["font_size"])
@@ -2726,6 +3154,7 @@ def process_region(
                 "pipeline_profile": pipeline_profile,
                 "roi_plan": roi_plan,
                 "candidate_count": len(params_list),
+                "initial_candidate_policy": initial_candidate_policy,
             },
         )
     for params in params_list:
@@ -2738,12 +3167,7 @@ def process_region(
             font_style_reference,
             pipeline_profile=pipeline_profile,
         )
-        report["classification"] = region_classification
-        report["class_key"] = region_classification.get("class_key")
-        report["roi_policy"] = region_classification.get("roi_policy")
-        report["internal_profile"] = region_classification.get("internal_profile")
-        report["profile_source"] = region_classification.get("profile_source")
-        report["roi_plan"] = roi_plan
+        attach_region_report_context(report)
         score = region_candidate_score(original, candidate, plan, report)
         if not report_strict_pass(report):
             score += 10000.0
@@ -2812,12 +3236,7 @@ def process_region(
             font_style_reference,
             pipeline_profile=pipeline_profile,
         )
-        best_report["classification"] = region_classification
-        best_report["class_key"] = region_classification.get("class_key")
-        best_report["roi_policy"] = region_classification.get("roi_policy")
-        best_report["internal_profile"] = region_classification.get("internal_profile")
-        best_report["profile_source"] = region_classification.get("profile_source")
-        best_report["roi_plan"] = roi_plan
+        attach_region_report_context(best_report)
         best_score = region_candidate_score(original, best_image, plan, best_report)
     else:
         best_params, best_image, best_report, best_score = rendered[0]

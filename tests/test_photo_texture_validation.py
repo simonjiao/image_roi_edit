@@ -82,6 +82,24 @@ class PhotoTextureValidationTest(unittest.TestCase):
         report["local_photo_texture_issues"] = local_photo_texture_issues(report)
         self.assertGreater(stage_issue_severity(report, "photo_texture"), 0.0)
 
+    def test_photo_texture_flags_source_relative_blur_before_extreme_threshold(self) -> None:
+        report = photo_report(
+            blur=0.68,
+            edge_breakup=0.03,
+            photo_noise=0.09,
+            jpeg_weight=0.14,
+            edge_ratio=0.5372,
+            residual_ratio=0.8617,
+            old_edge=78.305,
+            old_residual=11.97,
+        )
+
+        issues = local_photo_texture_issues(report)
+
+        self.assertEqual(issues[0]["type"], "photo_texture_too_blurry")
+        self.assertEqual(issues[0]["limit"], 0.72)
+        self.assertAlmostEqual(issues[0]["edge_laplacian_ratio"], 0.5372)
+
     def test_photo_texture_axes_report_records_texture_not_just_blur(self) -> None:
         metrics = photo_report(
             blur=0.2,
