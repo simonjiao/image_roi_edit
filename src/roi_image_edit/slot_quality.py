@@ -283,7 +283,7 @@ def slot_quality_report(
             issue for issue in slot_issues if issue.get("type") not in edge_overflow_types
         ]
         soft_edge_overflow = bool(
-            length_change == "longer"
+            length_change in {"longer", "shorter"}
             and edge_overflow_issues
             and not non_edge_issues
             and core_covered
@@ -313,7 +313,10 @@ def slot_quality_report(
         tilt_coverage = _coverage(dark_pixels, dark_pixels + tilt_overflow_pixels)
         overflow_covered_by_cleanup_mask = bool(cleanup_slot and (below_dark_pixels or tilt_overflow_pixels))
         gray_edge_covered = bool(
-            check_gray_edge_pixels == 0 or gray_edge_pixels == check_gray_edge_pixels or soft_edge_overflow
+            check_gray_edge_pixels == 0
+            or gray_edge_pixels == check_gray_edge_pixels
+            or cleanup_slot
+            or soft_edge_overflow
         )
         bottom_covered = bool(below_dark_pixels == 0 or cleanup_slot or soft_edge_overflow)
         tilt_covered = bool(tilt_overflow_pixels == 0 or cleanup_slot or soft_edge_overflow)

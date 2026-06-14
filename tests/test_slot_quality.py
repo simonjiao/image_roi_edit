@@ -133,6 +133,38 @@ class SlotQualityTest(unittest.TestCase):
         self.assertTrue(report["old_text_coverage_report"]["per_slot"][0]["soft_edge_overflow_deferred"])
         self.assertTrue(report["old_text_coverage_report"]["per_slot"][1]["soft_edge_overflow_deferred"])
 
+    def test_shorter_replacement_defers_photo_edge_overflow_when_old_core_is_complete(self) -> None:
+        slots = (slot(10), slot(26), slot(42))
+        image = image_with_slots(slots)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((12, 24, 17, 26), fill=(132, 132, 132))
+        draw.rectangle((36, 13, 37, 18), fill=(132, 132, 132))
+        report = slot_quality_report(
+            image,
+            (0, 0, 90, 36),
+            slots,
+            source_text="赵真真",
+            target_text="陈慧",
+            protected_boxes=(),
+        )
+        issue_types = {issue["type"] for issue in report["issues"]}
+        first_slot_issue_types = {issue["type"] for issue in report["per_slot"][0]["issues"]}
+        second_slot_issue_types = {issue["type"] for issue in report["per_slot"][1]["issues"]}
+
+        self.assertTrue(report["pass"])
+        self.assertTrue(report["old_text_coverage_report"]["pass"])
+        self.assertTrue(report["old_text_coverage_report"]["per_slot"][2]["pass"])
+        self.assertNotIn("slot_bottom_overflow", issue_types)
+        self.assertNotIn("slot_tilt_overflow", issue_types)
+        self.assertIn("slot_bottom_overflow", first_slot_issue_types)
+        self.assertIn("slot_tilt_overflow", second_slot_issue_types)
+        self.assertFalse(report["per_slot"][0]["issues"][0]["blocking"])
+        self.assertFalse(report["per_slot"][1]["issues"][0]["blocking"])
+        self.assertTrue(report["per_slot"][0]["coverage"]["soft_edge_overflow_deferred"])
+        self.assertTrue(report["per_slot"][1]["coverage"]["soft_edge_overflow_deferred"])
+        self.assertTrue(report["old_text_coverage_report"]["per_slot"][0]["soft_edge_overflow_deferred"])
+        self.assertTrue(report["old_text_coverage_report"]["per_slot"][1]["soft_edge_overflow_deferred"])
+
     def test_shorter_replacement_reports_extra_source_cleanup_mask(self) -> None:
         slots = (slot(10), slot(26), slot(42))
         report = slot_quality_report(

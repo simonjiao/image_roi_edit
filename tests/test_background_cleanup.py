@@ -16,6 +16,7 @@ from roi_image_edit.iterative_pipeline import (
     RenderPlan,
     TextRun,
     build_source_slot_cleanup_mask,
+    feather_roi_boundary,
 )
 from roi_image_edit.stages import stage_gate_for_report
 
@@ -55,6 +56,23 @@ def original_with_old_text() -> Image.Image:
 
 
 class BackgroundCleanupTest(unittest.TestCase):
+    def test_feather_roi_boundary_blends_edge_without_touching_new_text_alpha(self) -> None:
+        original = np.zeros((12, 12, 3), dtype=np.uint8) + 100
+        edited = np.zeros((12, 12, 3), dtype=np.uint8) + 200
+        alpha = Image.new("L", (12, 12), 0)
+        draw = ImageDraw.Draw(alpha)
+        draw.rectangle((5, 5, 6, 6), fill=255)
+        protected_mask = np.zeros((12, 12), dtype=np.uint8)
+        protected_mask[2, 3] = 255
+
+        result = feather_roi_boundary(original, edited, (2, 2, 10, 10), alpha, protected_mask, width=3)
+
+        self.assertEqual(int(result[2, 2, 0]), 100)
+        self.assertGreater(int(result[4, 4, 0]), 100)
+        self.assertLess(int(result[4, 4, 0]), 200)
+        self.assertEqual(int(result[5, 5, 0]), 200)
+        self.assertEqual(int(result[2, 3, 0]), 200)
+
     def test_source_slot_precleanup_removes_old_core_and_gray_edge(self) -> None:
         original = original_with_old_text()
         cleaned = Image.new("RGB", original.size, (220, 220, 220))
@@ -229,6 +247,28 @@ class BackgroundCleanupTest(unittest.TestCase):
         self.assertIn("post_blend_smooth_smear", issue_types)
         self.assertIn("post_blend_texture_break", issue_types)
         self.assertIn("post_blend_roi_edge_seam", issue_types)
+
+    def test_post_blend_allows_longer_replacement_sharp_text_residual_when_patch_is_clean(self) -> None:
+        report = post_blend_report(
+            plan(source="陈芸", target="赵真真"),
+            {
+                "enabled": True,
+                "target_roi": [8, 4, 26, 20],
+                "new_reference_mean_delta": 5.0,
+                "std_ratio": 0.55,
+                "residual_ratio": 2.37,
+                "white_ghost_probe": {
+                    "bright_over_background_p95_ratio": 0.03,
+                    "dark_under_background_p10_ratio": 0.06,
+                },
+                "trailing_cleanup_patch": {},
+            },
+        )
+
+        issue_types = {issue["type"] for issue in report["issues"]}
+        self.assertTrue(report["pass"])
+        self.assertNotIn("post_blend_texture_break", issue_types)
+        self.assertEqual(report["artifact_axes"]["texture_break"]["limit"], 1.50)
 
     def test_pre_cleanup_failure_takes_priority_over_post_blend_naturalness(self) -> None:
         stage_report = background_cleanup_stage_report(

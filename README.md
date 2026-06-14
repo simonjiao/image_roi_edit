@@ -25,7 +25,7 @@ workflow, hard gates, iteration strategy, or visual acceptance criteria change.
 
 ## Hardening Status
 
-Workflow hardening status is tracked in
+Workflow hardening status is tracked and evidence is recorded in
 [`docs/workflow_checklist.md`](docs/workflow_checklist.md).
 Current behavior must be verified from that checklist plus the test commands
 recorded on each closed item.

@@ -23,7 +23,7 @@ English README: [`README.md`](README.md).
 
 ## 强化状态
 
-当前 workflow hardening 状态记录在
+当前 workflow hardening 状态和证据记录在
 [`docs/workflow_checklist.md`](docs/workflow_checklist.md)。
 当前行为必须以 checklist 和每个关闭条目记录的测试命令为准。
 

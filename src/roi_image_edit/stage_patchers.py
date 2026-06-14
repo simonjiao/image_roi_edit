@@ -58,6 +58,9 @@ PARAMETER_PATCH_KEYS = {
     "edge_breakup": "edge_breakup_delta",
     "photo_noise": "photo_noise_delta",
     "jpeg_quality": "jpeg_quality_delta",
+    "mask_threshold": "mask_threshold_delta",
+    "mask_dilate_iterations": "mask_dilate_iterations_delta",
+    "inpaint_radius": "inpaint_radius_delta",
     "text_dx": "text_dx_delta",
     "text_dy": "text_dy_delta",
 }
@@ -66,6 +69,9 @@ INTEGER_DELTA_PARAMETERS = {
     "core_darken_threshold",
     "core_darken_target_gray",
     "jpeg_quality",
+    "mask_threshold",
+    "mask_dilate_iterations",
+    "inpaint_radius",
     "text_dx",
     "text_dy",
 }
@@ -521,6 +527,9 @@ def numeric_revision_patches(params: CandidateParams, acceptance: dict[str, Any]
         "edge_breakup",
         "photo_noise",
         "jpeg_quality",
+        "mask_threshold",
+        "mask_dilate_iterations",
+        "inpaint_radius",
         "alpha_contrast",
         "stroke_opacity",
         "ink_gain",
@@ -1020,14 +1029,16 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
     ):
         patches.extend(
             [
-                {"photo_noise_delta": 0.020, "edge_breakup_delta": 0.006, "jpeg_quality_delta": -6},
-                {"photo_warp_delta": 0.020, "photo_noise_delta": 0.014, "jpeg_quality_delta": -4},
-                {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.018, "edge_breakup_delta": 0.006},
-                {"photo_noise_delta": 0.032, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -8},
-                {"inpaint_radius_delta": -1, "photo_noise_delta": 0.028, "edge_breakup_delta": 0.010},
-                {"photo_noise_delta": 0.052, "edge_breakup_delta": 0.018, "jpeg_quality_delta": -10},
-                {"photo_noise_delta": 0.070, "edge_breakup_delta": 0.024, "jpeg_quality_delta": -12},
-                {"inpaint_radius_delta": 1, "photo_noise_delta": 0.045, "edge_breakup_delta": 0.014},
+                {"photo_noise_delta": 0.014, "edge_breakup_delta": 0.004, "jpeg_quality_delta": -4},
+                {"blur_delta": -0.06, "photo_noise_delta": 0.024, "edge_breakup_delta": 0.008, "jpeg_quality_delta": -4},
+                {"blur_delta": -0.08, "photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
+                {"photo_warp_delta": 0.020, "photo_noise_delta": 0.010, "jpeg_quality_delta": -2},
+                {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.014, "edge_breakup_delta": 0.004},
+                {"photo_noise_delta": 0.024, "edge_breakup_delta": 0.008, "jpeg_quality_delta": -6},
+                {"inpaint_radius_delta": -1, "photo_noise_delta": 0.022, "edge_breakup_delta": 0.008},
+                {"photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
+                {"photo_noise_delta": 0.036, "edge_breakup_delta": 0.012, "jpeg_quality_delta": -8},
+                {"inpaint_radius_delta": 1, "photo_noise_delta": 0.028, "edge_breakup_delta": 0.010},
             ]
         )
     if not patches:
@@ -1043,12 +1054,42 @@ def background_cleanup_recovery_patches(report: dict[str, Any] | None = None) ->
 def visual_background_cleanup_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
     if not acceptance_reports_background_patch(acceptance):
         return []
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    sharpness = str(findings.get("sharpness") or "").strip().lower()
+    background = str(findings.get("background") or "").strip().lower()
+    if sharpness == "too_sharp" and background in {"patch_visible", "too_smooth"}:
+        return [
+            {
+                "blur_delta": 0.08,
+                "edge_breakup_delta": 0.006,
+                "photo_noise_delta": 0.012,
+                "mask_threshold_delta": 6,
+                "inpaint_radius_delta": 1,
+            },
+            {
+                "blur_delta": 0.10,
+                "edge_breakup_delta": 0.008,
+                "photo_noise_delta": 0.014,
+                "mask_dilate_iterations_delta": 1,
+            },
+            {
+                "blur_delta": 0.06,
+                "edge_breakup_delta": 0.004,
+                "photo_noise_delta": 0.008,
+                "mask_threshold_delta": 10,
+                "jpeg_quality_delta": -2,
+            },
+        ]
     return [
-        {"photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
-        {"photo_noise_delta": 0.045, "edge_breakup_delta": 0.014, "jpeg_quality_delta": -10},
-        {"inpaint_radius_delta": -1, "photo_noise_delta": 0.035, "edge_breakup_delta": 0.012},
-        {"mask_threshold_delta": -8, "inpaint_radius_delta": -1, "photo_noise_delta": 0.030},
-        {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.035, "edge_breakup_delta": 0.010},
+        {"photo_noise_delta": 0.020, "edge_breakup_delta": 0.006, "jpeg_quality_delta": -4},
+        {"blur_delta": -0.06, "photo_noise_delta": 0.024, "edge_breakup_delta": 0.008, "jpeg_quality_delta": -4},
+        {"blur_delta": -0.08, "photo_noise_delta": 0.030, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
+        {"photo_noise_delta": 0.028, "edge_breakup_delta": 0.010, "jpeg_quality_delta": -6},
+        {"inpaint_radius_delta": -1, "photo_noise_delta": 0.026, "edge_breakup_delta": 0.008},
+        {"mask_threshold_delta": -8, "inpaint_radius_delta": -1, "photo_noise_delta": 0.022},
+        {"mask_dilate_iterations_delta": -1, "photo_noise_delta": 0.026, "edge_breakup_delta": 0.008},
     ]
 
 

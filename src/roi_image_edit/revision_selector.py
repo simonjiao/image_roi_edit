@@ -23,6 +23,10 @@ from roi_image_edit.acceptance_feedback import (
     acceptance_reports_too_dark_or_bold,
 )
 from roi_image_edit.stages import stage_gate_for_report
+from roi_image_edit.vision_targets import (
+    vision_target_alignment,
+    vision_target_alignment_complete,
+)
 
 
 def final_acceptance_delivers(acceptance: dict[str, Any]) -> bool:
@@ -38,12 +42,22 @@ def revision_selection_score(
     acceptance: dict[str, Any],
     report: dict[str, Any] | None = None,
     candidate_report: dict[str, Any] | None = None,
+    vision_target: dict[str, Any] | None = None,
 ) -> float:
     adjusted = float(score)
     adjusted += (
         alignment_vertical_penalty(candidate_report)
         - alignment_vertical_penalty(report)
     ) * 3.0
+    if isinstance(vision_target, dict) and vision_target.get("active"):
+        alignment = vision_target_alignment(vision_target, params, basis_params)
+        adjusted += float(alignment.get("score_adjustment") or 0.0)
+        if vision_target.get("repeated"):
+            completion = vision_target_alignment_complete(vision_target, alignment)
+            if completion.get("complete"):
+                adjusted -= 1200.0
+            else:
+                adjusted += 900.0 + 350.0 * len(completion.get("missing_axes") or [])
     findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
     if not isinstance(findings, dict):
         findings = {}
@@ -283,21 +297,36 @@ def constrained_revision_params(
     if report_has_background_low_texture(report):
         return mutate_params(
             params,
-            photo_noise=min(0.14, params.photo_noise),
-            edge_breakup=min(0.060, params.edge_breakup),
-            jpeg_quality=max(82, params.jpeg_quality),
-            mask_dilate_iterations=max(2, params.mask_dilate_iterations),
-            inpaint_radius=max(1, min(3, params.inpaint_radius)),
+            photo_noise=min(0.090, params.photo_noise),
+            edge_breakup=min(0.030, params.edge_breakup),
+            jpeg_quality=max(88, params.jpeg_quality),
+            mask_threshold=max(basis_params.mask_threshold, params.mask_threshold),
+            mask_dilate_iterations=max(basis_params.mask_dilate_iterations, 2, params.mask_dilate_iterations),
+            inpaint_radius=max(basis_params.inpaint_radius, min(3, params.inpaint_radius)),
         )
 
     if acceptance_reports_background_patch(acceptance):
         return mutate_params(
             params,
-            photo_noise=min(0.120, params.photo_noise),
-            edge_breakup=min(0.050, params.edge_breakup),
+            photo_noise=min(0.090, params.photo_noise),
+            edge_breakup=min(0.030, params.edge_breakup),
+            jpeg_quality=max(88, params.jpeg_quality),
+            mask_threshold=max(basis_params.mask_threshold, params.mask_threshold),
+            mask_dilate_iterations=max(basis_params.mask_dilate_iterations, 2, params.mask_dilate_iterations),
+            inpaint_radius=max(basis_params.inpaint_radius, min(3, params.inpaint_radius)),
+        )
+
+    findings = acceptance.get("visual_findings") if isinstance(acceptance, dict) else {}
+    if not isinstance(findings, dict):
+        findings = {}
+    sharpness = str(findings.get("sharpness") or findings.get("blur") or "").strip().lower()
+    if stage_gate.get("blocking_stage") == "photo_texture" or sharpness in {"too_sharp", "too_blurry"}:
+        return mutate_params(
+            params,
+            blur=max(0.08, min(0.72, params.blur)),
+            edge_breakup=max(0.0, min(0.060, params.edge_breakup)),
+            photo_noise=max(0.0, min(0.120, params.photo_noise)),
             jpeg_quality=max(82, params.jpeg_quality),
-            mask_dilate_iterations=max(2, params.mask_dilate_iterations),
-            inpaint_radius=max(1, min(3, params.inpaint_radius)),
         )
 
     if not report_needs_thinner_strokes(report):

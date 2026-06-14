@@ -58,6 +58,7 @@ from roi_image_edit.local_validation import (
 
 from roi_image_edit.forced_model_seeds import forced_model_seed_audit
 from roi_image_edit.model_suggestions import (
+    combined_model_suggestion_patch,
     filter_model_patch_records,
     model_stage_response_contract,
     model_suggestion_filter_report,
@@ -99,6 +100,14 @@ from roi_image_edit.run_artifacts import (
     stage_progress_fields,
     vision_candidate_request_payload,
 )
+from roi_image_edit.vision_targets import (
+    non_regression_guard_report,
+    vision_target_alignment,
+    vision_target_alignment_complete,
+    vision_target_from_acceptance,
+    vision_target_recipe_patches,
+    vision_target_recipe_report,
+)
 from roi_image_edit.stage_profiles import resolve_stage_profile
 from roi_image_edit.stages import stage_gate_for_report
 from roi_image_edit.roi_locator import (
@@ -122,6 +131,65 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "output" / "web"
 ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
+
+
+def longer_replacement_soft_scan_candidates(
+    current: CandidateParams,
+    *,
+    font_candidates: list[tuple[str, str]],
+    font_style_reference: dict[str, Any],
+    max_font_size: int,
+) -> list[CandidateParams]:
+    best_sizes = {
+        item["font_path"]: int(item["font_size"])
+        for item in font_style_reference.get("ranked_fonts", [])
+        if item.get("font_path") and item.get("font_size")
+    }
+    soft_grid = (
+        (0.64, 0.32, 0.00, 0.40, 0.00, 0.00),
+        (0.64, 0.36, 0.00, 0.40, 0.00, 0.00),
+        (0.64, 0.28, 0.00, 0.40, 0.00, 0.00),
+        (0.66, 0.36, 0.00, 0.30, 0.00, 0.00),
+        (0.62, 0.36, 0.00, 0.20, 0.00, 0.00),
+        (0.66, 0.44, 0.00, 0.25, 0.00, 0.00),
+        (0.64, 0.44, 0.00, 0.30, 0.00, 0.00),
+        (0.66, 0.48, 0.00, 0.22, 0.00, 0.00),
+        (0.60, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.62, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.64, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.66, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.60, 0.60, 0.00, 0.00, 0.00, 0.00),
+        (0.62, 0.60, 0.00, 0.00, 0.00, 0.00),
+        (0.70, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.78, 0.55, 0.00, 0.00, 0.00, 0.00),
+        (0.78, 0.75, 0.00, 0.00, 0.00, 0.00),
+        (0.82, 0.50, 0.00, 0.00, 0.00, 0.00),
+        (0.86, 0.50, 0.00, 0.00, 0.00, 0.00),
+        (0.90, 0.42, 0.00, 0.00, 0.00, 0.00),
+        (0.90, 0.42, 0.01, 0.00, 0.04, 0.00),
+    )
+    candidates: list[CandidateParams] = []
+    for font_name, font_path in font_candidates[: min(4, len(font_candidates))]:
+        base_size = best_sizes.get(font_path, current.font_size)
+        for size_delta in (-1, -2, 0):
+            for opacity, blur, ink_gain, alpha_contrast, core_ink_gain, core_darken_strength in soft_grid:
+                candidates.append(
+                    mutate_params(
+                        current,
+                        font_name=font_name,
+                        font_path=font_path,
+                        font_size=max(8, min(max_font_size, base_size + size_delta)),
+                        opacity=opacity,
+                        blur=blur,
+                        stroke_opacity=0.0,
+                        ink_gain=ink_gain,
+                        alpha_contrast=alpha_contrast,
+                        core_ink_gain=core_ink_gain,
+                        core_darken_strength=core_darken_strength,
+                        char_offsets=current.char_offsets,
+                    )
+                )
+    return candidates
 
 
 def report_stage_status_pass(report: dict[str, Any] | None, stage_id: str | None) -> bool:
@@ -338,11 +406,68 @@ def build_candidate_rejection_table(
             "current_stage_severity_before": attempt.get("current_stage_severity_before", 0),
             "current_stage_severity_after": attempt.get("current_stage_severity_after", 0),
             "prior_stage_regression": not prior_pass,
+            "vision_target_alignment": attempt.get("vision_target_alignment"),
+            "vision_target_completion": attempt.get("vision_target_completion"),
+            "non_regression_guard": attempt.get("non_regression_guard"),
+            "vision_target_recipe": attempt.get("vision_target_recipe"),
             "selectable": rejection_reason == "selectable",
             "rejection_reason": rejection_reason,
         }
         table.append(entry)
     return table
+
+
+def select_vision_rendered_candidates(
+    rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
+    limit: int,
+) -> list[tuple[CandidateParams, Image.Image, dict[str, Any], float]]:
+    effective_limit = max(1, int(limit or 1))
+    stage_passed = [
+        item for item in rendered
+        if report_strict_pass(item[2]) and report_stage_pass(item[2])
+    ]
+    if stage_passed:
+        if any(report_is_longer_replacement(item[2]) for item in stage_passed):
+            selected: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]] = []
+            seen: set[str] = set()
+
+            def add(items: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]], count: int | None = None) -> None:
+                for params, image, report, score in items:
+                    if params.candidate_id in seen:
+                        continue
+                    selected.append((params, image, report, score))
+                    seen.add(params.candidate_id)
+                    if len(selected) >= effective_limit:
+                        return
+                    if count is not None and sum(1 for item in selected if item[0].candidate_id in seen) >= count:
+                        return
+
+            add(stage_passed[: min(3, effective_limit)])
+            mid_blur_alpha = [
+                item for item in stage_passed
+                if 0.40 <= float(item[0].blur) <= 0.50 and float(item[0].alpha_contrast) >= 0.20
+            ]
+            add(mid_blur_alpha[:3])
+            add(stage_passed)
+            return selected[:effective_limit]
+        return stage_passed[:effective_limit]
+
+    strict_passed = [item for item in rendered if report_strict_pass(item[2])]
+    if strict_passed:
+        return strict_passed[:effective_limit]
+    return rendered[:effective_limit]
+
+
+def report_is_longer_replacement(report: dict[str, Any]) -> bool:
+    roi_plan = report.get("roi_plan")
+    if not isinstance(roi_plan, dict):
+        return False
+    try:
+        source_count = int(roi_plan.get("source_slot_count") or 0)
+        target_count = int(roi_plan.get("target_slot_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(source_count and target_count > source_count)
 
 
 def run_region_vision_checks(
@@ -369,7 +494,7 @@ def run_region_vision_checks(
     save_region_context(original, context_box, original_context_path)
 
     effective_candidate_limit = normalize_vision_candidate_limit(candidate_limit, len(rendered))
-    vision_rendered = rendered[:effective_candidate_limit]
+    vision_rendered = select_vision_rendered_candidates(rendered, effective_candidate_limit)
     vision_sheet_path = region_dir / "vision_candidate_sheet.png"
     sheet_items = [
         (
@@ -568,6 +693,20 @@ def run_region_vision_checks(
             basis_stage_optimization_policy = stage_optimization_summary(
                 str(basis_blocking_stage) if basis_blocking_stage else None
             )
+            previous_vision_targets = [
+                round_record.get("vision_target")
+                for round_record in revision_rounds
+                if isinstance(round_record, dict)
+            ]
+            vision_target = vision_target_from_acceptance(
+                current_report,
+                current_acceptance,
+                prior_targets=previous_vision_targets,
+                round_index=round_idx,
+                basis_candidate_id=current_params.candidate_id,
+            )
+            vision_recipe_patches = vision_target_recipe_patches(vision_target)
+            vision_recipe_report = vision_target_recipe_report(vision_target)
             if progress:
                 progress(
                     "revision_round_started",
@@ -579,6 +718,8 @@ def run_region_vision_checks(
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
+                        "vision_disagreement": bool(vision_target.get("active")),
+                        "vision_target": vision_target,
                         "stage_optimization_policy": basis_stage_optimization_policy,
                         "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
                         **stage_progress_fields(current_report),
@@ -599,16 +740,17 @@ def run_region_vision_checks(
                         ),
                     }
                 )
+            current_acceptance_source = f"final_acceptance_basis_round_{round_idx - 1}"
             model_records.extend(
                 model_patch_records(
                     current_params,
                     current_acceptance,
-                    source=f"final_acceptance_basis_round_{round_idx - 1}",
+                    source=current_acceptance_source,
                 )
             )
             model_stage_response_contracts.append(
                 {
-                    "source": f"final_acceptance_basis_round_{round_idx - 1}",
+                    "source": current_acceptance_source,
                     **model_stage_response_contract(
                         current_acceptance,
                         str(basis_blocking_stage) if basis_blocking_stage else None,
@@ -634,6 +776,19 @@ def run_region_vision_checks(
                 for patch in model_filter.get("allowed_patches", [])
                 if isinstance(patch, dict)
             ]
+            model_combo_report = combined_model_suggestion_patch(
+                model_filter,
+                source=current_acceptance_source,
+            )
+            model_combo_patch = (
+                model_combo_report.get("patch")
+                if model_combo_report.get("enabled") and isinstance(model_combo_report.get("patch"), dict)
+                else None
+            )
+            if model_combo_patch and patch_signature(model_combo_patch) not in {
+                patch_signature(patch) for patch in allowed_model_patches
+            }:
+                allowed_model_patches.append(model_combo_patch)
             patch_source_lookup = {
                 str(signature): [
                     record
@@ -642,12 +797,32 @@ def run_region_vision_checks(
                 ]
                 for signature, records in (model_filter.get("patch_source_lookup") or {}).items()
             }
+            if model_combo_patch:
+                patch_source_lookup.setdefault(patch_signature(model_combo_patch), []).append(
+                    {
+                        "source": current_acceptance_source,
+                        "kind": "combined_parameter_suggestions",
+                        "patch": model_combo_patch,
+                        "combines_records": model_combo_report.get("record_count"),
+                        "optimization_policy": model_combo_report.get("optimization_policy"),
+                    }
+                )
+            vision_recipe_lookup = {
+                patch_signature(patch): {
+                    "source": "vision_target_recipe",
+                    "vision_target": vision_target,
+                    "combo_recipe": vision_target.get("combo_recipe"),
+                    "patch": patch,
+                }
+                for patch in vision_recipe_patches
+                if isinstance(patch, dict)
+            }
             patch_dispatch_report = dispatch_revision_patches(
                 current_params,
                 current_acceptance,
                 current_report,
                 rank_patch=rank_patch if round_idx == 1 and isinstance(rank_patch, dict) else None,
-                extra_patches=allowed_model_patches,
+                extra_patches=[*allowed_model_patches, *vision_recipe_patches],
             )
             round_patches = [
                 patch
@@ -749,6 +924,15 @@ def run_region_vision_checks(
                 "basis_blocking_stage": basis_blocking_stage,
                 "basis_stage_source": basis_stage_source,
                 "basis_stage_severity": round(float(basis_stage_severity), 3),
+                "vision_disagreement": bool(vision_target.get("active")),
+                "vision_target": vision_target,
+                "vision_target_recipe": vision_recipe_report,
+                "non_regression_guard": {
+                    "enabled": bool(vision_target.get("active")),
+                    "axes": vision_target.get("axis_keys") or [],
+                    "vision_target_stage": vision_target.get("stage"),
+                    "reason": "round-level guard; per-candidate guard is recorded on attempts",
+                },
                 "stage_optimization_policy": basis_stage_optimization_policy,
                 "stage_evidence": stage_progress_fields(current_report),
                 "stage_patcher_dispatch": {
@@ -774,6 +958,7 @@ def run_region_vision_checks(
                 "model_stage_response_contracts": model_stage_response_contracts,
                 "model_suggestions": model_records,
                 "model_suggestion_filter": model_suggestion_filter_report(model_filter),
+                "model_suggestion_combo": model_combo_report,
                 "model_suggestion_attempts": model_filter.get("attempt_records") or [],
                 "model_conflicts": model_conflicts,
                 "rejected_local_patches": rejected_local_patches,
@@ -815,6 +1000,10 @@ def run_region_vision_checks(
                         "basis_blocking_stage": basis_blocking_stage,
                         "basis_stage_source": basis_stage_source,
                         "basis_stage_severity": round(float(basis_stage_severity), 3),
+                        "vision_disagreement": bool(vision_target.get("active")),
+                        "vision_target": vision_target,
+                        "vision_target_recipe": vision_recipe_report,
+                        "model_suggestion_combo": model_combo_report,
                         "stage_optimization_policy": basis_stage_optimization_policy,
                         "selected_optimization_step": basis_stage_optimization_policy.get("optimization_step"),
                         "layered_candidate_search": layered_search_report,
@@ -993,6 +1182,20 @@ def run_region_vision_checks(
                     current_acceptance,
                     current_report,
                     patched_report,
+                    vision_target=vision_target,
+                )
+                target_alignment = vision_target_alignment(
+                    vision_target,
+                    patched_params,
+                    current_params,
+                )
+                target_guard = non_regression_guard_report(
+                    vision_target,
+                    target_alignment,
+                )
+                target_completion = vision_target_alignment_complete(
+                    vision_target,
+                    target_alignment,
                 )
                 patched_strict = report_strict_pass(patched_report)
                 patched_stage_gate = patched_report.get("stage_gate") or {}
@@ -1061,6 +1264,9 @@ def run_region_vision_checks(
                     "prior_stage_regression": prior_regression,
                     "score": round(float(patched_score), 3),
                     "selection_score": round(float(patched_selection_score), 3),
+                    "vision_target_alignment": target_alignment,
+                    "vision_target_completion": target_completion,
+                    "non_regression_guard": target_guard,
                 }
                 if patch is not None:
                     optimization_policy = optimization_policy_audit(
@@ -1074,6 +1280,9 @@ def run_region_vision_checks(
                     suggestion_records = patch_source_lookup.get(patch_signature(patch), [])
                     if suggestion_records:
                         attempt_record["model_suggestions"] = suggestion_records
+                    recipe_record = vision_recipe_lookup.get(patch_signature(patch))
+                    if recipe_record:
+                        attempt_record["vision_target_recipe"] = recipe_record
                     if patch_constraint_audit.get("applied"):
                         patch_constraint_audit["alternative_candidate_id"] = patched_params.candidate_id
                     attempt_record["constraint"] = patch_constraint_audit
@@ -1364,6 +1573,11 @@ def run_region_vision_checks(
                         "score": round(float(patched_score), 3),
                         "selection_score": round(float(patched_selection_score), 3),
                         "selected_reason": selected_reason,
+                        "vision_disagreement": bool(vision_target.get("active")),
+                        "vision_target": vision_target,
+                        "vision_target_alignment": attempt_record.get("vision_target_alignment"),
+                        "vision_target_completion": attempt_record.get("vision_target_completion"),
+                        "non_regression_guard": attempt_record.get("non_regression_guard"),
                         "stage_id": attempt_record.get("stage_id"),
                         "selected_optimization_step": attempt_record.get("optimization_step"),
                         "optimization_steps": attempt_record.get("optimization_steps"),
@@ -1386,6 +1600,11 @@ def run_region_vision_checks(
                     "selected_score": round(float(patched_score), 3),
                     "selected_selection_score": round(float(patched_selection_score), 3),
                     "selected_reason": selected_reason,
+                    "vision_disagreement": bool(vision_target.get("active")),
+                    "vision_target": vision_target,
+                    "vision_target_alignment": attempt_record.get("vision_target_alignment"),
+                    "vision_target_completion": attempt_record.get("vision_target_completion"),
+                    "non_regression_guard": attempt_record.get("non_regression_guard"),
                     "stage_id": attempt_record.get("stage_id"),
                     "selected_optimization_step": attempt_record.get("optimization_step"),
                     "optimization_steps": attempt_record.get("optimization_steps"),
@@ -1417,6 +1636,10 @@ def run_region_vision_checks(
                     "round_candidate": attempt_record.get("round_candidate"),
                     "optimization_policy": attempt_record.get("optimization_policy"),
                     "model_suggestions": attempt_record.get("model_suggestions"),
+                    "vision_target": vision_target,
+                    "vision_target_alignment": attempt_record.get("vision_target_alignment"),
+                    "vision_target_completion": attempt_record.get("vision_target_completion"),
+                    "non_regression_guard": attempt_record.get("non_regression_guard"),
                     "patch": attempt_record.get("patch"),
                     **candidate_trace_summary(patched_report),
                     "metrics": (patched_report.get("strict_visual_metrics") or {}).get("bands", {}),
@@ -1570,6 +1793,30 @@ def run_region_vision_checks(
     final_stage_gate = final_report.get("stage_gate") if isinstance(final_report, dict) else {}
     if not isinstance(final_stage_gate, dict):
         final_stage_gate = stage_gate_for_report(final_report)
+    final_vision_target = vision_target_from_acceptance(
+        final_report,
+        final_acceptance_json,
+        prior_targets=[
+            round_record.get("vision_target")
+            for round_record in revision_rounds
+            if isinstance(round_record, dict)
+        ],
+        round_index=len(revision_rounds) + 1,
+        basis_candidate_id=final_params.candidate_id,
+    )
+    final_target_alignment = vision_target_alignment(
+        final_vision_target,
+        final_params,
+        final_params,
+    )
+    final_non_regression_guard = non_regression_guard_report(
+        final_vision_target,
+        final_target_alignment,
+    )
+    final_target_completion = vision_target_alignment_complete(
+        final_vision_target,
+        final_target_alignment,
+    )
     next_round_plan = None
     if not accepted:
         blocking_stage = final_stage_gate.get("blocking_stage") or acceptance_blocking_stage(final_acceptance_json)
@@ -1583,6 +1830,10 @@ def run_region_vision_checks(
                 if blocking_stage
                 else "none"
             ),
+            "vision_disagreement": bool(final_vision_target.get("active")),
+            "vision_target": final_vision_target,
+            "vision_target_completion": final_target_completion,
+            "non_regression_guard": final_non_regression_guard,
             "reference_profile_dynamic_ink": (
                 (final_report.get("reference_profile") or {}).get("dynamic_ink")
                 if isinstance(final_report.get("reference_profile"), dict)
@@ -1613,6 +1864,10 @@ def run_region_vision_checks(
         ),
         "candidate_rank": candidate_rank_json,
         "final_acceptance": final_acceptance_json,
+        "vision_disagreement": bool(final_vision_target.get("active")),
+        "vision_target": final_vision_target,
+        "vision_target_completion": final_target_completion,
+        "non_regression_guard": final_non_regression_guard,
         "next_round_plan": next_round_plan,
         "revision_attempts": revision_attempts,
         "revision_rounds": revision_rounds,
@@ -2053,6 +2308,15 @@ def process_region(
     )
     if source_count and target_count > source_count:
         params_list = [params for params in params_list if params.font_size <= max_font_size]
+        params_list.extend(
+            longer_replacement_soft_scan_candidates(
+                current,
+                font_candidates=font_candidates,
+                font_style_reference=font_style_reference,
+                max_font_size=max_font_size,
+            )
+        )
+        params_list = dedupe_params(params_list, max_candidates + 80)
     if centered:
         best_sizes = {
             item["font_path"]: int(item["font_size"])
@@ -2129,6 +2393,14 @@ def process_region(
         )
         left_aligned_text_dy = (0, 1)
         left_aligned_grid = (
+            (0.50, 0.58, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.50, 0.62, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.52, 0.58, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.50, 0.78, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.52, 0.74, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.54, 0.70, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.56, 0.68, 0.00, 0.00, 0.00, 0.00, 0.00, 185, 2, 1),
+            (0.56, 0.72, 0.00, 0.00, 0.00, 0.00, 0.00, 195, 3, 1),
             (0.58, 0.65, 0.00, 0.00, 0.00, 0.04, 0.00, 185, 2, 1),
             (0.58, 0.65, 0.00, 0.00, 0.00, 0.04, 0.00, 185, 3, 1),
             (0.58, 0.65, 0.00, 0.00, 0.00, 0.04, 0.00, 195, 3, 1),
@@ -2409,6 +2681,16 @@ def process_region(
         if isinstance(vision_summary.get("revision_rounds"), list)
         else []
     )
+    vision_target = (
+        vision_summary.get("vision_target")
+        if isinstance(vision_summary.get("vision_target"), dict)
+        else None
+    )
+    non_regression_guard = (
+        vision_summary.get("non_regression_guard")
+        if isinstance(vision_summary.get("non_regression_guard"), dict)
+        else None
+    )
     last_round = revision_round_records[-1] if revision_round_records else {}
     return (
         applied_image,
@@ -2452,6 +2734,9 @@ def process_region(
                 "revision_round_count": len(revision_round_records),
                 "last_round_stop_reason": last_round.get("stop_reason") if isinstance(last_round, dict) else None,
                 "last_round_selected_reason": last_round.get("selected_reason") if isinstance(last_round, dict) else None,
+                "vision_disagreement": bool(vision_summary.get("vision_disagreement")),
+                "vision_target": vision_target,
+                "non_regression_guard": non_regression_guard,
                 "next_round_plan": vision_next_plan,
             },
             "accepted": accepted,

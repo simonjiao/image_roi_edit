@@ -1206,6 +1206,53 @@ def apply_roi_scan_texture(
     return np.clip(edited_f, 0, 255).astype(np.uint8)
 
 
+def feather_roi_boundary(
+    original_arr: np.ndarray,
+    edited_arr: np.ndarray,
+    roi: tuple[int, int, int, int],
+    alpha_layer: Image.Image | None = None,
+    protected_mask: np.ndarray | None = None,
+    *,
+    width: int = 5,
+) -> np.ndarray:
+    x1, y1, x2, y2 = roi
+    if x2 <= x1 or y2 <= y1 or width <= 0:
+        return edited_arr
+    h, w = edited_arr.shape[:2]
+    x1 = max(0, min(w, x1))
+    x2 = max(0, min(w, x2))
+    y1 = max(0, min(h, y1))
+    y2 = max(0, min(h, y2))
+    if x2 <= x1 or y2 <= y1:
+        return edited_arr
+
+    roi_h = y2 - y1
+    roi_w = x2 - x1
+    yy, xx = np.indices((roi_h, roi_w), dtype=np.float32)
+    distance = np.minimum.reduce(
+        [
+            xx,
+            yy,
+            roi_w - 1 - xx,
+            roi_h - 1 - yy,
+        ]
+    )
+    edge_weight = np.clip(distance / float(width), 0.0, 1.0)
+    if alpha_layer is not None:
+        alpha = np.array(alpha_layer, dtype=np.uint8)[y1:y2, x1:x2]
+        edge_weight = np.where(alpha > 4, 1.0, edge_weight)
+    if protected_mask is not None:
+        mask_roi = protected_mask[y1:y2, x1:x2]
+        edge_weight = np.where(mask_roi > 0, 1.0, edge_weight)
+    weight = edge_weight[:, :, None]
+    result = edited_arr.astype(np.float32).copy()
+    result[y1:y2, x1:x2] = (
+        result[y1:y2, x1:x2] * weight
+        + original_arr[y1:y2, x1:x2].astype(np.float32) * (1.0 - weight)
+    )
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
 def font_text_bbox(font: ImageFont.FreeTypeFont, text: str) -> tuple[int, int, int, int]:
     scratch = Image.new("L", (1, 1), 0)
     draw = ImageDraw.Draw(scratch)
@@ -1283,7 +1330,7 @@ def apply_scan_edge_breakup(
         rng = np.random.default_rng(seed & 0xFFFFFFFF)
         noise = rng.random(arr.shape)
         drop_prob = strength * np.clip((135.0 - arr) / 129.0, 0.0, 1.0)
-        arr[edge & (noise < drop_prob)] = 0.0
+        arr[edge & (noise < drop_prob)] *= 0.45
         thin = edge & (noise >= drop_prob) & (noise < drop_prob + strength * 0.5)
         arr[thin] *= 0.65
 
@@ -2033,6 +2080,7 @@ def render_candidate(
         strength=roi_scan_texture_strength(params, target_expanded=target_expanded),
     )
     edited_arr = apply_photo_text_texture(edited_arr, arr, layer.getchannel("A"), plan.target_roi, params)
+    edited_arr = feather_roi_boundary(arr, edited_arr, plan.target_roi, layer.getchannel("A"), mask)
     preserve_mask = unchanged_text_slot_mask(plan, (w, h)) > 0
     if np.any(preserve_mask):
         edited_arr[preserve_mask] = arr[preserve_mask]
@@ -3234,7 +3282,8 @@ def char_alignment_issues(
             candidate_h = max(0.0, float(candidate_box[3] - candidate_box[1]))
             min_height = max(1.0, slot_h * 0.88)
             max_height = slot_h * 1.22
-            if candidate_h < min_height:
+            height_tolerance_px = max(0.35, min(0.75, slot_h * 0.03))
+            if candidate_h + height_tolerance_px < min_height:
                 issues.append(
                     {
                         "type": "char_height_too_small",
@@ -3242,12 +3291,13 @@ def char_alignment_issues(
                         "char": item.get("char"),
                         "actual": round(candidate_h, 3),
                         "limit": round(min_height, 3),
+                        "tolerance_px": round(height_tolerance_px, 3),
                         "slot_height": round(slot_h, 3),
                         "slot_box": slot_box,
                         "candidate_box": candidate_box,
                     }
                 )
-            elif candidate_h > max_height:
+            elif candidate_h - height_tolerance_px > max_height:
                 issues.append(
                     {
                         "type": "char_height_too_large",
@@ -3255,6 +3305,7 @@ def char_alignment_issues(
                         "char": item.get("char"),
                         "actual": round(candidate_h, 3),
                         "limit": round(max_height, 3),
+                        "tolerance_px": round(height_tolerance_px, 3),
                         "slot_height": round(slot_h, 3),
                         "slot_box": slot_box,
                         "candidate_box": candidate_box,

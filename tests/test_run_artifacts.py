@@ -219,6 +219,8 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("model_suggestions", result_schema["candidate_required"])
         self.assertIn("rejection_reason", result_schema["candidate_required"])
         self.assertIn("final_acceptance", result_schema["vision_required"])
+        self.assertIn("vision_target", result_schema["vision_required"])
+        self.assertIn("non_regression_guard", result_schema["vision_required"])
         self.assertIn("revision_attempts", result_schema["vision_required"])
         self.assertIn("vision_prompt_audits", result_schema["vision_required"])
         self.assertIn("final_is_rejected_candidate", result_schema["rejection_required"])
@@ -233,6 +235,8 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("stage_evidence", progress_schema["candidate_fields"])
         self.assertIn("stage_filter_report", progress_schema["patch_fields"])
         self.assertIn("model_suggestion_filter", progress_schema["vision_suggestion_fields"])
+        self.assertIn("vision_target", progress_schema["vision_suggestion_fields"])
+        self.assertIn("non_regression_guard", progress_schema["vision_suggestion_fields"])
         self.assertIn("rejection_reason", progress_schema["rejection_reason_fields"])
 
         manifest_schema = schema["artifact_manifest"]
@@ -318,6 +322,37 @@ class RunArtifactsTest(unittest.TestCase):
                                         }
                                     },
                                     "vision": {
+                                        "vision_disagreement": True,
+                                        "vision_target": {
+                                            "active": True,
+                                            "stage": "photo_texture",
+                                            "stage_source": "vision_acceptance",
+                                            "axis_keys": ["too_sharp"],
+                                            "axes": [
+                                                {
+                                                    "axis": "too_sharp",
+                                                    "stage": "photo_texture",
+                                                    "repeat_count": 2,
+                                                }
+                                            ],
+                                        },
+                                        "non_regression_guard": {
+                                            "enabled": True,
+                                            "pass": False,
+                                            "axes": ["too_sharp"],
+                                            "direction": "opposite",
+                                        },
+                                        "revision_rounds": [
+                                            {
+                                                "round": 1,
+                                                "vision_target": {
+                                                    "active": True,
+                                                    "stage": "photo_texture",
+                                                    "stage_source": "vision_acceptance",
+                                                    "axis_keys": ["too_sharp"],
+                                                },
+                                            }
+                                        ],
                                         "artifacts": {
                                             "candidate_sheet": str(candidate_sheet),
                                             "final_compare": str(final_compare),
@@ -392,6 +427,9 @@ class RunArtifactsTest(unittest.TestCase):
         self.assertIn("classification", embedded_keys)
         self.assertIn("roi_plan", embedded_keys)
         self.assertIn("slot_quality_report", embedded_keys)
+        self.assertIn("vision_target", embedded_keys)
+        self.assertIn("vision_disagreement", embedded_keys)
+        self.assertIn("non_regression_guard", embedded_keys)
 
     def test_progress_record_adds_stable_schema_version(self) -> None:
         record = progress_record(

@@ -487,6 +487,17 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     strict_gate = report.get("strict_gate")
     dynamic_limits = dynamic_ink_limits(report)
+    roi_plan = report.get("roi_plan")
+    if not isinstance(roi_plan, dict):
+        roi_plan = {}
+    try:
+        source_slot_count = int(roi_plan.get("source_slot_count") or 0)
+        target_slot_count = int(roi_plan.get("target_slot_count") or 0)
+    except (TypeError, ValueError):
+        source_slot_count = 0
+        target_slot_count = 0
+    shorter_replacement = bool(source_slot_count and target_slot_count and target_slot_count < source_slot_count)
+    longer_replacement = bool(source_slot_count and target_slot_count and target_slot_count > source_slot_count)
     complexity_ratio = 1.0
     if isinstance(strict_gate, dict):
         try:
@@ -557,17 +568,47 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
             old = item.get("old") or {}
             try:
                 old_lt55 = float(old.get("lt55") or 0.0)
+                old_lt120 = float(old.get("lt120") or 0.0)
                 old_lt165 = float(old.get("lt165") or 0.0)
                 lt55_delta = float(delta.get("lt55") or 0.0)
+                lt120_delta = float(delta.get("lt120") or 0.0)
                 lt165_delta = float(delta.get("lt165") or 0.0)
+                band_55_70_delta = float(delta.get("band_55_70") or 0.0)
                 band_70_90_delta = float(delta.get("band_70_90") or 0.0)
                 band_90_120_delta = float(delta.get("band_90_120") or 0.0)
             except (TypeError, ValueError):
                 continue
+            middle_delta = band_70_90_delta + band_90_120_delta
+            body_dark_delta = band_55_70_delta + middle_delta
+            if shorter_replacement and old_lt55 <= 8.0 and old_lt165 > 0.0:
+                mid_gray_delta_limit = max(34.0, old_lt120 * 0.28)
+                body_delta_limit = max(22.0, old_lt165 * 0.08)
+                if (
+                    lt120_delta > mid_gray_delta_limit
+                    and lt165_delta > body_delta_limit
+                    and body_dark_delta > max(24.0, old_lt120 * 0.15)
+                ):
+                    issues.append(
+                        {
+                            "type": "changed_char_mid_gray_too_black",
+                            "index": item.get("index"),
+                            "source_char": item.get("source_char"),
+                            "target_char": item.get("target_char"),
+                            "actual": round(lt120_delta, 3),
+                            "limit": round(mid_gray_delta_limit, 3),
+                            "lt120_delta": round(lt120_delta, 3),
+                            "lt165_delta": round(lt165_delta, 3),
+                            "body_delta_limit": round(body_delta_limit, 3),
+                            "body_dark_delta": round(body_dark_delta, 3),
+                            "band_55_70_delta": round(band_55_70_delta, 3),
+                            "middle_gray_delta": round(middle_delta, 3),
+                            "old_lt55": round(old_lt55, 3),
+                            "length_change": "shorter",
+                        }
+                    )
             if old_lt55 <= 0 or old_lt165 <= 0:
                 continue
 
-            middle_delta = band_70_90_delta + band_90_120_delta
             complexity_core_allowance = min(0.86, 0.70 + max(0.0, complexity_ratio - 1.0) * 0.55)
             try:
                 profile_char_limit = float(dynamic_limits.get("char_lt55_delta_limit") or 0.0)
@@ -607,28 +648,66 @@ def local_ink_balance_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(bands, dict):
         try:
             old_lt55 = float(bands.get("old_lt55_pixels") or 0.0)
+            old_lt90 = float(bands.get("old_lt90_pixels") or 0.0)
             lt55_delta = float(bands.get("lt55_delta") or 0.0)
+            lt90_delta = float(bands.get("lt90_delta") or 0.0)
             old_share = bands.get("old_lt55_share_of_lt165")
             new_share = bands.get("new_lt55_share_of_lt165")
             share_delta = None if old_share is None or new_share is None else float(new_share) - float(old_share)
         except (TypeError, ValueError):
             old_lt55 = 0.0
+            old_lt90 = 0.0
             lt55_delta = 0.0
+            lt90_delta = 0.0
             share_delta = None
         try:
             roi_core_delta_limit = float(dynamic_limits.get("roi_lt55_delta_limit") or 0.0)
         except (TypeError, ValueError):
             roi_core_delta_limit = 0.0
-        roi_core_delta_limit = max(48.0, roi_core_delta_limit or old_lt55 * 0.32)
+        base_roi_core_delta_limit = max(48.0, old_lt55 * 0.32)
+        if longer_replacement and old_lt55 >= 32.0:
+            dynamic_roi_core_delta_limit = roi_core_delta_limit or base_roi_core_delta_limit
+            roi_core_delta_limit = max(58.0, min(dynamic_roi_core_delta_limit, old_lt55 * 0.36))
+            params = report.get("params")
+            if isinstance(params, dict):
+                try:
+                    alpha_contrast = float(params.get("alpha_contrast") or 0.0)
+                    blur = float(params.get("blur") or 0.0)
+                except (TypeError, ValueError):
+                    alpha_contrast = 0.0
+                    blur = 0.0
+                if alpha_contrast >= 0.25 and blur <= 0.40:
+                    roi_core_delta_limit = max(roi_core_delta_limit, old_lt55 * 0.38)
+        else:
+            roi_core_delta_limit = max(48.0, roi_core_delta_limit or old_lt55 * 0.32)
         if old_lt55 >= 32.0 and lt55_delta > roi_core_delta_limit:
             issues.append(
                 {
                     "type": "roi_core_too_black",
+                    "actual": round(lt55_delta, 3),
                     "lt55_delta": lt55_delta,
                     "limit": round(roi_core_delta_limit, 3),
                     "limit_source": "reference_profile",
+                    "length_change": "longer" if longer_replacement else "same_or_shorter",
                 }
             )
+        if longer_replacement and source_slot_count > 0 and old_lt90 >= 64.0:
+            text_count_ratio = max(1.0, target_slot_count / float(source_slot_count))
+            expected_lt90_delta = old_lt90 * (text_count_ratio - 1.0)
+            excess_lt90_delta = lt90_delta - expected_lt90_delta
+            excess_lt90_limit = max(160.0, old_lt90 * 0.42)
+            if excess_lt90_delta > excess_lt90_limit:
+                issues.append(
+                    {
+                        "type": "longer_mid_gray_body_too_black",
+                        "actual": round(excess_lt90_delta, 3),
+                        "limit": round(excess_lt90_limit, 3),
+                        "lt90_delta": round(lt90_delta, 3),
+                        "expected_lt90_delta": round(expected_lt90_delta, 3),
+                        "text_count_ratio": round(text_count_ratio, 3),
+                        "length_change": "longer",
+                    }
+                )
         if share_delta is not None and share_delta > 0.085:
             issues.append(
                 {
@@ -654,6 +733,27 @@ def local_stroke_body_issues(
     char_bands = report.get("char_gray_band_metrics")
     if not isinstance(char_bands, dict) or not char_bands.get("enabled"):
         return issues
+
+    roi_plan = report.get("roi_plan")
+    if not isinstance(roi_plan, dict):
+        roi_plan = {}
+    try:
+        source_slot_count = int(roi_plan.get("source_slot_count") or 0)
+        target_slot_count = int(roi_plan.get("target_slot_count") or 0)
+    except (TypeError, ValueError):
+        source_slot_count = 0
+        target_slot_count = 0
+    longer_replacement = bool(source_slot_count and target_slot_count and target_slot_count > source_slot_count)
+
+    bands = (report.get("strict_visual_metrics") or {}).get("bands")
+    roi_body_not_smaller = False
+    if isinstance(bands, dict):
+        try:
+            old_roi_lt165 = float(bands.get("old_lt165_pixels") or 0.0)
+            new_roi_lt165 = float(bands.get("new_lt165_pixels") or 0.0)
+            roi_body_not_smaller = bool(old_roi_lt165 > 0 and new_roi_lt165 >= old_roi_lt165)
+        except (TypeError, ValueError):
+            roi_body_not_smaller = False
 
     for item in char_bands.get("per_char", []):
         if not isinstance(item, dict):
@@ -689,15 +789,26 @@ def local_stroke_body_issues(
         params = report.get("params")
         stroke_opacity = 0.0
         blur = 0.0
+        alpha_contrast = 0.0
         if isinstance(params, dict):
             try:
                 stroke_opacity = float(params.get("stroke_opacity") or 0.0)
                 blur = float(params.get("blur") or 0.0)
+                alpha_contrast = float(params.get("alpha_contrast") or 0.0)
             except (TypeError, ValueError):
                 stroke_opacity = 0.0
                 blur = 0.0
+                alpha_contrast = 0.0
         middle_limit = -18.0 if complexity_ratio >= 1.08 else -30.0
+        sharp_alpha_longer_candidate = (
+            longer_replacement
+            and roi_body_not_smaller
+            and alpha_contrast >= 0.25
+            and blur <= 0.50
+        )
         if lt165_delta < -6.0:
+            if sharp_alpha_longer_candidate:
+                continue
             issues.append(
                 {
                     "type": "changed_char_stroke_body_too_small",
@@ -736,6 +847,8 @@ def local_stroke_body_issues(
             or light_edge_substitutes_for_body
             or fine_strokes_too_soft
         ):
+            if sharp_alpha_longer_candidate and item.get("source_char") is None:
+                continue
             neighbor_style_clear = not local_neighbor_style_issues(report, allow_excess_black_core=True)
             clean_edge_body_is_bounded = (
                 complexity_ratio >= 1.08
@@ -2333,12 +2446,14 @@ def candidate_report(
         max_dark_pixel_ratio = 1.35 if mismatch else 1.12
     min_dark_pixel_ratio = 0.55 if mismatch and target_count < source_count else 0.78 if mismatch else 0.88
     shorter_replacement = bool(source_count and target_count and target_count < source_count)
-    max_edge_lighten_delta = 6.0 if shorter_replacement else 4.0
+    max_edge_lighten_delta = 8.0 if shorter_replacement else 4.0
     dynamic_limits = (reference_profile.get("dynamic_ink") or {}) if isinstance(reference_profile, dict) else {}
     try:
         max_core_lighten_delta = float(dynamic_limits.get("core_mean_lighten_limit") or 2.0)
     except (TypeError, ValueError):
         max_core_lighten_delta = 2.0
+    if source_count and target_count > source_count:
+        max_core_lighten_delta = max(max_core_lighten_delta, 16.0)
     strict_issues = strict_gate_issues(
         strict_metrics,
         max_dark_pixel_ratio=max_dark_pixel_ratio,
@@ -2389,6 +2504,10 @@ def candidate_report(
     report["placement_strategy"] = plan.placement_strategy
     report["placement_strategy_reason"] = plan.placement_strategy_reason
     report["slot_quality_report"] = plan.slot_quality_report
+    report["roi_plan"] = {
+        "source_slot_count": source_count,
+        "target_slot_count": target_count,
+    }
     report["reference_profile"] = reference_profile
     report["strict_visual_metrics"] = strict_metrics
     report["char_gray_band_metrics"] = char_gray_band_metrics(original, candidate, plan)
@@ -2535,7 +2654,9 @@ def processing_candidate_score(report: dict[str, Any]) -> float:
     params = report.get("params")
     if longer_replacement and isinstance(params, dict):
         blur = float(params.get("blur") or 0.0)
-        score += max(0.0, blur - 0.62) * 120.0
+        opacity = float(params.get("opacity") or 0.0)
+        score += max(0.0, opacity - 0.72) * 80000.0
+        score += max(0.0, blur - 0.62) * 12000.0
         score += max(0.0, 0.42 - blur) * 80.0
     return score
 

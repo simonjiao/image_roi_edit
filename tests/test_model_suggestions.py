@@ -4,6 +4,7 @@ import unittest
 
 from roi_image_edit.iterative_pipeline import CandidateParams
 from roi_image_edit.model_suggestions import (
+    combined_model_suggestion_patch,
     filter_model_patch_records,
     model_stage_response_contract,
     model_suggestion_filter_report,
@@ -118,6 +119,76 @@ class ModelSuggestionsTest(unittest.TestCase):
             [attempt["rejection_reason"] for attempt in report["attempt_records"]],
             [record["conversion_reason"] for record in records],
         )
+
+    def test_background_cleanup_parameter_suggestions_are_convertible_and_allowed(self) -> None:
+        model_json = {
+            "blocking_stage": "background_cleanup",
+            "direction": "recover_background_texture",
+            "parameter_suggestions": [
+                {"name": "mask_threshold", "to": 170},
+                {"name": "mask_dilate_iterations", "to": 3},
+                {"name": "inpaint_radius", "delta": -1},
+            ],
+        }
+        records = model_patch_records(self.params, model_json, source="final_acceptance")
+        self.assertEqual({record["conversion_status"] for record in records}, {"converted"})
+        self.assertEqual(
+            [record["patch"] for record in records],
+            [
+                {"mask_threshold_delta": 5},
+                {"mask_dilate_iterations_delta": 1},
+                {"inpaint_radius_delta": -1},
+            ],
+        )
+
+        filtered = filter_model_patch_records(records, "background_cleanup")
+        self.assertEqual(
+            filtered["allowed_patches"],
+            [
+                {"mask_threshold_delta": 5},
+                {"mask_dilate_iterations_delta": 1},
+                {"inpaint_radius_delta": -1},
+            ],
+        )
+        self.assertEqual(filtered["rejected_records"], [])
+
+    def test_same_response_allowed_suggestions_are_combined_as_candidate_patch(self) -> None:
+        params = CandidateParams(
+            candidate_id="base",
+            font_name="test-font",
+            font_path="/tmp/test-font.ttf",
+            font_size=20,
+            opacity=0.82,
+            blur=0.42,
+            photo_noise=0.07,
+            mask_threshold=165,
+            inpaint_radius=3,
+        )
+        source = "final_acceptance_basis_round_5"
+        model_json = {
+            "blocking_stage": "background_cleanup",
+            "direction": "recover_background_texture",
+            "parameter_suggestions": [
+                {"name": "mask_threshold", "to": 170},
+                {"name": "photo_noise", "to": 0.04},
+                {"name": "blur", "to": 0.52},
+            ],
+        }
+        records = model_patch_records(params, model_json, source=source)
+        filtered = filter_model_patch_records(records, "background_cleanup")
+        combo = combined_model_suggestion_patch(filtered, source=source)
+
+        self.assertTrue(combo["enabled"], combo)
+        self.assertEqual(
+            combo["patch"],
+            {
+                "mask_threshold_delta": 5,
+                "photo_noise_delta": -0.03,
+                "blur_delta": 0.1,
+            },
+        )
+        self.assertEqual(combo["record_count"], 3)
+        self.assertTrue(combo["optimization_policy"]["allowed"])
 
     def test_model_stage_response_contract_records_current_stage_and_basis(self) -> None:
         response = {

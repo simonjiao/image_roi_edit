@@ -251,23 +251,23 @@ shape_change_large =
 [`workflow_checklist.md`](workflow_checklist.md)。
 状态含义：
 
-- `已覆盖`：checklist 中对应能力已经有 `[x]`、证据和测试。
+- `已覆盖`：checklist 中对应能力已经有 `[x]`、证据和测试；这只表示实现覆盖，不等同于公开验收门槛已全部关闭。
 - `部分覆盖`：已有代码和测试，但仍有未关闭 checklist 项。
 - `未完成`：对应能力仍以 checklist `[ ]` 为主，不能声明完成。
 
 | 目标能力 | 当前同步状态 | Checklist 对应项 |
 | --- | --- | --- |
-| 方向和目标字段联合选择 | 部分覆盖：指令解析、方向质量、找不到即失败已覆盖；自动分类和 manual anchor ROI 仍未关闭。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)；未完成：[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
-| 搜索 ROI 与编辑 ROI 分离 | 部分覆盖：search/edit ROI 分离和标注图已覆盖；manual anchor 和 expanded edit ROI 仍未关闭。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)；未完成：[全局硬约束](workflow_checklist.md#c-全局硬约束)、[放置策略选择](workflow_checklist.md#f-放置策略选择)。 |
-| 旧槽位完整性门禁 | 部分覆盖：旧槽位质量已折叠为一个完整报告条目；字数增加时右边界仍需降级为扩框诊断。 | 已覆盖：[旧槽位完整性门禁](workflow_checklist.md#e-旧槽位完整性门禁)；未完成：[全局硬约束](workflow_checklist.md#c-全局硬约束)。 |
-| 同字数 CJK 放置 | 部分覆盖：同字数小/大变化已有策略；分类驱动 placement matrix 仍未关闭。 | 已覆盖：[放置策略选择](workflow_checklist.md#f-放置策略选择)；未完成：[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
+| 方向和目标字段联合选择 | 已覆盖：指令解析、方向质量、找不到即失败、自动分类和 manual anchor ROI 均已有测试。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)、[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
+| 搜索 ROI 与编辑 ROI 分离 | 已覆盖：search/edit ROI 分离、标注图、manual anchor 和 expanded edit ROI 均已有测试。 | 已覆盖：[方向、字段和旧值 ROI](workflow_checklist.md#d-方向字段和旧值-roi)、[全局硬约束](workflow_checklist.md#c-全局硬约束)、[放置策略选择](workflow_checklist.md#f-放置策略选择)。 |
+| 旧槽位完整性门禁 | 已覆盖：旧槽位质量已折叠为完整报告条目，字数增加时右边界已降级为扩框诊断。 | 已覆盖：[旧槽位完整性门禁](workflow_checklist.md#e-旧槽位完整性门禁)、[全局硬约束](workflow_checklist.md#c-全局硬约束)。 |
+| 同字数 CJK 放置 | 已覆盖：同字数小/大变化策略和分类驱动 placement matrix 均已有测试。 | 已覆盖：[放置策略选择](workflow_checklist.md#f-放置策略选择)、[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)。 |
 | 单字形态变化检测 | 已覆盖：几何、投影、边距、墨迹、动态阈值和禁用语义字表已有测试。 | 已覆盖：[单字形态变化检测](workflow_checklist.md#g-单字形态变化检测)。 |
 | 字体形态搜索 | 已覆盖：`text_shape` grid、形态评分组成、形态先行约束和形态剪枝原因均已有测试。 | 已覆盖：[字体形态联合搜索](workflow_checklist.md#h-字体形态联合搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
 | 姿态继承 | 已覆盖：pose scoring 和形态剪枝原因已覆盖，旧 7 类 concern 映射已从运行时和主 checklist 删除。 | 已覆盖：[单字形态变化检测](workflow_checklist.md#g-单字形态变化检测)、[字体形态联合搜索](workflow_checklist.md#h-字体形态联合搜索)。 |
 | 黑灰门禁 | 已覆盖：分层执行、四段灰度、核心过黑/过浅、同一行邻字仲裁、形态参数保护和黑灰剪枝原因均已有测试。 | 已覆盖：[黑灰比例搜索](workflow_checklist.md#i-黑灰比例搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
 | 照片质感 | 已覆盖：执行顺序、允许参数、照片质感指标、前置阶段回退检查、issue types 和剪枝原因均已有测试。 | 已覆盖：[照片质感搜索](workflow_checklist.md#j-照片质感搜索)、[分层联合优化和搜索预算](workflow_checklist.md#l-分层联合优化和搜索预算)。 |
 | 背景处理 | 已覆盖：前置清除、后置融合、旧槽位残留和局部融合优先级已有测试。 | 已覆盖：[背景处理拆分](workflow_checklist.md#k-背景处理拆分)。 |
-| 视觉模型 | 部分覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止和 forced seed 审计已覆盖；`blocking_stage=null` 但 Vision fail 时的 `vision_target`、重复视觉问题升级、组合 recipe 和候选选择惩罚仍未关闭。 | 已覆盖：[三层流程边界](workflow_checklist.md#a-三层流程边界)、[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)、[反模式门禁](workflow_checklist.md#r-反模式门禁)；未完成：[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)。 |
+| 视觉模型 | 已覆盖：只看本地 top candidates、prompt stage context、本地 stage filter、deliver 覆盖阻止、forced seed 审计、`blocking_stage=null` 但 Vision fail 时的 `vision_target`、重复视觉问题升级、组合 recipe、候选选择惩罚和 non-regression guard 均已有测试。 | 已覆盖：[三层流程边界](workflow_checklist.md#a-三层流程边界)、[视觉模型 prompt 和本地仲裁](workflow_checklist.md#o-视觉模型-prompt-和本地仲裁)、[反模式门禁](workflow_checklist.md#r-反模式门禁)。 |
 
 ## 分层联合优化设计
 
@@ -508,6 +508,9 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 
 该设计完成不能只看某一张图效果。必须满足：
 
+- 实现覆盖和公开验收分开判断；即使本设计表为 `已覆盖`，仍必须满足
+  `workflow_checklist.md` 的公开验收门槛，尤其是当前两张实际输入图的完整
+  Web/Vision job 验收。
 - 自动 ROI 失败时立即报错或保留 rejected candidate。
 - 旧槽位不完整时不生成最终候选。
 - 同字数 CJK 能在左上贴齐和中心优先之间自动选择。

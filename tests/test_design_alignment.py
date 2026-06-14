@@ -60,22 +60,24 @@ class DesignAlignmentTest(unittest.TestCase):
             if "部分覆盖" in row or "未完成" in row:
                 self.assertIn("未完成：", row)
         expected_status = {
-            "方向和目标字段联合选择": "部分覆盖",
-            "搜索 ROI 与编辑 ROI 分离": "部分覆盖",
-            "旧槽位完整性门禁": "部分覆盖",
-            "同字数 CJK 放置": "部分覆盖",
+            "方向和目标字段联合选择": "已覆盖",
+            "搜索 ROI 与编辑 ROI 分离": "已覆盖",
+            "旧槽位完整性门禁": "已覆盖",
+            "同字数 CJK 放置": "已覆盖",
             "单字形态变化检测": "已覆盖",
             "字体形态搜索": "已覆盖",
             "姿态继承": "已覆盖",
             "黑灰门禁": "已覆盖",
             "照片质感": "已覆盖",
             "背景处理": "已覆盖",
-            "视觉模型": "部分覆盖",
+            "视觉模型": "已覆盖",
         }
         for ability, status in expected_status.items():
             matching = [row for row in rows if f"| {ability} |" in row]
             self.assertEqual(len(matching), 1, ability)
             self.assertIn(f"| {status}", matching[0])
+        self.assertIn("不等同于公开验收门槛已全部关闭", body)
+        self.assertIn("两张实际输入图的完整", doc)
         self.assertIn("[自动分类、场景和内部 profile](workflow_checklist.md#n-自动分类场景和内部-profile)", body)
         self.assertIn("[放置策略选择](workflow_checklist.md#f-放置策略选择)", body)
 

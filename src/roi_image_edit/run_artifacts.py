@@ -60,6 +60,8 @@ def external_artifact_schema_report() -> dict[str, Any]:
             "vision_required": [
                 "candidate_rank",
                 "final_acceptance",
+                "vision_target",
+                "non_regression_guard",
                 "revision_attempts",
                 "revision_rounds",
                 "vision_prompt_audits",
@@ -106,6 +108,10 @@ def external_artifact_schema_report() -> dict[str, Any]:
             "vision_suggestion_fields": [
                 "model_suggestion_filter",
                 "model_stage_response_contract",
+                "vision_disagreement",
+                "vision_target",
+                "vision_target_alignment",
+                "non_regression_guard",
                 "revision_attempts",
             ],
             "rejection_reason_fields": [
@@ -423,6 +429,46 @@ def _collect_region_explanation(region: dict[str, Any]) -> dict[str, Any]:
                 "available": True,
                 "roi_policy": plan.get("roi_policy"),
                 "expanded_edit_roi": plan.get("roi_plan", {}).get("expanded_edit_roi"),
+            }
+        )
+    if isinstance(vision.get("vision_target"), dict) and vision["vision_target"].get("active"):
+        embedded_reports.append(
+            {
+                "key": "vision_target",
+                "purpose": "Final visual findings mapped back to the public five-stage workflow.",
+                "available": True,
+                "stage": vision["vision_target"].get("stage"),
+                "axes": vision["vision_target"].get("axis_keys") or [],
+                "stage_source": vision["vision_target"].get("stage_source"),
+                "combo_recipe": vision["vision_target"].get("combo_recipe"),
+            }
+        )
+    if isinstance(vision.get("non_regression_guard"), dict) and vision["non_regression_guard"].get("enabled"):
+        embedded_reports.append(
+            {
+                "key": "non_regression_guard",
+                "purpose": "Candidate before/after directions for user-visible visual regression axes.",
+                "available": True,
+                "pass": vision["non_regression_guard"].get("pass"),
+                "axes": vision["non_regression_guard"].get("axes") or [],
+                "direction": vision["non_regression_guard"].get("direction"),
+            }
+        )
+    round_targets = [
+        round_record.get("vision_target")
+        for round_record in vision.get("revision_rounds") or []
+        if isinstance(round_record, dict)
+        and isinstance(round_record.get("vision_target"), dict)
+        and round_record["vision_target"].get("active")
+    ]
+    if round_targets:
+        embedded_reports.append(
+            {
+                "key": "vision_disagreement",
+                "purpose": "Revision rounds where local stages passed but visual acceptance still rejected.",
+                "available": True,
+                "round_count": len(round_targets),
+                "stages": sorted({str(target.get("stage")) for target in round_targets if target.get("stage")}),
             }
         )
 

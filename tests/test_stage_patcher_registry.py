@@ -259,18 +259,32 @@ class StagePatcherRegistryTest(unittest.TestCase):
                 for patch in patches
             )
         )
-        for patch in patches:
-            self.assertLessEqual(float(patch.get("blur_delta") or 0.0), 0.0)
-            self.assertLessEqual(float(patch.get("photo_noise_delta") or 0.0), 0.0)
-            self.assertLessEqual(float(patch.get("edge_breakup_delta") or 0.0), 0.0)
-            self.assertGreaterEqual(float(patch.get("core_ink_gain_delta") or 0.0), 0.0)
-            self.assertGreaterEqual(float(patch.get("core_darken_strength_delta") or 0.0), 0.0)
-        rejected_steps = {
-            tuple(item.get("optimization_steps") or [])
-            for item in dispatch["stage_filter_report"]["rejected_patches"]
-            if isinstance(item, dict)
-        }
-        self.assertIn(("photo_texture",), rejected_steps)
+
+    def test_background_patch_visible_too_sharp_uses_bounded_combo_without_negative_blur(self) -> None:
+        dispatch = dispatch_revision_patches(
+            self.params,
+            {"visual_findings": {"sharpness": "too_sharp", "background": "patch_visible"}},
+            {
+                "pass": True,
+                "pipeline_profile": "photo_scan",
+                "stage_gate": {"blocking_stage": None},
+            },
+        )
+
+        self.assertEqual(dispatch["patcher_stage"], "background_cleanup")
+        patches = dispatch["patches"]
+        self.assertTrue(patches)
+        self.assertLessEqual(len(patches), 12)
+        combo = [
+            patch for patch in patches
+            if "blur_delta" in patch and ("mask_threshold_delta" in patch or "inpaint_radius_delta" in patch)
+        ]
+        self.assertTrue(combo)
+        for patch in combo:
+            self.assertGreater(float(patch.get("blur_delta") or 0.0), 0.0)
+            self.assertLessEqual(float(patch.get("photo_noise_delta") or 0.0), 0.020)
+            audit = stage_patchers_module.patch_allowed_for_stage(patch, "background_cleanup")
+            self.assertEqual(audit["decision"], "accepted", audit)
 
     def test_legacy_revision_entry_delegates_to_dispatcher(self) -> None:
         source = inspect.getsource(revision_patches_for_round)

@@ -4,6 +4,8 @@ import unittest
 import inspect
 
 from roi_image_edit.iterative_pipeline import CandidateParams, RenderPlan, TextRun, generate_candidates
+import roi_image_edit.region_processing as region_processing
+from roi_image_edit.region_processing import longer_replacement_soft_scan_candidates
 import roi_image_edit.processing_service as processing_service
 from roi_image_edit.revision_solver import (
     TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS,
@@ -81,6 +83,81 @@ def text_shape_report() -> dict:
 
 
 class ShapeCandidateGridTest(unittest.TestCase):
+    def test_shorter_replacement_grid_includes_light_no_core_candidates(self) -> None:
+        source = inspect.getsource(region_processing.process_region)
+
+        self.assertIn("(0.50, 0.58, 0.00, 0.00, 0.00, 0.00, 0.00", source)
+        self.assertIn("(0.50, 0.62, 0.00, 0.00, 0.00, 0.00, 0.00", source)
+        self.assertIn("(0.50, 0.78, 0.00, 0.00, 0.00, 0.00, 0.00", source)
+        self.assertIn("(0.56, 0.72, 0.00, 0.00, 0.00, 0.00, 0.00", source)
+        self.assertIn("(0.58, 0.65, 0.00, 0.00, 0.00, 0.04, 0.00", source)
+
+    def test_longer_replacement_soft_scan_grid_preserves_geometry_with_low_core_ink(self) -> None:
+        base = params()
+        candidates = longer_replacement_soft_scan_candidates(
+            base,
+            font_candidates=[("Songti", "/tmp/songti.ttf")],
+            font_style_reference=font_style_reference(),
+            max_font_size=24,
+        )
+
+        self.assertTrue(
+            any(
+                candidate.font_name == "Songti"
+                and candidate.font_size == 17
+                and candidate.opacity == 0.64
+                and candidate.blur == 0.32
+                and candidate.alpha_contrast == 0.40
+                and candidate.ink_gain == 0.0
+                and candidate.core_ink_gain == 0.0
+                and candidate.core_darken_strength == 0.0
+                and candidate.char_offsets == base.char_offsets
+                for candidate in candidates
+            )
+        )
+        self.assertTrue(
+            any(
+                candidate.font_name == "Songti"
+                and candidate.font_size == 17
+                and candidate.opacity == 0.66
+                and candidate.blur == 0.44
+                and candidate.alpha_contrast == 0.25
+                and candidate.ink_gain == 0.0
+                and candidate.core_ink_gain == 0.0
+                and candidate.core_darken_strength == 0.0
+                and candidate.char_offsets == base.char_offsets
+                for candidate in candidates
+            )
+        )
+        self.assertTrue(
+            any(
+                candidate.font_name == "Songti"
+                and candidate.font_size == 17
+                and candidate.opacity == 0.60
+                and candidate.blur == 0.55
+                and candidate.alpha_contrast == 0.0
+                and candidate.ink_gain == 0.0
+                and candidate.core_ink_gain == 0.0
+                and candidate.core_darken_strength == 0.0
+                and candidate.char_offsets == base.char_offsets
+                for candidate in candidates
+            )
+        )
+        self.assertTrue(
+            any(
+                candidate.font_name == "Songti"
+                and candidate.font_size == 17
+                and candidate.opacity == 0.78
+                and candidate.blur == 0.75
+                and candidate.alpha_contrast == 0.0
+                and candidate.ink_gain == 0.0
+                and candidate.core_ink_gain == 0.0
+                and candidate.core_darken_strength == 0.0
+                and candidate.char_offsets == base.char_offsets
+                for candidate in candidates
+            )
+        )
+
     def test_initial_candidate_grid_includes_row_baseline_y_offsets(self) -> None:
         candidates = generate_candidates(
             params(),

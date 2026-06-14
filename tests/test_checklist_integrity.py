@@ -62,9 +62,11 @@ class ChecklistIntegrityTest(unittest.TestCase):
 
     def test_completion_gate_matches_open_item_count(self) -> None:
         lines = CHECKLIST.read_text(encoding="utf-8").splitlines()
+        public_acceptance_index = lines.index("## 公开验收门槛")
+        implementation_lines = lines[:public_acceptance_index]
         open_lines = [
             f"{line_no}:{line}"
-            for line_no, line in enumerate(lines, start=1)
+            for line_no, line in enumerate(implementation_lines, start=1)
             if line.startswith("- [ ]")
         ]
         completion_lines = [
@@ -78,6 +80,13 @@ class ChecklistIntegrityTest(unittest.TestCase):
             self.assertEqual(open_lines, [])
         else:
             self.assertNotEqual(open_lines, [])
+
+    def test_public_acceptance_keeps_actual_job_gate_open_until_verified(self) -> None:
+        checklist = CHECKLIST.read_text(encoding="utf-8")
+        self.assertIn("两个当前输入图片的真实 Web/Vision job", checklist)
+        self.assertIn("output/web/20260614_110938", checklist)
+        self.assertIn("output/web/20260614_111920", checklist)
+        self.assertIn("- [ ] 两个当前输入图片的真实 Web/Vision job", checklist)
 
 
 if __name__ == "__main__":

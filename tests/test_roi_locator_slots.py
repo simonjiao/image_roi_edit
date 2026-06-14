@@ -134,6 +134,52 @@ class RoiLocatorSlotTest(unittest.TestCase):
         self.assertTrue(pre_gate["pass"])
         self.assertIsNone(pre_gate["failed_gate"])
 
+    def test_shorter_manual_anchor_limits_edit_roi_to_cleanup_and_ignores_cleanup_as_protected(self) -> None:
+        image = Image.new("RGB", (170, 72), (235, 235, 235))
+        draw = ImageDraw.Draw(image)
+        slots = (
+            run(72, 24, 93, 45),
+            run(95, 26, 115, 48),
+            run(117, 28, 137, 49),
+        )
+        for slot in slots:
+            draw.rectangle([slot.x1 + 2, slot.y1 + 3, slot.x2 - 2, slot.y2 - 3], fill=(35, 35, 35))
+        protected_label = (10, 24, 58, 42)
+        protected_cleanup_fragment = (128, 18, 160, 50)
+
+        with patch.object(roi_locator, "slots_for_region", return_value=slots):
+            with patch.object(
+                roi_locator,
+                "protected_boxes_for_region",
+                return_value=(protected_label, protected_cleanup_fragment),
+            ):
+                plan = roi_locator.build_region_plan(
+                    image,
+                    (0, 0, 164, 58),
+                    source_text="赵真真",
+                    target_text="陈慧",
+                    field_key="name",
+                    field_label_text="姓名",
+                    protected_texts=("姓名",),
+                )
+
+        report = plan.slot_quality_report
+        issue_types = {issue["type"] for issue in report["issues"]}
+        cleanup_exemptions = report["overlap_report"]["target_roi_protected_cleanup_exemptions"]
+        pre_gate = pre_candidate_gate_report(
+            candidate_count=3,
+            regions=[{"id": "manual_big", "roi": list(plan.search_roi)}],
+            slot_quality_report=report,
+        )
+
+        self.assertLessEqual(plan.target_roi[2], slots[-1].x2 + 6)
+        self.assertNotIn("target_roi_overlaps_protected_text", issue_types)
+        self.assertEqual(cleanup_exemptions[0]["box"], list(protected_cleanup_fragment))
+        self.assertEqual(plan.protected_boxes, (protected_label,))
+        self.assertEqual(report["target_guard_protected_boxes"], [list(protected_label)])
+        self.assertTrue(report["pass"])
+        self.assertTrue(pre_gate["pass"])
+
 
 if __name__ == "__main__":
     unittest.main()

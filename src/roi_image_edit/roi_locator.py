@@ -1145,6 +1145,58 @@ def apply_target_roi_protected_guard(
     return merged
 
 
+def _boxes_from_report(value: Any) -> list[tuple[int, int, int, int]]:
+    boxes: list[tuple[int, int, int, int]] = []
+    if not isinstance(value, list):
+        return boxes
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 4:
+            continue
+        try:
+            parts = tuple(int(part) for part in item)
+        except (TypeError, ValueError):
+            continue
+        box = (parts[0], parts[1], parts[2], parts[3])
+        if box_area(box) > 0:
+            boxes.append(box)
+    return boxes
+
+
+def target_guard_protected_boxes(
+    protected_boxes: tuple[tuple[int, int, int, int], ...],
+    slot_report: dict[str, Any],
+) -> tuple[tuple[tuple[int, int, int, int], ...], list[dict[str, Any]]]:
+    length_report = slot_report.get("length_change_report") if isinstance(slot_report, dict) else None
+    if not isinstance(length_report, dict) or length_report.get("length_change") != "shorter":
+        return protected_boxes, []
+    cleanup_report = length_report.get("cleanup_mask_report")
+    editable_boxes: list[tuple[int, int, int, int]] = []
+    if isinstance(cleanup_report, dict):
+        editable_boxes.extend(_boxes_from_report(cleanup_report.get("boxes")))
+    editable_boxes.extend(_boxes_from_report(length_report.get("extra_source_slots_for_cleanup")))
+    if not editable_boxes:
+        return protected_boxes, []
+
+    kept: list[tuple[int, int, int, int]] = []
+    ignored: list[dict[str, Any]] = []
+    editable_area = max(1, sum(box_area(box) for box in editable_boxes))
+    for box in protected_boxes:
+        overlap = sum(box_overlap_area(box, editable_box) for editable_box in editable_boxes)
+        overlap_ratio = overlap / max(1, min(box_area(box), editable_area))
+        if overlap > 0 and overlap_ratio >= 0.30:
+            ignored.append(
+                {
+                    "box": list(box),
+                    "overlap_pixels": int(overlap),
+                    "overlap_ratio": round(float(overlap_ratio), 4),
+                    "reason": "overlaps_shorter_replacement_source_cleanup",
+                }
+            )
+            continue
+        kept.append(box)
+    return tuple(kept), ignored
+
+
 def expand_roi_for_longer_replacement(
     target_roi: tuple[int, int, int, int],
     search_roi: tuple[int, int, int, int],
@@ -1208,12 +1260,15 @@ def expand_roi_for_shorter_replacement(
         return target_roi
     slot_widths = [max(1, slot.x2 - slot.x1) for slot in slots]
     slot_heights = [max(1, slot.y2 - slot.y1) for slot in slots]
-    pad_x = max(8, int(round(float(np.median(slot_widths)) * 1.15)))
+    ordered_slots = tuple(sorted(slots, key=lambda item: item.x1))
+    cleanup_slots = ordered_slots[target_count:source_count]
+    pad_x = max(3, int(round(float(np.median(slot_widths)) * 0.25)))
     pad_y = max(4, int(round(float(np.median(slot_heights)) * 0.18)))
+    cleanup_right = max((slot.x2 for slot in cleanup_slots), default=target_roi[2])
     expanded = (
         max(search_roi[0], target_roi[0] - 1),
         max(search_roi[1], target_roi[1] - pad_y),
-        min(search_roi[2], target_roi[2] + pad_x),
+        min(search_roi[2], max(target_roi[2], cleanup_right + pad_x)),
         min(search_roi[3], target_roi[3] + pad_y),
     )
     return clamp_box(expanded, image_size)
@@ -2642,7 +2697,12 @@ def build_region_plan(
         )
         target_roi = clamp_box_to_container(target_roi, roi)
         source_reference_box = target_roi
-    slot_report = apply_target_roi_protected_guard(slot_report, target_roi, protected_boxes)
+    guard_protected_boxes, cleanup_exemptions = target_guard_protected_boxes(protected_boxes, slot_report)
+    slot_report = apply_target_roi_protected_guard(slot_report, target_roi, guard_protected_boxes)
+    if cleanup_exemptions:
+        overlap_report = dict(slot_report.get("overlap_report") or {})
+        overlap_report["target_roi_protected_cleanup_exemptions"] = cleanup_exemptions
+        slot_report = {**slot_report, "overlap_report": overlap_report}
     slot_report = {
         **slot_report,
         "target_roi_after_length_policy": list(target_roi),
@@ -2651,6 +2711,7 @@ def build_region_plan(
         "expansion_report": expansion_report,
         "source_reference_box_after_length_policy": list(source_reference_box),
         "protected_boxes": [list(box) for box in protected_boxes],
+        "target_guard_protected_boxes": [list(box) for box in guard_protected_boxes],
     }
     length_report = dict(slot_report.get("length_change_report") or {})
     if length_report:
@@ -2683,7 +2744,7 @@ def build_region_plan(
         search_roi=roi,
         target_roi=target_roi,
         slot_boxes=slots,
-        protected_boxes=protected_boxes,
+        protected_boxes=guard_protected_boxes,
         source_reference_box=source_reference_box,
         style_reference_box=None,
         style_reference_text=None,

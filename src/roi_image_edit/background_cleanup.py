@@ -238,12 +238,20 @@ def post_blend_report(
     residual_ratio = metrics.get("residual_ratio")
     std_ratio = metrics.get("std_ratio")
     mean_delta = metrics.get("new_reference_mean_delta")
+    source_count = len(text_chars(plan.source_text or ""))
+    target_count = len(text_chars(plan.target_text))
+    longer_replacement = bool(source_count and target_count > source_count)
+    try:
+        residual_ratio_value = float(residual_ratio or 1.0)
+    except (TypeError, ValueError):
+        residual_ratio_value = 1.0
+    texture_break_limit = 1.50 if longer_replacement and residual_ratio_value >= 1.0 else 0.72
     axes = {
         "patch_visible": {"value": abs(float(mean_delta or 0.0)), "limit": 12.0},
         "white_ghost": {"value": float(white_probe.get("bright_over_background_p95_ratio") or 0.0), "limit": 0.14},
         "dark_shadow": {"value": float(white_probe.get("dark_under_background_p10_ratio") or 0.0), "limit": 0.28},
         "smooth_smear": {"value": float(trailing.get("residual_ratio") or residual_ratio or 1.0), "min": 0.42},
-        "texture_break": {"value": abs(1.0 - float(residual_ratio or 1.0)), "limit": 0.72},
+        "texture_break": {"value": abs(1.0 - residual_ratio_value), "limit": texture_break_limit},
         "roi_edge_seam": {"value": abs(float(mean_delta or 0.0)) + max(0.0, 0.48 - float(std_ratio or 1.0)), "limit": 13.0},
     }
     issues: list[dict[str, Any]] = []

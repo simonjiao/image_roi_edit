@@ -146,6 +146,83 @@ def filter_model_patch_records(
     }
 
 
+def combined_model_suggestion_patch(
+    filter_result: dict[str, Any],
+    *,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Merge same-response accepted model parameter suggestions into one patch."""
+
+    local_stage = _local_blocking_stage(filter_result.get("stage_id"))
+    records = filter_result.get("records")
+    if not isinstance(records, list):
+        records = []
+
+    merged: dict[str, Any] = {}
+    source_records: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if source is not None and record.get("source") != source:
+            continue
+        if not record.get("accepted_for_candidate_generation"):
+            continue
+        patch = record.get("patch")
+        if not isinstance(patch, dict) or not patch:
+            continue
+        source_records.append(record)
+        for key, value in patch.items():
+            key_text = str(key)
+            if key_text in merged and merged[key_text] != value:
+                conflicts.append(
+                    {
+                        "parameter": key_text,
+                        "existing": merged[key_text],
+                        "incoming": value,
+                        "source": record.get("source"),
+                        "index": record.get("index"),
+                    }
+                )
+                continue
+            merged[key_text] = value
+
+    if conflicts:
+        return {
+            "enabled": False,
+            "source": source,
+            "stage_id": local_stage,
+            "patch": {},
+            "record_count": len(source_records),
+            "conflicts": conflicts,
+            "reason": "conflicting suggestions for the same parameter",
+        }
+    if len(merged) < 2:
+        return {
+            "enabled": False,
+            "source": source,
+            "stage_id": local_stage,
+            "patch": dict(merged),
+            "record_count": len(source_records),
+            "conflicts": [],
+            "reason": "fewer than two accepted suggestions from the same source",
+        }
+
+    policy_audit = optimization_policy_audit(local_stage, merged)
+    enabled = bool(policy_audit.get("allowed"))
+    return {
+        "enabled": enabled,
+        "source": source,
+        "stage_id": local_stage,
+        "patch": dict(merged) if enabled else {},
+        "record_count": len(source_records),
+        "conflicts": [],
+        "optimization_policy": policy_audit,
+        "source_records": source_records,
+        "reason": "allowed" if enabled else policy_audit.get("rejection_reason"),
+    }
+
+
 def model_suggestion_filter_report(filter_result: dict[str, Any]) -> dict[str, Any]:
     return {
         "stage_id": filter_result.get("stage_id"),

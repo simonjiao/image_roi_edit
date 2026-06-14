@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from roi_image_edit.iterative_pipeline import RenderPlan, TextRun
+from roi_image_edit.iterative_pipeline import char_alignment_issues, RenderPlan, TextRun
 from roi_image_edit.placement_strategy import choose_placement_strategy, placement_strategy_report
 from roi_image_edit.run_artifacts import result_audit_payload
 
@@ -51,6 +51,42 @@ def strategy_report(plan: RenderPlan, metrics: dict) -> dict:
 
 
 class PlacementStrategyTest(unittest.TestCase):
+    def test_char_height_allows_subpixel_bbox_quantization_slack(self) -> None:
+        near_threshold = char_alignment_issues(
+            {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "char": "慧",
+                        "slot_box": [199, 358, 219, 380],
+                        "candidate_box": [200, 360, 219, 379],
+                    }
+                ],
+            },
+            max_char_center_dx=2.0,
+            max_char_center_distance_delta=2.0,
+        )
+        clearly_small = char_alignment_issues(
+            {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "char": "慧",
+                        "slot_box": [199, 358, 219, 380],
+                        "candidate_box": [200, 361, 219, 378],
+                    }
+                ],
+            },
+            max_char_center_dx=2.0,
+            max_char_center_distance_delta=2.0,
+        )
+
+        self.assertEqual(near_threshold, [])
+        self.assertEqual(clearly_small[0]["type"], "char_height_too_small")
+        self.assertEqual(clearly_small[0]["tolerance_px"], 0.66)
+
     def test_strategy_reason_is_declared_for_core_scenarios(self) -> None:
         scenarios = [
             {

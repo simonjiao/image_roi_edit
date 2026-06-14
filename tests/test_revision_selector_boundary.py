@@ -128,6 +128,228 @@ class RevisionSelectorBoundaryTest(unittest.TestCase):
             {"pass": True, "acceptance_level": "pass", "final_decision": "revise"}
         ))
 
+    def test_background_patch_constraints_keep_mask_and_inpaint_from_drifting_too_low(self) -> None:
+        params = CandidateParams(
+            candidate_id="patched",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.36,
+            alpha_contrast=0.30,
+            mask_threshold=101,
+            mask_dilate_iterations=1,
+            inpaint_radius=1,
+            photo_noise=0.12,
+            edge_breakup=0.06,
+            jpeg_quality=80,
+        )
+        basis = CandidateParams(
+            candidate_id="basis",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.36,
+            alpha_contrast=0.30,
+            mask_threshold=165,
+            mask_dilate_iterations=2,
+            inpaint_radius=3,
+            photo_noise=0.018,
+            edge_breakup=0.01,
+            jpeg_quality=94,
+        )
+
+        constrained = revision_selector.constrained_revision_params(
+            params,
+            basis,
+            {"visual_findings": {"background": "patch_visible"}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            round_idx=8,
+        )
+
+        self.assertEqual(constrained.mask_threshold, 165)
+        self.assertEqual(constrained.mask_dilate_iterations, 2)
+        self.assertEqual(constrained.inpaint_radius, 3)
+        self.assertLessEqual(constrained.photo_noise, 0.090)
+        self.assertLessEqual(constrained.edge_breakup, 0.030)
+        self.assertGreaterEqual(constrained.jpeg_quality, 88)
+
+    def test_revision_selection_score_prefers_vision_target_alignment(self) -> None:
+        basis = CandidateParams(
+            candidate_id="basis",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.36,
+            alpha_contrast=0.30,
+            edge_breakup=0.010,
+            photo_noise=0.020,
+        )
+        aligned = CandidateParams(
+            candidate_id="aligned",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.46,
+            alpha_contrast=0.30,
+            edge_breakup=0.018,
+            photo_noise=0.026,
+        )
+        opposite = CandidateParams(
+            candidate_id="opposite",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.30,
+            alpha_contrast=0.30,
+            edge_breakup=0.004,
+            photo_noise=0.060,
+        )
+        vision_target = {
+            "active": True,
+            "stage": "photo_texture",
+            "stage_source": "vision_acceptance",
+            "axes": [{"axis": "too_sharp", "stage": "photo_texture", "repeat_count": 2}],
+            "axis_keys": ["too_sharp"],
+            "repeated": True,
+        }
+
+        aligned_score = revision_selector.revision_selection_score(
+            100.0,
+            aligned,
+            basis,
+            {"visual_findings": {"sharpness": "too_sharp"}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            vision_target=vision_target,
+        )
+        opposite_score = revision_selector.revision_selection_score(
+            100.0,
+            opposite,
+            basis,
+            {"visual_findings": {"sharpness": "too_sharp"}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            vision_target=vision_target,
+        )
+
+        self.assertLess(aligned_score, opposite_score)
+
+    def test_repeated_combo_target_prefers_complete_alignment_over_partial(self) -> None:
+        basis = CandidateParams(
+            candidate_id="basis",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.36,
+            alpha_contrast=0.30,
+            mask_threshold=165,
+            inpaint_radius=3,
+            edge_breakup=0.030,
+            photo_noise=0.054,
+        )
+        partial = CandidateParams(
+            candidate_id="partial",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.36,
+            alpha_contrast=0.30,
+            mask_threshold=165,
+            inpaint_radius=3,
+            edge_breakup=0.030,
+            photo_noise=0.084,
+        )
+        complete = CandidateParams(
+            candidate_id="complete",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.48,
+            alpha_contrast=0.30,
+            mask_threshold=170,
+            inpaint_radius=3,
+            edge_breakup=0.030,
+            photo_noise=0.084,
+        )
+        vision_target = {
+            "active": True,
+            "stage": "background_cleanup",
+            "stage_source": "vision_acceptance",
+            "axes": [
+                {"axis": "patch_visible", "stage": "background_cleanup", "repeat_count": 4},
+                {"axis": "too_sharp", "stage": "photo_texture", "repeat_count": 4},
+            ],
+            "axis_keys": ["patch_visible", "too_sharp"],
+            "repeated": True,
+        }
+        acceptance = {"visual_findings": {"background": "patch_visible", "sharpness": "too_sharp"}}
+        report = {"pass": True, "stage_gate": {"blocking_stage": None}}
+
+        partial_score = revision_selector.revision_selection_score(
+            100.0,
+            partial,
+            basis,
+            acceptance,
+            report,
+            report,
+            vision_target=vision_target,
+        )
+        complete_score = revision_selector.revision_selection_score(
+            1000.0,
+            complete,
+            basis,
+            acceptance,
+            report,
+            report,
+            vision_target=vision_target,
+        )
+
+        self.assertLess(complete_score, partial_score)
+
+    def test_constrained_revision_allows_visual_photo_texture_when_local_stage_passes(self) -> None:
+        basis = CandidateParams(
+            candidate_id="basis",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.48,
+            edge_breakup=0.03,
+            photo_noise=0.054,
+            jpeg_quality=90,
+        )
+        suggested = CandidateParams(
+            candidate_id="suggested",
+            font_name="font",
+            font_path="/tmp/font.ttf",
+            font_size=30,
+            opacity=0.66,
+            blur=0.62,
+            edge_breakup=0.05,
+            photo_noise=0.084,
+            jpeg_quality=88,
+        )
+
+        constrained = revision_selector.constrained_revision_params(
+            suggested,
+            basis,
+            {"visual_findings": {"sharpness": "too_sharp"}},
+            {"pass": True, "stage_gate": {"blocking_stage": None}},
+            round_idx=8,
+        )
+
+        self.assertEqual(constrained.blur, 0.62)
+        self.assertEqual(constrained.edge_breakup, 0.05)
+        self.assertEqual(constrained.photo_noise, 0.084)
+
 
 if __name__ == "__main__":
     unittest.main()
