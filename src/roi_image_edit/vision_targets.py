@@ -42,7 +42,7 @@ def _visual_axes(acceptance: dict[str, Any] | None) -> list[VisionAxis]:
         axes.append(VisionAxis(sharpness, "photo_texture", sharpness, "visual_findings.sharpness"))
 
     darkness = _clean(findings.get("darkness"))
-    if darkness in {"too_dark", "slightly_dark", "too_light", "slightly_light"}:
+    if darkness in {"too_dark", "slightly_dark", "too_light", "slightly_light", "too_gray", "slightly_gray"}:
         axes.append(VisionAxis(darkness, "ink_gray_balance", darkness, "visual_findings.darkness"))
     stroke_weight = _clean(findings.get("stroke_weight"))
     if stroke_weight in {"too_bold", "slightly_bold", "too_thin", "slightly_thin"}:
@@ -104,7 +104,7 @@ def _bounds_for_axis(axis: VisionAxis) -> list[dict[str, Any]]:
             {"parameter": "core_darken_strength", "direction": "decrease", "max_delta": 0.100},
             {"parameter": "blur", "direction": "increase_limited", "max_delta": 0.120},
         ]
-    if axis.axis in {"too_light", "slightly_light", "too_thin", "slightly_thin"}:
+    if axis.axis in {"too_light", "slightly_light", "too_gray", "slightly_gray", "too_thin", "slightly_thin"}:
         return [
             {"parameter": "opacity", "direction": "increase", "max_delta": 0.060},
             {"parameter": "core_ink_gain", "direction": "increase", "max_delta": 0.080},
@@ -330,7 +330,7 @@ def vision_target_alignment(
             if opposite:
                 axis_adjustment += 560.0
             details = {"opacity_delta": round(delta("opacity"), 4), "core_ink_gain_delta": round(delta("core_ink_gain"), 4), "core_darken_strength_delta": round(delta("core_darken_strength"), 4), "blur_delta": round(blur_delta, 4)}
-        elif axis in {"too_light", "slightly_light", "too_thin", "slightly_thin"}:
+        elif axis in {"too_light", "slightly_light", "too_gray", "slightly_gray", "too_thin", "slightly_thin"}:
             opacity_gain = delta("opacity")
             core_gain = delta("core_ink_gain")
             darken_gain = delta("core_darken_strength")

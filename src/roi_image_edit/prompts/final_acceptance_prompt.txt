@@ -1,19 +1,17 @@
 请对最终局部文字修图结果进行验收。
 
 输入包括：
-1. 原图；
-2. 最终修图结果；
-3. 原图与最终结果的放大对比图；
-4. 最终使用的参数；
-5. 代码硬校验报告。
+1. 紧凑验收图，包含原 ROI、最终 ROI、同排参考文字和背景补丁区；
+2. 最终使用的参数；
+3. `vision_brief` 短摘要。
 
 最终使用参数：
 {final_params}
 
-代码硬校验报告：
+vision_brief 短摘要：
 {hard_check_report}
 
-代码硬校验报告中包含当前候选的 `stage_context`。如果 `stage_context.blocking_stage`
+`vision_brief` 中包含当前候选的 `stage_context`、本地确定性检查摘要和历史人工拒绝目标。完整本地报告只用于本地审计，不作为视觉模型上下文全文输入。如果 `stage_context.blocking_stage`
 不为空，视觉验收必须围绕该阶段判断失败原因；参数建议只能使用
 `stage_context.allowed_patch_keys` 中允许的参数族，不能把
 `stage_context.blocked_patch_keys` 作为当前轮主修复方向。
@@ -61,6 +59,7 @@
 禁止把“核心过黑、核心黑度偏重、黑芯过量、too_dark”写成“核心不够黑”。
 如果本地阶段上下文禁止某参数，你仍可在 reason 中描述该现象，但不要在
 `suggested_patch` 或 `parameter_suggestions` 中建议该参数。
+如果 `vision_brief.historical_false_pass_target.active=true`，必须逐个判断其中的历史拒绝轴是否已经关闭，并在 `historical_target_closure.axes` 中为每个轴输出 `closed` 和 `basis`。若无法确认所有历史轴都已关闭，不能输出 `pass=true` / `final_decision=deliver`。
 如果需要 revise，必须输出 `blocking_stage`、`stage_assessment`、`direction` 和 `parameter_suggestions`，本地会把它们转成候选；如果建议与本地硬指标冲突，本地会记录 conflict。
 `stage_assessment` 必须先判断本地 `blocking_stage` 是否真实存在；如果你认为前置阶段已经通过，必须在 `basis` 中说明依据；`suggestion_target_stage` 必须等于当前 `blocking_stage`，没有阻塞阶段时必须为 null。
 
@@ -106,5 +105,10 @@
     {"name": "opacity", "from": "current_value", "to": "suggested_value", "reason": "only if true-black core is too high"}
   ],
   "local_metric_conflicts": [],
+  "historical_target_closure": {
+    "axes": [
+      {"axis": "too_gray", "closed": true, "basis": "目标文字灰度已接近同排参考字且不再显著偏灰。"}
+    ]
+  },
   "final_decision": "deliver / revise"
 }

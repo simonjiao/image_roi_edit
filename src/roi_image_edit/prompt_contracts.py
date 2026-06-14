@@ -226,6 +226,11 @@ PROMPT_OUTPUT_FIELD_HANDLING: dict[str, dict[str, str]] = {
         "parameter_suggestions[].to": "execute",
         "parameter_suggestions[].reason": "record",
         "local_metric_conflicts": "record",
+        "historical_target_closure": "validate",
+        "historical_target_closure.axes": "validate",
+        "historical_target_closure.axes[].axis": "validate",
+        "historical_target_closure.axes[].closed": "validate",
+        "historical_target_closure.axes[].basis": "record",
         "final_decision": "validate",
     },
     "font_size_prompt.txt": {

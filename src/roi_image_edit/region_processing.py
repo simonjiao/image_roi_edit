@@ -36,6 +36,10 @@ from roi_image_edit.iterative_pipeline import (
 from roi_image_edit.prompt_assets import load_prompt, missing_prompt_names
 from roi_image_edit.auto_roi_artifacts import auto_roi_evidence_payload, save_auto_roi_overlay
 from roi_image_edit.failure_artifacts import failed_image_result
+from roi_image_edit.historical_acceptance import (
+    apply_historical_false_pass_gate,
+    historical_false_pass_target,
+)
 from roi_image_edit.image_classification import classify_region_roi_policy, with_region_roi_policy
 
 from roi_image_edit.local_validation import (
@@ -300,6 +304,233 @@ def processing_prompt_context(plan: RenderPlan, stage_context: dict[str, Any] | 
     )
 
 
+def _brief_stage_context(stage_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(stage_context, dict):
+        return {}
+    keys = (
+        "blocking_stage",
+        "stage_status",
+        "pass_with_deferred",
+        "deferred_issues",
+        "deferred_to_stage",
+        "allowed_patch_keys",
+        "blocked_patch_keys",
+        "profile_constraints",
+        "optimization_policy",
+    )
+    return {key: stage_context.get(key) for key in keys if key in stage_context}
+
+
+def _candidate_rank_prompt_payload(hard_reports: dict[str, Any]) -> dict[str, Any]:
+    candidates = hard_reports.get("candidates")
+    prompt_candidates: dict[str, Any] = {}
+    if isinstance(candidates, dict):
+        for candidate_id, candidate in candidates.items():
+            if not isinstance(candidate, dict):
+                continue
+            report = candidate.get("hard_check") if isinstance(candidate.get("hard_check"), dict) else {}
+            params = candidate.get("params") if isinstance(candidate.get("params"), dict) else {}
+            prompt_candidates[str(candidate_id)] = {
+                "label": candidate.get("label"),
+                "score": candidate.get("score"),
+                "params": {
+                    key: params.get(key)
+                    for key in (
+                        "font_name",
+                        "font_size",
+                        "opacity",
+                        "blur",
+                        "stroke_opacity",
+                        "ink_gain",
+                        "alpha_contrast",
+                        "core_ink_gain",
+                        "core_darken_strength",
+                        "photo_warp",
+                        "edge_breakup",
+                        "photo_noise",
+                        "jpeg_quality",
+                        "mask_threshold",
+                        "mask_dilate_iterations",
+                        "inpaint_radius",
+                    )
+                    if key in params
+                },
+                "local_checks": {
+                    "hard_boundary_pass": bool(report.get("pass")),
+                    "strict_gate_pass": bool((report.get("strict_gate") or {}).get("pass", True)),
+                    "stage_gate": report.get("stage_gate"),
+                },
+            }
+    return {
+        "vision_brief_schema": 1,
+        "task": hard_reports.get("task"),
+        "pipeline_profile": hard_reports.get("pipeline_profile"),
+        "candidate_count": hard_reports.get("candidate_count"),
+        "candidate_ids": hard_reports.get("candidate_ids"),
+        "requested_vision_candidate_limit": hard_reports.get("requested_vision_candidate_limit"),
+        "vision_candidate_limit": hard_reports.get("vision_candidate_limit"),
+        "total_candidate_count": hard_reports.get("total_candidate_count"),
+        "candidate_count_within_limit": hard_reports.get("candidate_count_within_limit"),
+        "stage_context_by_candidate": hard_reports.get("stage_context_by_candidate"),
+        "stage_filter_contract": hard_reports.get("stage_filter_contract"),
+        "candidates": prompt_candidates,
+        "full_report_location": "vision_candidate_request.json",
+    }
+
+
+def _final_vision_brief_payload(
+    *,
+    plan: RenderPlan,
+    params: CandidateParams,
+    report: dict[str, Any],
+    score: float,
+    pipeline_profile: str,
+    historical_target: dict[str, Any],
+    local_report_artifact: Path,
+) -> dict[str, Any]:
+    stage_context = model_stage_context(report, pipeline_profile)
+    strict_gate = report.get("strict_gate") if isinstance(report.get("strict_gate"), dict) else {}
+    stage_gate = report.get("stage_gate") if isinstance(report.get("stage_gate"), dict) else {}
+    strict_metrics = report.get("strict_visual_metrics") if isinstance(report.get("strict_visual_metrics"), dict) else {}
+    bands = strict_metrics.get("bands") if isinstance(strict_metrics.get("bands"), dict) else {}
+    photo_metrics = report.get("photo_texture_metrics") if isinstance(report.get("photo_texture_metrics"), dict) else {}
+    background_report = report.get("background_cleanup_report") if isinstance(report.get("background_cleanup_report"), dict) else {}
+    post_blend = report.get("post_blend_report") if isinstance(report.get("post_blend_report"), dict) else {}
+    return {
+        "vision_brief_schema": 1,
+        "task": {
+            "source_text": plan.source_text,
+            "target_text": plan.target_text,
+            "search_roi": list(plan.search_roi),
+            "target_roi": list(plan.target_roi),
+            "draw_mode": plan.draw_mode,
+            "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
+            "slot_boxes": [asdict(item) for item in plan.slot_boxes],
+            "protected_boxes": [list(item) for item in plan.protected_boxes],
+            "field_key": plan.field_key,
+            "field_label_text": plan.field_label_text,
+            "field_separator_text": plan.field_separator_text,
+            "protected_texts": list(plan.protected_texts),
+            "pipeline_profile": pipeline_profile,
+        },
+        "final_score": round(float(score), 3),
+        "final_params": asdict(params),
+        "local_deterministic_checks": {
+            "size_match": report.get("size_match"),
+            "outside_roi_changed_pixels": report.get("outside_roi_changed_pixels"),
+            "border_changed_pixels": report.get("border_changed_pixels"),
+            "protected_changed_pixels": report.get("protected_changed_pixels"),
+            "hard_boundary_pass": bool(report.get("pass")),
+            "strict_gate_pass": bool(strict_gate.get("pass", True)),
+            "stage_gate_pass": bool(stage_gate.get("pass", not stage_gate.get("blocking_stage"))),
+            "blocking_stage": stage_gate.get("blocking_stage"),
+        },
+        "stage_context": _brief_stage_context(stage_context),
+        "key_visual_metrics": {
+            "ink_gray_bands": {
+                key: bands.get(key)
+                for key in (
+                    "old_lt55_pixels",
+                    "lt55_delta",
+                    "old_lt90_pixels",
+                    "lt90_delta",
+                    "old_lt55_share_of_lt165",
+                    "new_lt55_share_of_lt165",
+                )
+                if key in bands
+            },
+            "photo_texture": {
+                key: photo_metrics.get(key)
+                for key in ("edge_laplacian_ratio", "pass", "issues")
+                if key in photo_metrics
+            },
+            "background_cleanup": {
+                "pass": background_report.get("pass"),
+                "issues": background_report.get("issues"),
+                "post_blend": {
+                    key: post_blend.get(key)
+                    for key in ("pass", "post_blend_dark_shadow", "post_blend_white_shadow")
+                    if key in post_blend
+                },
+            },
+        },
+        "historical_false_pass_target": historical_target,
+        "full_local_report_artifact": str(local_report_artifact),
+    }
+
+
+def _open_historical_target_from_acceptance(acceptance: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(acceptance, dict):
+        return None
+    target = acceptance.get("historical_false_pass_target")
+    completion = acceptance.get("historical_target_completion")
+    if (
+        isinstance(target, dict)
+        and target.get("active")
+        and isinstance(completion, dict)
+        and not completion.get("complete")
+    ):
+        return target
+    return None
+
+
+def save_final_vision_composite(
+    original: Image.Image,
+    candidate: Image.Image,
+    plan: RenderPlan,
+    context_box: tuple[int, int, int, int],
+    path: Path,
+    *,
+    panel_scale: int = 3,
+    max_width: int = 1800,
+) -> None:
+    target_box = region_context_box(plan.target_roi, original.size, pad_ratio=0.42)
+    row_box = context_box
+    background_box = clamp_box(
+        (
+            plan.target_roi[0] - 6,
+            plan.target_roi[1] - 6,
+            plan.target_roi[2] + 6,
+            plan.target_roi[3] + 6,
+        ),
+        original.size,
+    )
+    panels = [
+        ("original_roi", original.crop(target_box)),
+        ("final_roi", candidate.crop(target_box)),
+        ("row_reference", original.crop(row_box)),
+        ("background_patch", candidate.crop(background_box)),
+    ]
+    resized: list[tuple[str, Image.Image]] = []
+    for label, crop in panels:
+        resized.append((label, crop.resize((crop.width * panel_scale, crop.height * panel_scale), Image.Resampling.NEAREST)))
+    label_h = 24
+    gutter = 8
+    left_w = max(resized[0][1].width, resized[2][1].width)
+    right_w = max(resized[1][1].width, resized[3][1].width)
+    top_h = max(resized[0][1].height, resized[1][1].height)
+    bottom_h = max(resized[2][1].height, resized[3][1].height)
+    sheet = Image.new("RGB", (left_w + right_w + gutter, top_h + bottom_h + label_h * 2 + gutter), (248, 248, 248))
+    draw = ImageDraw.Draw(sheet)
+    positions = [
+        (0, label_h, resized[0]),
+        (left_w + gutter, label_h, resized[1]),
+        (0, top_h + label_h + gutter + label_h, resized[2]),
+        (left_w + gutter, top_h + label_h + gutter + label_h, resized[3]),
+    ]
+    draw.text((6, 5), resized[0][0], fill=(20, 20, 20))
+    draw.text((left_w + gutter + 6, 5), resized[1][0], fill=(20, 20, 20))
+    draw.text((6, top_h + label_h + gutter + 5), resized[2][0], fill=(20, 20, 20))
+    draw.text((left_w + gutter + 6, top_h + label_h + gutter + 5), resized[3][0], fill=(20, 20, 20))
+    for x, y, (_label, image) in positions:
+        sheet.paste(image, (x, y))
+    if sheet.width > max_width:
+        ratio = max_width / float(sheet.width)
+        sheet = sheet.resize((max_width, max(1, int(round(sheet.height * ratio)))), Image.Resampling.LANCZOS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(path)
+
+
 def image_to_data_url(img: Image.Image) -> str:
     buffer = io.BytesIO()
     img.convert("RGB").save(buffer, format="PNG")
@@ -526,9 +757,11 @@ def run_region_vision_checks(
                 "request_path": str(vision_request_path),
             },
         )
+    candidate_prompt_payload = _candidate_rank_prompt_payload(hard_reports)
+    write_json(region_dir / "vision_candidate_prompt_payload.json", candidate_prompt_payload)
     prompt = candidate_prompt_template.replace(
         "{hard_check_report}",
-        json.dumps(hard_reports, ensure_ascii=False, indent=2),
+        json.dumps(candidate_prompt_payload, ensure_ascii=False, indent=2),
     )
     prompt += processing_prompt_context(
         plan,
@@ -541,7 +774,7 @@ def run_region_vision_checks(
     candidate_rank_json = vision_client.call_json(
         system_prompt=master_prompt,
         user_prompt=prompt,
-        image_paths=[original_context_path, vision_sheet_path],
+        image_paths=[vision_sheet_path],
         prompt_name="candidate_rank_prompt.txt",
         audit_path=region_dir / "visual_eval_candidate_rank_prompt_audit.json",
     )
@@ -593,26 +826,21 @@ def run_region_vision_checks(
     ) -> dict[str, Any]:
         save_region_context(image, context_box, context_path)
         save_region_compare(original, image, context_box, compare_path)
-        hard_payload = {
-            "task": {
-                "source_text": plan.source_text,
-                "target_text": plan.target_text,
-                "search_roi": list(plan.search_roi),
-                "target_roi": list(plan.target_roi),
-                "draw_mode": plan.draw_mode,
-                "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
-                "slot_boxes": [asdict(item) for item in plan.slot_boxes],
-                "protected_boxes": [list(item) for item in plan.protected_boxes],
-                "field_key": plan.field_key,
-                "field_label_text": plan.field_label_text,
-                "field_separator_text": plan.field_separator_text,
-                "protected_texts": list(plan.protected_texts),
-                "pipeline_profile": pipeline_profile,
-                "stage_context": model_stage_context(report, pipeline_profile),
-            },
-            "final_score": round(float(score), 3),
-            "hard_check": report,
-        }
+        compact_path = out_path.with_name(f"{out_path.stem}_vision_compact.png")
+        save_final_vision_composite(original, image, plan, context_box, compact_path)
+        local_report_path = out_path.with_name(f"{out_path.stem}_local_report.json")
+        write_json(local_report_path, report)
+        historical_target = historical_false_pass_target(report, plan)
+        hard_payload = _final_vision_brief_payload(
+            plan=plan,
+            params=params,
+            report=report,
+            score=score,
+            pipeline_profile=pipeline_profile,
+            historical_target=historical_target,
+            local_report_artifact=local_report_path,
+        )
+        write_json(out_path.with_name(f"{out_path.stem}_vision_brief.json"), hard_payload)
         final_prompt = (
             final_prompt_template.replace(
                 "{final_params}",
@@ -630,11 +858,12 @@ def run_region_vision_checks(
         final_json = vision_client.call_json(
             system_prompt=master_prompt,
             user_prompt=final_prompt,
-            image_paths=[original_context_path, context_path, compare_path],
+            image_paths=[compact_path],
             prompt_name="final_acceptance_prompt.txt",
             audit_path=out_path.with_name(f"{out_path.stem}_prompt_audit.json"),
         )
         final_json = apply_local_acceptance_gate(final_json, report)
+        final_json = apply_historical_false_pass_gate(final_json, historical_target)
         write_json(out_path, final_json)
         return final_json
 
@@ -698,13 +927,32 @@ def run_region_vision_checks(
                 for round_record in revision_rounds
                 if isinstance(round_record, dict)
             ]
-            vision_target = vision_target_from_acceptance(
+            vision_target = _open_historical_target_from_acceptance(current_acceptance) or vision_target_from_acceptance(
                 current_report,
                 current_acceptance,
                 prior_targets=previous_vision_targets,
                 round_index=round_idx,
                 basis_candidate_id=current_params.candidate_id,
             )
+            if (
+                vision_target.get("source") == "historical_false_pass"
+                and int(vision_target.get("max_steps") or 0) > 0
+                and round_idx > int(vision_target.get("max_steps") or 0)
+            ):
+                revision_rounds.append(
+                    {
+                        "round": round_idx,
+                        "basis_candidate_id": current_params.candidate_id,
+                        "basis_acceptance_level": current_acceptance.get("acceptance_level"),
+                        "basis_final_decision": current_acceptance.get("final_decision"),
+                        "basis_blocking_stage": basis_blocking_stage,
+                        "basis_stage_source": basis_stage_source,
+                        "vision_disagreement": True,
+                        "vision_target": vision_target,
+                        "stop_reason": "historical_false_pass_max_steps_reached",
+                    }
+                )
+                break
             vision_recipe_patches = vision_target_recipe_patches(vision_target)
             vision_recipe_report = vision_target_recipe_report(vision_target)
             if progress:
@@ -1793,7 +2041,7 @@ def run_region_vision_checks(
     final_stage_gate = final_report.get("stage_gate") if isinstance(final_report, dict) else {}
     if not isinstance(final_stage_gate, dict):
         final_stage_gate = stage_gate_for_report(final_report)
-    final_vision_target = vision_target_from_acceptance(
+    final_vision_target = _open_historical_target_from_acceptance(final_acceptance_json) or vision_target_from_acceptance(
         final_report,
         final_acceptance_json,
         prior_targets=[

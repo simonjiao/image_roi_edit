@@ -31,4 +31,5 @@ roi_image_edit = [
   "prompts/*.txt",
   "prompts/*.json",
   "prompts/*.md",
+  "historical_cases/*.jsonl",
 ]

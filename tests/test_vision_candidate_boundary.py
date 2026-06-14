@@ -92,7 +92,10 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
             self.assertTrue(request_path.exists())
 
         self.assertEqual(len(fake_client.calls), 2)
+        self.assertEqual([Path(path).name for path in fake_client.calls[0]["image_paths"]], ["vision_candidate_sheet.png"])
+        self.assertEqual([Path(path).name for path in fake_client.calls[1]["image_paths"]], ["final_acceptance_vision_compact.png"])
         rank_prompt = str(fake_client.calls[0]["user_prompt"])
+        final_prompt = str(fake_client.calls[1]["user_prompt"])
         self.assertIn('"candidate_count": 3', rank_prompt)
         self.assertIn('"vision_candidate_limit": 3', rank_prompt)
         self.assertIn('"total_candidate_count": 3', rank_prompt)
@@ -100,7 +103,74 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
         self.assertIn('"c1"', rank_prompt)
         self.assertIn('"c2"', rank_prompt)
         self.assertIn('"c3"', rank_prompt)
+        self.assertIn('"vision_brief_schema": 1', rank_prompt)
+        self.assertIn('"vision_brief_schema": 1', final_prompt)
+        self.assertIn('"full_local_report_artifact"', final_prompt)
+        self.assertNotIn('"slot_quality_report"', final_prompt)
+        self.assertNotIn('"strict_visual_metrics"', final_prompt)
         self.assertTrue(summary["candidate_rank"]["local_stage_context"]["stage_context_by_candidate"])
+
+    def test_final_acceptance_uses_compact_single_image_and_short_prompt_payload(self) -> None:
+        original = Image.new("RGB", (120, 80), (220, 220, 220))
+        plan = RenderPlan(
+            target_text="乙",
+            source_text="甲",
+            search_roi=(20, 20, 86, 46),
+            target_roi=(42, 22, 66, 42),
+            slot_boxes=(),
+            protected_boxes=(),
+            source_reference_box=None,
+            style_reference_box=None,
+            style_reference_text=None,
+            draw_mode="replace",
+        )
+        params = CandidateParams(
+            candidate_id="c1",
+            font_name="test",
+            font_path="/tmp/test.ttf",
+            font_size=12,
+            opacity=0.8,
+            blur=0.1,
+        )
+        noisy_full_report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "stage_gate": {"pass": True, "blocking_stage": None},
+            "strict_gate": {"pass": True, "issues": []},
+            "slot_quality_report": {"large": "x" * 5000},
+            "strict_visual_metrics": {"large": "y" * 5000},
+        }
+        fake_client = FakeVisionClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_region_vision_checks(
+                original=original,
+                rendered=[(params, original.copy(), noisy_full_report, 0.1)],
+                plan=plan,
+                region_dir=Path(tmp),
+                vision_client=fake_client,  # type: ignore[arg-type]
+                prompts=("master", "candidate {hard_check_report}", "final {final_params} {hard_check_report}"),
+                candidate_limit=8,
+                font_style_reference={},
+                max_revision_rounds=0,
+                pipeline_profile="photo_scan",
+            )
+            compact_path = Path(tmp) / "final_acceptance_vision_compact.png"
+            brief_path = Path(tmp) / "final_acceptance_vision_brief.json"
+            local_report_path = Path(tmp) / "final_acceptance_local_report.json"
+            self.assertTrue(compact_path.exists())
+            self.assertTrue(brief_path.exists())
+            self.assertTrue(local_report_path.exists())
+            with Image.open(compact_path) as compact:
+                self.assertLessEqual(compact.width, 1800)
+
+        final_call = fake_client.calls[1]
+        final_prompt = str(final_call["user_prompt"])
+        self.assertEqual(len(final_call["image_paths"]), 1)
+        self.assertEqual(Path(final_call["image_paths"][0]).name, "final_acceptance_vision_compact.png")
+        self.assertIn('"vision_brief_schema": 1', final_prompt)
+        self.assertIn('"local_deterministic_checks"', final_prompt)
+        self.assertNotIn('"large": "' + ("x" * 64), final_prompt)
+        self.assertNotIn('"large": "' + ("y" * 64), final_prompt)
 
     def test_region_vision_request_excludes_stage_blocked_candidates_when_passed_candidates_exist(self) -> None:
         original = Image.new("RGB", (16, 16), (220, 220, 220))
