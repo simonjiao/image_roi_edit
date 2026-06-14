@@ -84,8 +84,9 @@ class ChecklistIntegrityTest(unittest.TestCase):
     def test_public_acceptance_keeps_actual_job_gate_open_until_verified(self) -> None:
         checklist = CHECKLIST.read_text(encoding="utf-8")
         self.assertIn("两个当前输入图片的真实 Web/Vision job", checklist)
-        self.assertIn("output/web/20260614_110938", checklist)
-        self.assertIn("output/web/20260614_111920", checklist)
+        self.assertIn("output/web/20260614_113133/result.json", checklist)
+        self.assertIn("accepted=true", checklist)
+        self.assertIn("final_decision=deliver", checklist)
         self.assertIn("- [ ] 两个当前输入图片的真实 Web/Vision job", checklist)
 
 
