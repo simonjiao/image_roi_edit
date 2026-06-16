@@ -294,7 +294,7 @@ font_count
 Stage A: shape search
   字体 / 字号 / 放置策略 / dx dy / char_offsets / stroke body / shear
   -> 本地形态指标剪枝
-  -> 保留 top 20-50
+  -> 按 font × placement_strategy 分桶配额保留，再全局轴优先排序到 top 20-50
 
 Stage B: ink-gray search
   opacity / core gain / core darken / alpha contrast / outer gray
@@ -476,7 +476,9 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 
 - 在 `text_shape` 阻塞时生成 shape candidate grid。
 - shape grid 主搜索只包含字体、字号、放置、offset 和 shear；`stroke_opacity` 只作为次级 stroke body 轴，`ink_gain`、`alpha_contrast`、`core_*` 只属于 `ink_gray_balance`。
-- 本地评分后保留 top candidates。
+- 放置策略只能按文档允许的场景枚举：同字数 CJK 且形态变化大或不确定时允许 `top_left_anchor` 与 `center_primary` 并行，字数增减只用 `left_anchor_span`，数字/日期只用 `baseline_numeric`，manual exact 无旧值时才用 `manual_fallback`。
+- 候选保留必须先按 `font × placement_strategy` 分桶配额，再全局轴优先排序；`photo_scan` 每桶至少保留 4 个，`clean_digital` 每桶至少保留 2 个，避免字体池或枚举顺序变化导致候选跳变。
+- 被选中的 shape 候选必须携带对应 `RenderPlan` 进入后续轮次，不能只在报告中记录 `placement_strategy` 而实际渲染继续使用旧 plan。
 - 禁止 photo texture 参数抢先修复。
 
 ### Slice 5: 分层候选产物

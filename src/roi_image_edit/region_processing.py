@@ -1114,6 +1114,7 @@ def run_region_vision_checks(
     }
     write_json(region_dir / "visual_eval_candidate_rank.json", candidate_rank_json)
     final_params, final_image, final_report, final_score = chosen_tuple
+    final_plan = plan
     final_context_path = region_dir / "vision_final_context.png"
     final_compare_path = region_dir / "vision_final_compare.png"
 
@@ -1123,6 +1124,7 @@ def run_region_vision_checks(
         image: Image.Image,
         report: dict[str, Any],
         score: float,
+        render_plan: RenderPlan,
         context_path: Path,
         compare_path: Path,
         out_path: Path,
@@ -1131,12 +1133,12 @@ def run_region_vision_checks(
         save_region_context(image, context_box, context_path)
         save_region_compare(original, image, context_box, compare_path)
         compact_path = out_path.with_name(f"{out_path.stem}_vision_compact.png")
-        save_final_vision_composite(original, image, plan, context_box, compact_path)
+        save_final_vision_composite(original, image, render_plan, context_box, compact_path)
         local_report_path = out_path.with_name(f"{out_path.stem}_local_report.json")
         write_json(local_report_path, report)
-        historical_target = historical_false_pass_target(report, plan)
+        historical_target = historical_false_pass_target(report, render_plan)
         hard_payload = _final_vision_brief_payload(
-            plan=plan,
+            plan=render_plan,
             params=params,
             report=report,
             score=score,
@@ -1155,7 +1157,7 @@ def run_region_vision_checks(
             )
         )
         final_prompt += processing_prompt_context(
-            plan,
+            render_plan,
             model_stage_context(report, pipeline_profile),
         )
         final_prompt += STRICT_ACCEPTANCE_APPENDIX
@@ -1176,6 +1178,7 @@ def run_region_vision_checks(
         image=final_image,
         report=final_report,
         score=final_score,
+        render_plan=plan,
         context_path=final_context_path,
         compare_path=final_compare_path,
         out_path=region_dir / "final_acceptance.json",
@@ -1204,11 +1207,18 @@ def run_region_vision_checks(
     if hard_boundary_pass and not accepted:
         write_json(region_dir / "final_acceptance_initial.json", final_acceptance_json)
         current_params = final_params
+        current_plan = final_plan
         current_image = final_image
         current_report = final_report
         current_score = final_score
         current_acceptance = final_acceptance_json
-        seen_params: set[str] = {params_signature(current_params)}
+        def revision_params_signature(candidate_params: CandidateParams, candidate_plan: RenderPlan) -> str:
+            return (
+                f"{params_signature(candidate_params)}"
+                f"|placement_strategy={candidate_plan.placement_strategy}"
+            )
+
+        seen_params: set[str] = {revision_params_signature(current_params, current_plan)}
         current_shape_parent_candidate_id = current_params.candidate_id
         rank_patch = candidate_rank_json.get("suggested_patch")
         max_revision_rounds = max(1, int(max_revision_rounds))
@@ -1397,7 +1407,7 @@ def run_region_vision_checks(
             shape_candidate_grid = text_shape_reset_candidate_grid(
                 current_params,
                 font_style_reference,
-                plan,
+                current_plan,
                 current_report,
                 limit=48,
             )
@@ -1589,12 +1599,24 @@ def run_region_vision_checks(
                 break
 
             round_candidates: list[
-                tuple[float, float, CandidateParams, Image.Image, dict[str, Any], dict[str, Any]]
+                tuple[float, float, CandidateParams, Image.Image, dict[str, Any], dict[str, Any], RenderPlan]
             ] = []
 
-            candidate_jobs: list[tuple[str, int, dict[str, Any] | None, CandidateParams, dict[str, Any]]] = []
+            candidate_jobs: list[
+                tuple[str, int, dict[str, Any] | None, CandidateParams, dict[str, Any], RenderPlan]
+            ] = []
             for shape_idx, shape_params in enumerate(shape_reset_params, start=1):
-                candidate_jobs.append(("shape_reset", shape_idx, None, shape_params, {"applied": False, "reason": "none", "changes": {}}))
+                shape_plan = shape_candidate_grid.plan_for_candidate(shape_params, current_plan)
+                candidate_jobs.append(
+                    (
+                        "shape_reset",
+                        shape_idx,
+                        None,
+                        shape_params,
+                        {"applied": False, "reason": "none", "changes": {}},
+                        shape_plan,
+                    )
+                )
             for ink_idx, ink_params in enumerate(ink_gray_params, start=1):
                 candidate_jobs.append(
                     (
@@ -1608,6 +1630,7 @@ def run_region_vision_checks(
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
                         },
+                        current_plan,
                     )
                 )
             for guard_idx, guard_params in enumerate(ink_guard_params, start=1):
@@ -1623,6 +1646,7 @@ def run_region_vision_checks(
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
                         },
+                        current_plan,
                     )
                 )
             for photo_idx, photo_params in enumerate(photo_texture_params, start=1):
@@ -1638,6 +1662,7 @@ def run_region_vision_checks(
                             "changes": {},
                             "parent_candidate_id": current_params.candidate_id,
                         },
+                        current_plan,
                     )
                 )
             for escape_idx, escape_params in enumerate(escape_candidates, start=1):
@@ -1658,6 +1683,7 @@ def run_region_vision_checks(
                                 "controlled_escape": True,
                             },
                         },
+                        current_plan,
                     )
                 )
             for patch_idx, patch in enumerate(round_patches, start=1):
@@ -1675,7 +1701,7 @@ def run_region_vision_checks(
                     current_report,
                     current_acceptance,
                 )
-                candidate_jobs.append(("patch", patch_idx, patch, patched_params, audit))
+                candidate_jobs.append(("patch", patch_idx, patch, patched_params, audit, current_plan))
             for seed_idx, seed_entry in enumerate(forced_seed_entries, start=1):
                 seed_patch = seed_entry.get("converted_patch")
                 if not isinstance(seed_patch, dict):
@@ -1704,9 +1730,18 @@ def run_region_vision_checks(
                     "constrained_patch": dict(seed_audit.get("changes") or {}),
                     "constraint_reason": seed_audit.get("reason"),
                 }
-                candidate_jobs.append(("forced_model_seed", seed_idx, seed_patch, constrained_seed_params, {**seed_audit, "forced_seed_context": forced_seed_context}))
+                candidate_jobs.append(
+                    (
+                        "forced_model_seed",
+                        seed_idx,
+                        seed_patch,
+                        constrained_seed_params,
+                        {**seed_audit, "forced_seed_context": forced_seed_context},
+                        current_plan,
+                    )
+                )
 
-            for candidate_origin, candidate_idx, patch, patched_params, patch_constraint_audit in candidate_jobs:
+            for candidate_origin, candidate_idx, patch, patched_params, patch_constraint_audit, candidate_plan in candidate_jobs:
                 suffix = "i"
                 if candidate_origin == "shape_reset":
                     suffix = "s"
@@ -1720,15 +1755,15 @@ def run_region_vision_checks(
                     patched_params,
                     candidate_id=f"{current_params.candidate_id}_{suffix}{round_idx:02d}_{candidate_idx:02d}",
                 )
-                signature = params_signature(patched_params)
+                signature = revision_params_signature(patched_params, candidate_plan)
                 if signature in seen_params:
                     continue
                 seen_params.add(signature)
-                patched_image = render_candidate(original, plan, patched_params)
+                patched_image = render_candidate(original, candidate_plan, patched_params)
                 patched_report = candidate_report(
                     original,
                     patched_image,
-                    plan,
+                    candidate_plan,
                     patched_params,
                     font_style_reference,
                     pipeline_profile=pipeline_profile,
@@ -1737,7 +1772,7 @@ def run_region_vision_checks(
                 patched_score = region_candidate_score(
                     original,
                     patched_image,
-                    plan,
+                    candidate_plan,
                     patched_report,
                 )
                 patched_selection_score = revision_selection_score(
@@ -1832,6 +1867,8 @@ def run_region_vision_checks(
                     "vision_target_alignment": target_alignment,
                     "vision_target_completion": target_completion,
                     "non_regression_guard": target_guard,
+                    "placement_strategy": candidate_plan.placement_strategy,
+                    "placement_strategy_reason": candidate_plan.placement_strategy_reason,
                 }
                 if patch is not None:
                     optimization_policy = optimization_policy_audit(
@@ -2006,6 +2043,7 @@ def run_region_vision_checks(
                             patched_image,
                             patched_report,
                             attempt_record,
+                            candidate_plan,
                         )
                     )
 
@@ -2105,7 +2143,15 @@ def run_region_vision_checks(
                     if stroke_candidates[0][0] <= selected_tuple[0] + 360.0:
                         selected_tuple = stroke_candidates[0]
                         selected_reason = "stroke_body_recovery_priority"
-            patched_selection_score, patched_score, patched_params, patched_image, patched_report, attempt_record = selected_tuple
+            (
+                patched_selection_score,
+                patched_score,
+                patched_params,
+                patched_image,
+                patched_report,
+                attempt_record,
+                patched_plan,
+            ) = selected_tuple
             attempt_record["selected_for_visual"] = True
             attempt_record["selected_reason"] = selected_reason
             selected_continuation_contract = revision_round_continuation_contract(
@@ -2123,6 +2169,7 @@ def run_region_vision_checks(
                 image=patched_image,
                 report=patched_report,
                 score=patched_score,
+                render_plan=patched_plan,
                 context_path=patched_context_path,
                 compare_path=patched_compare_path,
                 out_path=region_dir / f"final_acceptance_iter{round_idx:02d}.json",
@@ -2257,6 +2304,7 @@ def run_region_vision_checks(
             )
 
             current_params = patched_params
+            current_plan = patched_plan
             current_image = patched_image
             current_report = patched_report
             current_score = patched_score
@@ -2267,6 +2315,7 @@ def run_region_vision_checks(
             ):
                 current_shape_parent_candidate_id = patched_params.candidate_id
             final_params = current_params
+            final_plan = current_plan
             final_image = current_image
             final_report = current_report
             final_score = current_score
@@ -2284,7 +2333,7 @@ def run_region_vision_checks(
         final_font_candidates = final_font_revision_candidates(
             final_params,
             font_style_reference,
-            plan,
+            final_plan,
             final_report,
         )
         if progress and final_font_candidates:
@@ -2314,17 +2363,17 @@ def run_region_vision_checks(
                         "font_size": alt_params.font_size,
                     },
                 )
-            alt_image = render_candidate(original, plan, alt_params)
+            alt_image = render_candidate(original, final_plan, alt_params)
             alt_report = candidate_report(
                 original,
                 alt_image,
-                plan,
+                final_plan,
                 alt_params,
                 font_style_reference,
                 pipeline_profile=pipeline_profile,
             )
             attach_region_report_context(alt_report)
-            alt_score = region_candidate_score(original, alt_image, plan, alt_report)
+            alt_score = region_candidate_score(original, alt_image, final_plan, alt_report)
             alt_strict = report_strict_pass(alt_report)
             attempt_record = {
                 "index": alt_idx,
@@ -2358,6 +2407,7 @@ def run_region_vision_checks(
                 image=alt_image,
                 report=alt_report,
                 score=alt_score,
+                render_plan=final_plan,
                 context_path=alt_context_path,
                 compare_path=alt_compare_path,
                 out_path=region_dir / f"final_acceptance_f{alt_idx:02d}.json",

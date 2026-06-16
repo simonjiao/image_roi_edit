@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from roi_image_edit.iterative_pipeline import (
@@ -8,7 +8,9 @@ from roi_image_edit.iterative_pipeline import (
     RenderPlan,
     default_char_offsets,
     dedupe_params,
+    is_mostly_cjk,
     mutate_params,
+    replace_candidate_id,
 )
 from roi_image_edit.local_validation import (
     report_has_excess_black_core,
@@ -43,7 +45,7 @@ TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS = frozenset(
 TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS = frozenset(
     key
     for key in (TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS | TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS)
-    if key not in {"placement_strategy", "shear"}
+    if key != "shear"
 )
 TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
     {
@@ -66,6 +68,11 @@ TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
 )
 TEXT_SHAPE_GRID_TOP_LIMIT = 48
 TEXT_SHAPE_GRID_BUDGET_RANGE = (300, 1500)
+TEXT_SHAPE_GRID_RETENTION_QUOTA_BY_PROFILE = {
+    "photo_scan": 4,
+    "clean_digital": 2,
+}
+TEXT_SHAPE_GRID_DEFAULT_RETENTION_QUOTA = 4
 
 INK_GRAY_GRID_ALLOWED_DELTA_KEYS = frozenset(
     {
@@ -194,6 +201,20 @@ _PRUNE_REASON_SOURCES = {
 class ShapeCandidateGrid:
     candidates: list[CandidateParams]
     report: dict[str, Any]
+    candidate_plans: dict[str, RenderPlan] | None = None
+
+    def plan_for_candidate(self, candidate: CandidateParams, default_plan: RenderPlan) -> RenderPlan:
+        if self.candidate_plans and candidate.candidate_id in self.candidate_plans:
+            return self.candidate_plans[candidate.candidate_id]
+        return default_plan
+
+
+@dataclass(frozen=True)
+class _ShapeCandidateRecord:
+    params: CandidateParams
+    plan: RenderPlan
+    bucket_key: tuple[str, str, str]
+    priority: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -446,6 +467,209 @@ def shape_stroke_body_grid(flags: dict[str, bool]) -> tuple[float, ...]:
     return (0.04, 0.06)
 
 
+def _shape_change_large_from_report(plan: RenderPlan, report: dict[str, Any] | None) -> bool | None:
+    for candidate in (
+        (report or {}).get("shape_change_report") if isinstance(report, dict) else None,
+        (plan.slot_quality_report or {}).get("shape_change_report") if isinstance(plan.slot_quality_report, dict) else None,
+        plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else None,
+    ):
+        if isinstance(candidate, dict) and isinstance(candidate.get("shape_change_large"), bool):
+            return bool(candidate["shape_change_large"])
+    return None
+
+
+def _shape_placement_strategy_items(
+    plan: RenderPlan,
+    report: dict[str, Any] | None,
+) -> tuple[tuple[str, str], ...]:
+    source_chars = text_chars(plan.source_text or "")
+    target_chars = text_chars(plan.target_text)
+    source_count = len(source_chars)
+    target_count = len(target_chars)
+    current_strategy = str(plan.placement_strategy or "top_left_anchor")
+    current_reason = str(plan.placement_strategy_reason or "current_plan")
+    slot_report = plan.slot_quality_report if isinstance(plan.slot_quality_report, dict) else {}
+    items: list[tuple[str, str]] = []
+
+    def add(strategy: str, reason: str) -> None:
+        item = (strategy, reason)
+        if item not in items and all(existing_strategy != strategy for existing_strategy, _ in items):
+            items.append(item)
+
+    if not source_count:
+        add("manual_fallback", "source_text_missing")
+        return tuple(items)
+    if plan.draw_mode == "center" or target_count > source_count:
+        add("left_anchor_span", "target_text_longer_than_source")
+        return tuple(items)
+    if target_count < source_count:
+        add("left_anchor_span", "target_text_shorter_than_source")
+        return tuple(items)
+    if not is_mostly_cjk((plan.source_text or "") + plan.target_text):
+        add("baseline_numeric", "non_cjk_value_uses_baseline_priority")
+        return tuple(items)
+    if not slot_report.get("pass"):
+        add("top_left_anchor", "slot_quality_failed_keeps_original_anchor_for_rejection")
+        return tuple(items)
+    if source_chars != target_chars:
+        shape_change_large = _shape_change_large_from_report(plan, report)
+        if shape_change_large is False:
+            add("top_left_anchor", "same_length_cjk_small_shape_change_uses_top_left_anchor")
+            return tuple(items)
+        add(current_strategy, current_reason)
+        add("top_left_anchor", "same_length_cjk_shape_axis_top_left_anchor")
+        add("center_primary", "same_length_cjk_shape_axis_center_primary")
+        return tuple(items)
+    add(current_strategy, current_reason)
+    return tuple(items)
+
+
+def _shape_profile_id(report: dict[str, Any] | None) -> str:
+    if isinstance(report, dict):
+        profile = report.get("pipeline_profile")
+        if isinstance(profile, str) and profile:
+            return profile
+        stage_context = report.get("stage_context")
+        if isinstance(stage_context, dict):
+            profile = stage_context.get("pipeline_profile")
+            if isinstance(profile, str) and profile:
+                return profile
+    return "photo_scan"
+
+
+def _shape_retention_bucket_quota(report: dict[str, Any] | None) -> tuple[str, int]:
+    profile_id = _shape_profile_id(report)
+    return profile_id, int(
+        TEXT_SHAPE_GRID_RETENTION_QUOTA_BY_PROFILE.get(
+            profile_id,
+            TEXT_SHAPE_GRID_DEFAULT_RETENTION_QUOTA,
+        )
+    )
+
+
+def _shape_params_key(params: CandidateParams) -> tuple[Any, ...]:
+    return (
+        params.font_path,
+        params.font_size,
+        round(params.opacity, 3),
+        round(params.blur, 3),
+        round(params.stroke_opacity, 3),
+        round(params.ink_gain, 3),
+        round(params.alpha_contrast, 3),
+        round(params.core_ink_gain, 3),
+        round(params.core_darken_strength, 3),
+        params.core_darken_threshold,
+        params.core_darken_target_gray,
+        params.text_dx,
+        params.text_dy,
+        params.char_offsets,
+        params.mask_threshold,
+        params.mask_dilate_iterations,
+        round(params.photo_warp, 3),
+        round(params.edge_breakup, 3),
+        round(params.photo_noise, 3),
+        params.jpeg_quality,
+    )
+
+
+def _shape_record_key(record: _ShapeCandidateRecord) -> tuple[Any, ...]:
+    return (
+        record.plan.placement_strategy,
+        *_shape_params_key(record.params),
+    )
+
+
+def _dedupe_shape_records(records: list[_ShapeCandidateRecord]) -> list[_ShapeCandidateRecord]:
+    seen: set[tuple[Any, ...]] = set()
+    result: list[_ShapeCandidateRecord] = []
+    for record in sorted(records, key=lambda item: item.priority):
+        key = _shape_record_key(record)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(record)
+    return result
+
+
+def _retain_shape_records_stratified(
+    records: list[_ShapeCandidateRecord],
+    *,
+    limit: int,
+    bucket_quota: int,
+) -> tuple[list[_ShapeCandidateRecord], dict[str, Any]]:
+    retained_limit = min(limit, TEXT_SHAPE_GRID_TOP_LIMIT)
+    deduped = _dedupe_shape_records(records)
+    sorted_records = sorted(deduped, key=lambda item: item.priority)
+    buckets: dict[tuple[str, str, str], list[_ShapeCandidateRecord]] = {}
+    for record in sorted_records:
+        buckets.setdefault(record.bucket_key, []).append(record)
+    bucket_order = sorted(
+        buckets,
+        key=lambda bucket: min(record.priority for record in buckets[bucket]),
+    )
+    effective_quota = max(0, int(bucket_quota))
+    quota_exceeds_limit = bool(bucket_order and len(bucket_order) * effective_quota > retained_limit)
+    if quota_exceeds_limit:
+        effective_quota = max(0, retained_limit // max(1, len(bucket_order)))
+
+    selected: list[_ShapeCandidateRecord] = []
+    selected_keys: set[tuple[Any, ...]] = set()
+    quota_selected_count = 0
+    for bucket in bucket_order:
+        for record in buckets[bucket][:effective_quota]:
+            key = _shape_record_key(record)
+            if key in selected_keys:
+                continue
+            selected.append(record)
+            selected_keys.add(key)
+            quota_selected_count += 1
+            if len(selected) >= retained_limit:
+                break
+        if len(selected) >= retained_limit:
+            break
+
+    for record in sorted_records:
+        if len(selected) >= retained_limit:
+            break
+        key = _shape_record_key(record)
+        if key in selected_keys:
+            continue
+        selected.append(record)
+        selected_keys.add(key)
+
+    final_records = sorted(selected, key=lambda item: item.priority)[:retained_limit]
+    final_keys = {_shape_record_key(record) for record in final_records}
+    bucket_reports: list[dict[str, Any]] = []
+    for bucket in bucket_order:
+        font_name, font_path, placement_strategy = bucket
+        retained_count = sum(1 for record in buckets[bucket] if _shape_record_key(record) in final_keys)
+        bucket_reports.append(
+            {
+                "font_name": font_name,
+                "font_path": font_path,
+                "placement_strategy": placement_strategy,
+                "raw_count": len(buckets[bucket]),
+                "retained_count": retained_count,
+                "quota": effective_quota,
+            }
+        )
+
+    report = {
+        "method": "stratified_font_strategy_quota_then_global_axis_priority",
+        "bucket_key": ["font_name", "font_path", "placement_strategy"],
+        "bucket_quota": int(bucket_quota),
+        "effective_bucket_quota": int(effective_quota),
+        "quota_exceeds_limit": quota_exceeds_limit,
+        "bucket_count": len(bucket_order),
+        "quota_selected_count": min(quota_selected_count, len(final_records)),
+        "global_fill_count": max(0, len(final_records) - min(quota_selected_count, len(final_records))),
+        "deduped_count": len(deduped),
+        "retained_limit": retained_limit,
+        "buckets": bucket_reports,
+    }
+    return final_records, report
+
+
 def text_shape_reset_candidate_grid(
     params: CandidateParams,
     font_style_reference: dict[str, Any],
@@ -475,11 +699,14 @@ def text_shape_reset_candidate_grid(
 
     max_font_size = max_font_size_for_plan(plan)
     font_items = shape_font_items(params, font_style_reference, limit=4)
+    placement_items = _shape_placement_strategy_items(plan, report)
+    profile_id, bucket_quota = _shape_retention_bucket_quota(report)
     offset_candidates = normalized_offset_candidates(plan, params)
     text_dx_candidates = tuple(dict.fromkeys((params.text_dx, 0, -1, 1)))[:3]
     text_dy_candidates = tuple(dict.fromkeys((params.text_dy, 0, -1, 1)))[:3]
     raw_budget = (
-        len(font_items)
+        len(placement_items)
+        * len(font_items)
         * len(size_deltas)
         * len(offset_candidates)
         * len(text_dx_candidates)
@@ -487,22 +714,29 @@ def text_shape_reset_candidate_grid(
         * len(stroke_body_grid)
     )
 
-    variants: list[CandidateParams] = []
-    for font_item in font_items:
+    variants: list[_ShapeCandidateRecord] = []
+    raw_index = 0
+    for font_index, font_item in enumerate(font_items):
         font_name = str(font_item.get("font_name") or params.font_name)
         font_path = str(font_item.get("font_path") or params.font_path)
         try:
             base_size = int(font_item.get("font_size") or params.font_size)
         except (TypeError, ValueError):
             base_size = params.font_size
-        for size_delta in size_deltas:
-            font_size = max(8, min(max_font_size, base_size + int(size_delta)))
-            for offsets in offset_candidates:
-                for text_dx in text_dx_candidates:
-                    for text_dy in text_dy_candidates:
-                        for stroke_opacity in stroke_body_grid:
-                            variants.append(
-                                mutate_params(
+        for strategy_index, (placement_strategy, placement_reason) in enumerate(placement_items):
+            plan_variant = replace(
+                plan,
+                placement_strategy=placement_strategy,
+                placement_strategy_reason=placement_reason,
+            )
+            bucket_key = (font_name, font_path, placement_strategy)
+            for size_index, size_delta in enumerate(size_deltas):
+                font_size = max(8, min(max_font_size, base_size + int(size_delta)))
+                for offset_index, offsets in enumerate(offset_candidates):
+                    for text_dx_index, text_dx in enumerate(text_dx_candidates):
+                        for text_dy_index, text_dy in enumerate(text_dy_candidates):
+                            for stroke_index, stroke_opacity in enumerate(stroke_body_grid):
+                                candidate = mutate_params(
                                     params,
                                     font_name=font_name,
                                     font_path=font_path,
@@ -527,12 +761,41 @@ def text_shape_reset_candidate_grid(
                                     photo_noise=params.photo_noise,
                                     jpeg_quality=params.jpeg_quality,
                                 )
-                            )
-    candidates = dedupe_params(variants, min(limit, TEXT_SHAPE_GRID_TOP_LIMIT))
+                                variants.append(
+                                    _ShapeCandidateRecord(
+                                        params=candidate,
+                                        plan=plan_variant,
+                                        bucket_key=bucket_key,
+                                        priority=(
+                                            font_index,
+                                            strategy_index,
+                                            size_index,
+                                            offset_index,
+                                            text_dx_index,
+                                            text_dy_index,
+                                            stroke_index,
+                                            raw_index,
+                                        ),
+                                    )
+                                )
+                                raw_index += 1
+    retained_records, retention_report = _retain_shape_records_stratified(
+        variants,
+        limit=limit,
+        bucket_quota=bucket_quota,
+    )
+    candidates: list[CandidateParams] = []
+    candidate_plans: dict[str, RenderPlan] = {}
     candidate_records: list[dict[str, Any]] = []
     violations: list[dict[str, Any]] = []
-    for candidate in candidates:
-        delta_keys = params_delta_keys(params, candidate)
+    for candidate_index, retained_record in enumerate(retained_records):
+        candidate = replace_candidate_id(retained_record.params, f"c{candidate_index:03d}")
+        candidates.append(candidate)
+        candidate_plans[candidate.candidate_id] = retained_record.plan
+        delta_key_set = set(params_delta_keys(params, candidate))
+        if retained_record.plan.placement_strategy != plan.placement_strategy:
+            delta_key_set.add("placement_strategy")
+        delta_keys = frozenset(delta_key_set)
         blocked_delta_keys = sorted(delta_keys & TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS)
         undeclared_delta_keys = sorted(delta_keys - TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS)
         record = {
@@ -542,6 +805,15 @@ def text_shape_reset_candidate_grid(
             "allowed_delta_keys_only": not blocked_delta_keys and not undeclared_delta_keys,
             "blocked_delta_keys": blocked_delta_keys,
             "undeclared_delta_keys": undeclared_delta_keys,
+            "font_name": candidate.font_name,
+            "font_path": candidate.font_path,
+            "placement_strategy": retained_record.plan.placement_strategy,
+            "placement_strategy_reason": retained_record.plan.placement_strategy_reason,
+            "bucket_key": {
+                "font_name": retained_record.bucket_key[0],
+                "font_path": retained_record.bucket_key[1],
+                "placement_strategy": retained_record.bucket_key[2],
+            },
         }
         candidate_records.append(record)
         if blocked_delta_keys or undeclared_delta_keys:
@@ -560,6 +832,7 @@ def text_shape_reset_candidate_grid(
             "retained_top_limit": min(limit, TEXT_SHAPE_GRID_TOP_LIMIT),
             "retained_count": len(candidates),
             "pruned_count": max(0, raw_budget - len(candidates)),
+            "retention_method": retention_report["method"],
         },
         "prune_reason_contract": prune_reason_contract("text_shape", raw_budget, len(candidates)),
         "axes": {
@@ -567,6 +840,11 @@ def text_shape_reset_candidate_grid(
             "font_size_delta_count": len(size_deltas),
             "placement_strategy": plan.placement_strategy,
             "placement_strategy_reason": plan.placement_strategy_reason,
+            "placement_strategy_count": len(placement_items),
+            "placement_strategies": [
+                {"strategy": strategy, "reason": reason}
+                for strategy, reason in placement_items
+            ],
             "text_dx_count": len(text_dx_candidates),
             "text_dy_count": len(text_dy_candidates),
             "char_offsets_count": len(offset_candidates),
@@ -581,11 +859,15 @@ def text_shape_reset_candidate_grid(
         "secondary_search_keys": sorted(TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS),
         "allowed_delta_keys": sorted(TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS),
         "blocked_delta_keys": sorted(TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS),
+        "retention": {
+            **retention_report,
+            "profile_id": profile_id,
+        },
         "candidate_count": len(candidates),
         "candidate_delta_audit": candidate_records,
         "violations": violations,
     }
-    return ShapeCandidateGrid(candidates=candidates, report=report_payload)
+    return ShapeCandidateGrid(candidates=candidates, report=report_payload, candidate_plans=candidate_plans)
 
 
 def text_shape_reset_candidates(

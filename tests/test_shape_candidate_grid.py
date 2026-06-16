@@ -453,6 +453,32 @@ class ShapeCandidateGridTest(unittest.TestCase):
             "renderer_reference_slot_shear_from_source_slots_and_neighbors",
         )
         self.assertEqual(grid.report["axes"]["placement_strategy"], "center_primary")
+        self.assertEqual(grid.report["axes"]["placement_strategy_count"], 2)
+        self.assertEqual(
+            {item["strategy"] for item in grid.report["axes"]["placement_strategies"]},
+            {"center_primary", "top_left_anchor"},
+        )
+        self.assertEqual(
+            grid.report["retention"]["method"],
+            "stratified_font_strategy_quota_then_global_axis_priority",
+        )
+        self.assertEqual(grid.report["retention"]["profile_id"], "photo_scan")
+        self.assertEqual(grid.report["retention"]["bucket_quota"], 4)
+        self.assertEqual(grid.report["retention"]["bucket_count"], 8)
+        for bucket in grid.report["retention"]["buckets"]:
+            self.assertGreaterEqual(bucket["retained_count"], bucket["quota"], bucket)
+        retained_strategies = {audit["placement_strategy"] for audit in grid.report["candidate_delta_audit"]}
+        self.assertEqual(retained_strategies, {"center_primary", "top_left_anchor"})
+        top_left_candidate_id = next(
+            audit["candidate_id"]
+            for audit in grid.report["candidate_delta_audit"]
+            if audit["placement_strategy"] == "top_left_anchor"
+        )
+        top_left_candidate = next(candidate for candidate in grid.candidates if candidate.candidate_id == top_left_candidate_id)
+        self.assertEqual(
+            grid.plan_for_candidate(top_left_candidate, plan()).placement_strategy,
+            "top_left_anchor",
+        )
         self.assertEqual(
             tuple(grid.report["prune_reason_contract"]["required_categories"]),
             TEXT_SHAPE_PRUNE_REASON_CATEGORIES,
@@ -482,6 +508,59 @@ class ShapeCandidateGridTest(unittest.TestCase):
             self.assertEqual(candidate.edge_breakup, base.edge_breakup)
             self.assertEqual(candidate.photo_noise, base.photo_noise)
             self.assertEqual(candidate.jpeg_quality, base.jpeg_quality)
+
+    def test_clean_digital_shape_grid_uses_smaller_bucket_quota(self) -> None:
+        report = text_shape_report()
+        report["pipeline_profile"] = "clean_digital"
+
+        grid = text_shape_reset_candidate_grid(
+            params(),
+            font_style_reference(),
+            plan(),
+            report,
+            limit=48,
+        )
+
+        self.assertEqual(grid.report["retention"]["profile_id"], "clean_digital")
+        self.assertEqual(grid.report["retention"]["bucket_quota"], 2)
+        self.assertEqual(grid.report["retention"]["bucket_count"], 8)
+        for bucket in grid.report["retention"]["buckets"]:
+            self.assertGreaterEqual(bucket["retained_count"], bucket["quota"], bucket)
+
+    def test_length_change_shape_grid_does_not_enumerate_unrelated_placement_strategies(self) -> None:
+        length_plan = RenderPlan(
+            target_text="赵真真",
+            source_text="陈芸",
+            search_roi=(0, 0, 120, 44),
+            target_roi=(8, 8, 88, 38),
+            slot_boxes=(TextRun(10, 10, 30, 32, 120), TextRun(34, 10, 54, 32, 110)),
+            protected_boxes=(),
+            source_reference_box=(10, 10, 54, 32),
+            style_reference_box=None,
+            style_reference_text=None,
+            draw_mode="line_chars",
+            placement_strategy="left_anchor_span",
+            placement_strategy_reason="target_text_longer_than_source",
+            slot_quality_report={"pass": True},
+        )
+
+        grid = text_shape_reset_candidate_grid(
+            params(),
+            font_style_reference(),
+            length_plan,
+            text_shape_report(),
+            limit=48,
+        )
+
+        self.assertEqual(grid.report["axes"]["placement_strategy_count"], 1)
+        self.assertEqual(
+            grid.report["axes"]["placement_strategies"],
+            [{"strategy": "left_anchor_span", "reason": "target_text_longer_than_source"}],
+        )
+        self.assertEqual(
+            {audit["placement_strategy"] for audit in grid.report["candidate_delta_audit"]},
+            {"left_anchor_span"},
+        )
 
     def test_legacy_shape_candidate_entrypoint_returns_grid_candidates(self) -> None:
         direct = text_shape_reset_candidate_grid(
@@ -515,6 +594,10 @@ class ShapeCandidateGridTest(unittest.TestCase):
         source = inspect.getsource(processing_service.run_region_vision_checks)
         self.assertIn("text_shape_reset_candidate_grid", source)
         self.assertIn('"shape_candidate_grid": shape_candidate_grid.report', source)
+        process_source = inspect.getsource(region_processing.run_region_vision_checks)
+        self.assertIn("shape_plan = shape_candidate_grid.plan_for_candidate", process_source)
+        self.assertIn("revision_params_signature(patched_params, candidate_plan)", process_source)
+        self.assertIn("current_plan = patched_plan", process_source)
 
 
 if __name__ == "__main__":
