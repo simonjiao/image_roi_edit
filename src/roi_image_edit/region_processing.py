@@ -134,8 +134,6 @@ from roi_image_edit.stage_policy import (
     selected_optimization_step,
     stage_optimization_summary,
 )
-from roi_image_edit.shape_arbitration import text_shape_visual_arbitration_candidate
-
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "output" / "web"
@@ -774,32 +772,155 @@ def build_candidate_rejection_table(
     return table
 
 
+TEXT_SHAPE_PRE_GATE_STROKE_BUCKET = 0
+TEXT_SHAPE_PRE_GATE_BLOCKED_ISSUE_TOKENS = (
+    "too_bold",
+    "slightly_bold",
+    "too_thin",
+    "too_large",
+    "font_family",
+    "font_render",
+    "font_style",
+    "baseline",
+    "pose",
+    "alignment",
+    "slot",
+)
+
+
+def _stage_status_for_report(report: dict[str, Any] | None, stage_id: str) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    stage_gate = report.get("stage_gate")
+    if not isinstance(stage_gate, dict):
+        stage_gate = stage_gate_for_report(report)
+    stage_status = stage_gate.get("stage_status")
+    if isinstance(stage_status, dict) and isinstance(stage_status.get(stage_id), dict):
+        return dict(stage_status[stage_id])
+    for stage in stage_gate.get("stages", []):
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            return dict(stage)
+    return {}
+
+
+def text_shape_pre_gate_report(report: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {
+            "gate_id": "initial_text_shape_pre_gate",
+            "pass": False,
+            "reasons": ["missing_report"],
+            "stroke_weight_fit": stroke_weight_fit_score(report),
+        }
+
+    text_shape_status = _stage_status_for_report(report, "text_shape")
+    text_shape_issues = [
+        issue
+        for issue in text_shape_status.get("issues", [])
+        if isinstance(issue, dict)
+    ]
+    if not text_shape_status:
+        text_shape_issues = stage_issues(report, "text_shape")
+    issue_types = [str(issue.get("type") or "") for issue in text_shape_issues]
+    blocked_issue_types = [
+        issue_type
+        for issue_type in issue_types
+        if any(token in issue_type for token in TEXT_SHAPE_PRE_GATE_BLOCKED_ISSUE_TOKENS)
+    ]
+    text_shape_pass = (
+        bool(text_shape_status.get("pass"))
+        if text_shape_status
+        else not text_shape_issues
+    )
+    fit = stroke_weight_fit_score(report)
+    fit_enabled = bool(fit.get("enabled")) if isinstance(fit, dict) else False
+    try:
+        stroke_bucket = int(fit.get("selection_bucket")) if isinstance(fit, dict) else 9
+    except (TypeError, ValueError):
+        stroke_bucket = 9
+
+    reasons: list[str] = []
+    if not bool(report.get("pass")):
+        reasons.append("hard_boundary_failed")
+    if not text_shape_pass:
+        reasons.append("text_shape_stage_failed")
+    if blocked_issue_types:
+        reasons.append("text_shape_blocking_issue_present")
+    if not fit_enabled:
+        reasons.append("missing_stroke_body_fit")
+    elif stroke_bucket != TEXT_SHAPE_PRE_GATE_STROKE_BUCKET:
+        reasons.append("stroke_weight_not_natural")
+
+    return {
+        "gate_id": "initial_text_shape_pre_gate",
+        "pass": not reasons,
+        "reasons": reasons,
+        "text_shape_pass": text_shape_pass,
+        "text_shape_issue_types": issue_types,
+        "blocked_issue_types": blocked_issue_types,
+        "stroke_weight_fit": fit,
+        "required_stroke_bucket": TEXT_SHAPE_PRE_GATE_STROKE_BUCKET,
+    }
+
+
+def text_shape_pre_gate_summary(
+    rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
+) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {}
+    for params, _image, report, _score in rendered:
+        gate = text_shape_pre_gate_report(report)
+        for reason in gate.get("reasons", []):
+            reason_counts[str(reason)] = reason_counts.get(str(reason), 0) + 1
+        candidates.append(
+            {
+                "candidate_id": params.candidate_id,
+                "pass": bool(gate.get("pass")),
+                "reasons": gate.get("reasons", []),
+                "text_shape_issue_types": gate.get("text_shape_issue_types", []),
+                "stroke_weight_fit": gate.get("stroke_weight_fit"),
+            }
+        )
+    passed = [candidate for candidate in candidates if candidate.get("pass")]
+    return {
+        "gate_id": "initial_text_shape_pre_gate",
+        "total_candidate_count": len(rendered),
+        "qualified_candidate_count": len(passed),
+        "rejected_candidate_count": len(rendered) - len(passed),
+        "rejected_reason_counts": reason_counts,
+        "qualified_candidate_ids": [str(candidate.get("candidate_id") or "") for candidate in passed],
+        "candidates": candidates,
+    }
+
+
 def select_vision_rendered_candidates(
     rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
     limit: int,
 ) -> list[tuple[CandidateParams, Image.Image, dict[str, Any], float]]:
     effective_limit = max(1, int(limit or 1))
     longer_replacement_pool = any(report_is_longer_replacement(item[2]) for item in rendered)
-    stage_passed = [
-        item for item in rendered
-        if report_strict_pass(item[2]) and report_stage_pass(item[2])
-    ]
     if longer_replacement_pool:
-        strict_or_arbitrable = [
+        shape_qualified = [
             item
             for item in rendered
-            if report_strict_pass(item[2])
-            or text_shape_visual_arbitration_candidate(item[2]).get("eligible")
+            if text_shape_pre_gate_report(item[2]).get("pass")
         ]
-        hard_boundary_passed = [item for item in rendered if isinstance(item[2], dict) and item[2].get("pass")]
+        if not shape_qualified:
+            return []
+        stage_passed = [
+            item for item in shape_qualified
+            if report_strict_pass(item[2]) and report_stage_pass(item[2])
+        ]
         longer_stroke_sorted = sorted(
-            strict_or_arbitrable or hard_boundary_passed or rendered,
+            shape_qualified,
             key=longer_stroke_candidate_selection_key,
         )
         selected: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]] = []
         seen: set[str] = set()
 
-        def add(items: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]], count: int | None = None) -> None:
+        def add(
+            items: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
+            count: int | None = None,
+        ) -> None:
             added = 0
             for params, image, report, score in items:
                 if params.candidate_id in seen:
@@ -821,6 +942,11 @@ def select_vision_rendered_candidates(
         add(mid_blur_alpha[:3])
         add(longer_stroke_sorted)
         return selected[:effective_limit]
+
+    stage_passed = [
+        item for item in rendered
+        if report_strict_pass(item[2]) and report_stage_pass(item[2])
+    ]
     if stage_passed:
         return stage_passed[:effective_limit]
 
@@ -869,6 +995,18 @@ def initial_candidate_selection_key(
 def initial_candidate_fallback_tuple(
     rendered: list[tuple[CandidateParams, Image.Image, dict[str, Any], float]],
 ) -> tuple[CandidateParams, Image.Image, dict[str, Any], float]:
+    if any(report_is_longer_replacement(item[2]) for item in rendered):
+        shape_qualified = [
+            item
+            for item in rendered
+            if text_shape_pre_gate_report(item[2]).get("pass")
+        ]
+        if shape_qualified:
+            strict_shape_qualified = [
+                item for item in shape_qualified
+                if report_strict_pass(item[2])
+            ]
+            return min(strict_shape_qualified or shape_qualified, key=initial_candidate_selection_key)
     strict_passed = [item for item in rendered if report_strict_pass(item[2])]
     pool = strict_passed or rendered
     return min(pool, key=initial_candidate_selection_key)
@@ -961,6 +1099,117 @@ def run_region_vision_checks(
 
     effective_candidate_limit = normalize_vision_candidate_limit(candidate_limit, len(rendered))
     vision_rendered = select_vision_rendered_candidates(rendered, effective_candidate_limit)
+    if not vision_rendered:
+        pre_gate_summary = text_shape_pre_gate_summary(rendered)
+        hard_reports = vision_candidate_request_payload(
+            compact_hard_reports([], plan),
+            pipeline_profile=pipeline_profile,
+            requested_vision_candidate_limit=int(candidate_limit or 0),
+            total_candidate_count=len(rendered),
+        )
+        hard_reports.update(
+            {
+                "candidate_selection_skipped": True,
+                "skip_reason": "no_initial_text_shape_qualified_candidates",
+                "text_shape_pre_gate": pre_gate_summary,
+            }
+        )
+        vision_request_path = region_dir / "vision_candidate_request.json"
+        write_json(vision_request_path, hard_reports)
+        candidate_prompt_payload = _candidate_rank_prompt_payload(hard_reports)
+        candidate_prompt_payload.update(
+            {
+                "candidate_selection_skipped": True,
+                "skip_reason": "no_initial_text_shape_qualified_candidates",
+                "text_shape_pre_gate": pre_gate_summary,
+            }
+        )
+        write_json(region_dir / "vision_candidate_prompt_payload.json", candidate_prompt_payload)
+        candidate_rank_json = {
+            "skipped": True,
+            "pass": False,
+            "reason": "no_initial_text_shape_qualified_candidates",
+            "blocking_stage": "text_shape",
+            "local_initial_selection": {
+                "selection_rule": "text_shape_pre_gate_then_stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+                "candidate_count": 0,
+                "text_shape_pre_gate": pre_gate_summary,
+            },
+            "local_stage_context": {
+                "pipeline_profile": pipeline_profile,
+                "stage_context_by_candidate": {},
+                "stage_filter_contract": hard_reports.get("stage_filter_contract"),
+            },
+        }
+        final_acceptance_json = {
+            "pass": False,
+            "acceptance_level": "fail",
+            "final_decision": "revise",
+            "accepted": False,
+            "blocking_stage": "text_shape",
+            "reason": "no_initial_text_shape_qualified_candidates",
+        }
+        write_json(region_dir / "visual_eval_candidate_rank.json", candidate_rank_json)
+        write_json(region_dir / "final_acceptance.json", final_acceptance_json)
+        next_round_plan = {
+            "blocking_stage": "text_shape",
+            "stage_severity": 0.0,
+            "stage_source": "local_pre_gate",
+            "vision_disagreement": False,
+            "vision_target": {"active": False, "reason": "vision_not_called_without_text_shape_qualified_candidates"},
+            "vision_target_completion": {"complete": False, "reason": "vision_not_called"},
+            "non_regression_guard": {"enabled": False, "reason": "vision_not_called"},
+            "reference_profile_dynamic_ink": {},
+            "actions": [
+                "Search shape reset candidates first: font family, size, slot alignment, stroke body, local shear."
+            ],
+        }
+        if progress:
+            progress(
+                "vision_candidate_pre_gate_failed",
+                {
+                    "candidate_count": 0,
+                    "total_candidate_count": len(rendered),
+                    "vision_candidate_limit": hard_reports.get("vision_candidate_limit"),
+                    "requested_vision_candidate_limit": hard_reports.get("requested_vision_candidate_limit"),
+                    "request_path": str(vision_request_path),
+                    "skip_reason": "no_initial_text_shape_qualified_candidates",
+                    "text_shape_pre_gate": pre_gate_summary,
+                    "blocking_stage": "text_shape",
+                },
+            )
+            progress(
+                "region_initial_acceptance",
+                {
+                    "accepted": False,
+                    "strict_pass": False,
+                    "hard_boundary_pass": False,
+                    "acceptance_level": final_acceptance_json.get("acceptance_level"),
+                    "final_decision": final_acceptance_json.get("final_decision"),
+                    "blocking_stage": "text_shape",
+                },
+            )
+        return None, {
+            "enabled": True,
+            "accepted": False,
+            "accepted_reason": "no_initial_text_shape_qualified_candidates",
+            "candidate_rank": candidate_rank_json,
+            "final_acceptance": final_acceptance_json,
+            "vision_disagreement": False,
+            "vision_target": next_round_plan["vision_target"],
+            "vision_target_completion": next_round_plan["vision_target_completion"],
+            "non_regression_guard": next_round_plan["non_regression_guard"],
+            "next_round_plan": next_round_plan,
+            "revision_attempts": [],
+            "revision_rounds": [],
+            "artifacts": {
+                "original_context": str(original_context_path),
+                "candidate_sheet": None,
+                "vision_candidate_request": str(vision_request_path),
+                "vision_prompt_audits": [],
+                "revision_previews": [],
+            },
+        }
     vision_sheet_path = region_dir / "vision_candidate_sheet.png"
     sheet_items = [
         (

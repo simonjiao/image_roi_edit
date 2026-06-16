@@ -402,13 +402,12 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
                 blur=blur,
                 alpha_contrast=alpha_contrast,
             )
-            report = {
-                "pass": True,
-                "pipeline_profile": "photo_scan",
-                "strict_gate": {"pass": True, "issues": []},
-                "stage_gate": {"pass": True, "blocking_stage": None},
-                "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
-            }
+            report = self.longer_shape_report(
+                ratio=0.62,
+                direction="ok",
+                stage_pass=True,
+                blocking_stage=None,
+            )
             rendered.append((params, original.copy(), report, score))
 
         selected = select_vision_rendered_candidates(rendered, 6)
@@ -417,6 +416,116 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
         self.assertEqual(candidate_ids[:3], ["sharp1", "sharp2", "sharp3"])
         self.assertIn("bridge1", candidate_ids)
         self.assertIn("bridge2", candidate_ids)
+
+    def longer_shape_report(
+        self,
+        *,
+        ratio: float,
+        direction: str,
+        stage_pass: bool,
+        blocking_stage: str | None,
+    ) -> dict:
+        issue_type = (
+            f"changed_char_alpha_stroke_body_{direction}"
+            if direction != "ok"
+            else "font_family_style_score_ratio"
+        )
+        issues = [] if stage_pass else [{"type": issue_type}]
+        return {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "strict_gate": {"pass": True, "issues": []},
+            "roi_plan": {"source_slot_count": 2, "target_slot_count": 3},
+            "stage_gate": {
+                "pass": stage_pass,
+                "blocking_stage": blocking_stage,
+                "stage_status": {
+                    "hard_boundary": {"id": "hard_boundary", "pass": True, "issues": []},
+                    "text_shape": {"id": "text_shape", "pass": stage_pass, "issues": issues},
+                    "ink_gray_balance": {"id": "ink_gray_balance", "pass": True, "issues": []},
+                    "photo_texture": {"id": "photo_texture", "pass": True, "issues": []},
+                    "background_cleanup": {"id": "background_cleanup", "pass": True, "issues": []},
+                },
+                "stages": [
+                    {"id": "hard_boundary", "pass": True, "issues": []},
+                    {"id": "text_shape", "pass": stage_pass, "issues": issues},
+                    {"id": "ink_gray_balance", "pass": True, "issues": []},
+                    {"id": "photo_texture", "pass": True, "issues": []},
+                    {"id": "background_cleanup", "pass": True, "issues": []},
+                ],
+            },
+            "stroke_body_shape_metrics": {
+                "enabled": True,
+                "per_char": [
+                    {
+                        "index": 0,
+                        "changed": True,
+                        "body_area_ratio": ratio,
+                        "stroke_weight_direction": direction,
+                    }
+                ],
+                "issues": issues,
+            },
+        }
+
+    def test_region_vision_pre_gate_stops_before_vision_when_longer_shape_is_too_bold(self) -> None:
+        original = Image.new("RGB", (40, 40), (220, 220, 220))
+        plan = RenderPlan(
+            target_text="赵真真",
+            source_text="陈芸",
+            search_roi=(0, 0, 40, 40),
+            target_roi=(4, 4, 34, 30),
+            slot_boxes=(),
+            protected_boxes=(),
+            source_reference_box=None,
+            style_reference_box=None,
+            style_reference_text=None,
+            draw_mode="replace",
+        )
+        params = CandidateParams(
+            candidate_id="too_bold",
+            font_name="test",
+            font_path="/tmp/test.ttf",
+            font_size=12,
+            opacity=0.8,
+            blur=0.1,
+        )
+        rendered = [
+            (
+                params,
+                original.copy(),
+                self.longer_shape_report(
+                    ratio=0.78,
+                    direction="too_bold",
+                    stage_pass=False,
+                    blocking_stage="text_shape",
+                ),
+                0.1,
+            )
+        ]
+        fake_client = FakeVisionClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            chosen, summary = run_region_vision_checks(
+                original=original,
+                rendered=rendered,
+                plan=plan,
+                region_dir=Path(tmp),
+                vision_client=fake_client,  # type: ignore[arg-type]
+                prompts=("master", "candidate {hard_check_report}", "final {final_params} {hard_check_report}"),
+                candidate_limit=8,
+                font_style_reference={},
+                max_revision_rounds=0,
+                pipeline_profile="photo_scan",
+            )
+            request = json.loads((Path(tmp) / "vision_candidate_request.json").read_text(encoding="utf-8"))
+            self.assertFalse((Path(tmp) / "vision_candidate_sheet.png").exists())
+
+        self.assertIsNone(chosen)
+        self.assertEqual(fake_client.calls, [])
+        self.assertEqual(summary["accepted_reason"], "no_initial_text_shape_qualified_candidates")
+        self.assertTrue(summary["candidate_rank"]["skipped"])
+        self.assertEqual(request["candidate_count"], 0)
+        self.assertEqual(request["text_shape_pre_gate"]["qualified_candidate_count"], 0)
 
 
 if __name__ == "__main__":

@@ -105,6 +105,12 @@ def longer_report(
     stage_pass: bool,
     blocking_stage: str | None,
 ) -> dict:
+    if stage_pass:
+        text_shape_issues: list[dict[str, object]] = []
+    elif direction == "ok":
+        text_shape_issues = [{"type": "font_family_style_score_ratio"}]
+    else:
+        text_shape_issues = [{"type": f"changed_char_alpha_stroke_body_{direction}"}]
     return {
         "pass": True,
         "strict_gate": {"pass": True},
@@ -116,7 +122,7 @@ def longer_report(
                 {
                     "id": "text_shape",
                     "pass": stage_pass or blocking_stage != "text_shape",
-                    "issues": [] if stage_pass else [{"type": "changed_char_alpha_stroke_body_too_thin"}],
+                    "issues": text_shape_issues,
                 }
             ],
         },
@@ -309,9 +315,9 @@ class ShapeCandidateGridTest(unittest.TestCase):
 
         selected = select_vision_rendered_candidates(rendered, 2)
 
-        self.assertEqual([item[0].candidate_id for item in selected], ["slight", "bold"])
+        self.assertEqual([item[0].candidate_id for item in selected], [])
 
-    def test_longer_vision_selection_includes_visual_arbitrable_text_shape_candidate(self) -> None:
+    def test_longer_vision_selection_rejects_visual_arbitrable_text_shape_candidate(self) -> None:
         image = Image.new("RGB", (16, 16), (255, 255, 255))
         candidate = params().__class__(**{**params().__dict__, "candidate_id": "arbitrable"})
         report = longer_report(ratio=0.62, direction="ok", stage_pass=False, blocking_stage="text_shape")
@@ -333,7 +339,7 @@ class ShapeCandidateGridTest(unittest.TestCase):
 
         selected = select_vision_rendered_candidates(rendered, 1)
 
-        self.assertEqual([item[0].candidate_id for item in selected], ["arbitrable"])
+        self.assertEqual([item[0].candidate_id for item in selected], [])
 
     def test_cjk_longer_form_first_batch_disabled_for_non_matching_class(self) -> None:
         self.assertFalse(
