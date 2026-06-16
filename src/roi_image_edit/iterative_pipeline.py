@@ -46,6 +46,7 @@ from roi_image_edit.vision_audit import write_vision_prompt_audit
 DEFAULT_ENV = Path(".env")
 DEFAULT_MAX_ITERATIONS = 8
 PREFERRED_CORE_MEAN_GRAY_DELTA = -1.4
+STYLE_PROFILE_DISTANCE_WEIGHT = 36.0
 
 
 def attach_report_stage_context(report: dict[str, Any], pipeline_profile: str) -> dict[str, Any]:
@@ -2298,6 +2299,160 @@ def mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
     return int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)
 
 
+def _normalized_std(values: np.ndarray) -> float:
+    if values.size == 0:
+        return 0.0
+    peak = float(np.max(values))
+    if peak <= 0:
+        return 0.0
+    return float(np.std(values / peak))
+
+
+def _mask_run_lengths(mask: np.ndarray, *, axis: str) -> list[int]:
+    values: list[int] = []
+    lines = mask if axis == "rows" else mask.T
+    for line in lines:
+        run = 0
+        for value in line:
+            if bool(value):
+                run += 1
+            elif run:
+                values.append(run)
+                run = 0
+        if run:
+            values.append(run)
+    return values
+
+
+def _median_run_length(mask: np.ndarray, *, axis: str) -> float:
+    runs = sorted(_mask_run_lengths(mask, axis=axis))
+    if not runs:
+        return 0.0
+    midpoint = len(runs) // 2
+    if len(runs) % 2:
+        return float(runs[midpoint])
+    return float(runs[midpoint - 1] + runs[midpoint]) / 2.0
+
+
+def _style_family_for_category(category: str | None) -> str:
+    if category in {"song_ming", "cjk_serif"}:
+        return "serif"
+    if category in {"modern_sans", "fallback_sans"}:
+        return "sans"
+    return "unknown"
+
+
+def style_profile_from_mask(
+    mask: np.ndarray,
+    *,
+    category: str | None = None,
+    reference_kind: str | None = None,
+) -> dict[str, Any]:
+    bbox = mask_bbox(mask)
+    if bbox is None:
+        return {"enabled": False, "reason": "empty_mask"}
+    x1, y1, x2, y2 = bbox
+    crop = mask[y1:y2, x1:x2].astype(bool)
+    height, width = crop.shape[:2]
+    pixel_count = int(np.count_nonzero(crop))
+    bbox_area = max(1, width * height)
+    row_projection = np.count_nonzero(crop, axis=1).astype(float)
+    col_projection = np.count_nonzero(crop, axis=0).astype(float)
+    row_active = int(np.count_nonzero(row_projection))
+    col_active = int(np.count_nonzero(col_projection))
+    row_median_run = _median_run_length(crop, axis="rows")
+    col_median_run = _median_run_length(crop, axis="cols")
+    edge = cv2.morphologyEx(crop.astype(np.uint8), cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
+    ys, xs = np.where(crop)
+    center_x = float(xs.mean() / max(1, width - 1)) if len(xs) else 0.5
+    center_y = float(ys.mean() / max(1, height - 1)) if len(ys) else 0.5
+    return {
+        "enabled": True,
+        "reference_kind": reference_kind,
+        "category": category,
+        "style_family": _style_family_for_category(category),
+        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+        "bbox_width": int(width),
+        "bbox_height": int(height),
+        "pixel_count": pixel_count,
+        "ink_density": round(float(pixel_count / bbox_area), 5),
+        "aspect_ratio": round(float(width / max(1, height)), 5),
+        "row_projection_std": round(_normalized_std(row_projection), 5),
+        "col_projection_std": round(_normalized_std(col_projection), 5),
+        "row_active_ratio": round(float(row_active / max(1, height)), 5),
+        "col_active_ratio": round(float(col_active / max(1, width)), 5),
+        "horizontal_run_median": round(row_median_run, 5),
+        "vertical_run_median": round(col_median_run, 5),
+        "horizontal_vertical_run_ratio": round(row_median_run / max(1.0, col_median_run), 5),
+        "edge_density": round(float(np.count_nonzero(edge) / max(1, pixel_count)), 5),
+        "center_x_ratio": round(center_x, 5),
+        "center_y_ratio": round(center_y, 5),
+    }
+
+
+def style_profile_distance(reference: dict[str, Any] | None, candidate: dict[str, Any] | None) -> float | None:
+    if not isinstance(reference, dict) or not isinstance(candidate, dict):
+        return None
+    if not reference.get("enabled") or not candidate.get("enabled"):
+        return None
+    weighted_keys = {
+        "ink_density": 1.35,
+        "aspect_ratio": 0.80,
+        "row_projection_std": 1.10,
+        "col_projection_std": 1.10,
+        "row_active_ratio": 0.85,
+        "col_active_ratio": 0.85,
+        "horizontal_vertical_run_ratio": 0.65,
+        "edge_density": 0.95,
+        "center_x_ratio": 0.35,
+        "center_y_ratio": 0.35,
+    }
+    total = 0.0
+    total_weight = 0.0
+    for key, weight in weighted_keys.items():
+        if reference.get(key) is None or candidate.get(key) is None:
+            continue
+        try:
+            delta = abs(float(candidate[key]) - float(reference[key]))
+        except (TypeError, ValueError):
+            continue
+        total += min(2.0, delta) * weight
+        total_weight += weight
+    if total_weight <= 0:
+        return None
+    return round(total / total_weight, 5)
+
+
+def reference_quality_from_profile(profile: dict[str, Any] | None, *, reference_kind: str) -> dict[str, Any]:
+    if not isinstance(profile, dict) or not profile.get("enabled"):
+        return {"score": 0.0, "reason": "missing_profile", "reference_kind": reference_kind}
+    pixel_count = int(profile.get("pixel_count") or 0)
+    width = int(profile.get("bbox_width") or 0)
+    height = int(profile.get("bbox_height") or 0)
+    ink_density = float(profile.get("ink_density") or 0.0)
+    pixel_score = min(1.0, pixel_count / 72.0)
+    size_score = min(1.0, min(width, height) / 9.0)
+    density_score = max(0.25, min(1.0, ink_density / 0.18))
+    kind_factor = {
+        "source_text_roi": 1.0,
+        "neighbor_text_context": 0.9,
+        "protected_text_context": 0.72,
+        "protected_label": 0.72,
+    }.get(reference_kind, 0.65)
+    score = max(0.05, min(1.0, pixel_score * size_score * density_score * kind_factor))
+    reason = "strong_reference" if score >= 0.72 else "weak_reference" if score < 0.35 else "usable_reference"
+    return {
+        "score": round(score, 5),
+        "reason": reason,
+        "reference_kind": reference_kind,
+        "pixel_count": pixel_count,
+        "bbox_width": width,
+        "bbox_height": height,
+        "ink_density": round(ink_density, 5),
+        "kind_factor": kind_factor,
+    }
+
+
 def font_style_score(
     original: Image.Image,
     *,
@@ -2323,6 +2478,14 @@ def font_style_score(
     original_bbox = mask_bbox(original_mask)
     if original_bbox is None:
         return None
+    original_profile = style_profile_from_mask(
+        original_mask,
+        reference_kind=reference_kind,
+    )
+    reference_quality = reference_quality_from_profile(
+        original_profile,
+        reference_kind=reference_kind,
+    )
 
     original_pixels = int(original_mask.sum())
     try:
@@ -2358,6 +2521,18 @@ def font_style_score(
     candidate_bbox = mask_bbox(candidate_mask)
     if candidate_bbox is None:
         return None
+    candidate_category = font_category_for_path(font_path, font_name)
+    candidate_profile = style_profile_from_mask(
+        candidate_mask,
+        category=candidate_category,
+        reference_kind=reference_kind,
+    )
+    profile_distance = style_profile_distance(original_profile, candidate_profile)
+    profile_score = (
+        float(profile_distance) * STYLE_PROFILE_DISTANCE_WEIGHT
+        if profile_distance is not None
+        else STYLE_PROFILE_DISTANCE_WEIGHT
+    )
 
     intersection = int(np.logical_and(original_mask, candidate_mask).sum())
     union = int(np.logical_or(original_mask, candidate_mask).sum())
@@ -2374,6 +2549,7 @@ def font_style_score(
         + abs(candidate_h - original_h) * 4.0
         + abs(candidate_w - original_w) * 2.0
         + (abs((pixel_ratio or 0.0) - 1.0) * 20.0 if pixel_ratio is not None else 100.0)
+        + profile_score
     )
     return {
         "reference_kind": reference_kind,
@@ -2385,12 +2561,19 @@ def font_style_score(
         "alpha_contrast": alpha_contrast,
         "core_ink_gain": core_ink_gain,
         "score": float(score),
+        "shape_match_score": float(score - profile_score),
+        "style_profile_score": float(profile_score),
+        "style_profile_distance": profile_distance,
+        "style_profile_weight": STYLE_PROFILE_DISTANCE_WEIGHT,
         "iou": iou,
         "pixel_ratio": pixel_ratio,
         "original_bbox": list(add_offset(original_bbox, x1, y1)),
         "candidate_bbox": list(add_offset(candidate_bbox, x1, y1)),
         "original_pixels": original_pixels,
         "candidate_pixels": candidate_pixels,
+        "reference_quality": reference_quality,
+        "original_style_profile": original_profile,
+        "candidate_style_profile": candidate_profile,
     }
 
 
@@ -2400,27 +2583,67 @@ def text_runs_from_json(items: list[dict[str, Any]] | tuple[dict[str, Any], ...]
 
 def build_style_reference_specs(plan: RenderPlan) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
-    if plan.source_reference_box and plan.source_text:
+
+    def add_reference(
+        *,
+        kind: str,
+        reference_text: str | None,
+        reference_box: tuple[int, int, int, int] | None,
+        slot_boxes: tuple[TextRun, ...] = (),
+        weight: float,
+        role: str,
+    ) -> None:
+        if not reference_text or not reference_box:
+            return
+        box_list = [int(item) for item in reference_box]
+        key = (kind, str(reference_text), tuple(box_list))
+        existing_keys = {
+            (str(item.get("kind")), str(item.get("reference_text")), tuple(item.get("reference_box") or []))
+            for item in references
+        }
+        if key in existing_keys:
+            return
         references.append(
             {
-                "kind": "source_text_roi",
-                "reference_text": plan.source_text,
-                "reference_box": list(plan.source_reference_box),
-                "slot_boxes": [asdict(item) for item in plan.slot_boxes],
-                "weight": 0.78,
-                "role": "primary",
+                "kind": kind,
+                "reference_text": str(reference_text),
+                "reference_box": box_list,
+                "slot_boxes": [asdict(item) for item in slot_boxes],
+                "weight": round(float(weight), 4),
+                "role": role,
             }
         )
+
+    if plan.source_reference_box and plan.source_text:
+        add_reference(
+            kind="source_text_roi",
+            reference_text=plan.source_text,
+            reference_box=plan.source_reference_box,
+            slot_boxes=plan.slot_boxes,
+            weight=0.58,
+            role="primary",
+        )
     if plan.style_reference_box and plan.style_reference_text:
-        references.append(
-            {
-                "kind": "protected_label",
-                "reference_text": plan.style_reference_text,
-                "reference_box": list(plan.style_reference_box),
-                "slot_boxes": [],
-                "weight": 0.22 if references else 1.0,
-                "role": "secondary" if references else "primary",
-            }
+        add_reference(
+            kind="neighbor_text_context",
+            reference_text=plan.style_reference_text,
+            reference_box=plan.style_reference_box,
+            weight=0.28 if references else 1.0,
+            role="secondary" if references else "primary",
+        )
+    protected_items = [
+        (text, box)
+        for text, box in zip(plan.protected_texts, plan.protected_boxes)
+        if str(text)
+    ]
+    protected_weight = 0.14 / max(1, len(protected_items)) if references else 1.0 / max(1, len(protected_items))
+    for protected_text, protected_box in protected_items:
+        add_reference(
+            kind="protected_text_context",
+            reference_text=protected_text,
+            reference_box=protected_box,
+            weight=protected_weight,
+            role="secondary" if references else "primary",
         )
     return references
 
@@ -2462,10 +2685,14 @@ def score_font_against_style_references(
         if not score:
             continue
         weight = float(reference.get("weight", 1.0))
+        quality = score.get("reference_quality") if isinstance(score.get("reference_quality"), dict) else {}
+        quality_score = float(quality.get("score") if quality.get("score") is not None else 1.0)
+        effective_weight = max(0.02, weight * max(0.05, quality_score))
         score["weight"] = weight
+        score["effective_weight"] = round(effective_weight, 5)
         reference_scores.append(score)
-        weighted_total += float(score["score"]) * weight
-        total_weight += weight
+        weighted_total += float(score["score"]) * effective_weight
+        total_weight += effective_weight
 
     if not reference_scores or total_weight <= 0:
         return None
@@ -2490,6 +2717,50 @@ def score_font_against_style_references(
     }
 
 
+def numeric_rhythm_reference_profile(references: list[dict[str, Any]]) -> dict[str, Any]:
+    chars = [ch for reference in references for ch in str(reference.get("reference_text") or "") if not ch.isspace()]
+    numeric_chars = [ch for ch in chars if ch.isdigit()]
+    separators = [ch for ch in chars if ch in "-/.:年月日"]
+    return {
+        "enabled": bool(numeric_chars),
+        "numeric_char_count": len(numeric_chars),
+        "separator_count": len(separators),
+        "reference_char_count": len(chars),
+        "purpose": "record numeric/date rhythm separately from CJK family style",
+    }
+
+
+def style_reference_profile_summary(best_available: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(best_available, dict):
+        return []
+    summary: list[dict[str, Any]] = []
+    for score in best_available.get("reference_scores", []):
+        if not isinstance(score, dict):
+            continue
+        reference_quality = score.get("reference_quality") if isinstance(score.get("reference_quality"), dict) else {}
+        original_profile = score.get("original_style_profile") if isinstance(score.get("original_style_profile"), dict) else {}
+        summary.append(
+            {
+                "reference_kind": score.get("reference_kind"),
+                "weight": score.get("weight"),
+                "effective_weight": score.get("effective_weight"),
+                "quality": reference_quality,
+                "style_profile": {
+                    key: original_profile.get(key)
+                    for key in (
+                        "ink_density",
+                        "aspect_ratio",
+                        "row_projection_std",
+                        "col_projection_std",
+                        "horizontal_vertical_run_ratio",
+                        "edge_density",
+                    )
+                },
+            }
+        )
+    return summary
+
+
 def build_font_style_reference(
     original: Image.Image,
     plan: RenderPlan,
@@ -2508,6 +2779,11 @@ def build_font_style_reference(
             "preferred_best_available": None,
             "by_path": {},
             "references": [],
+            "style_profile_contract": {
+                "enabled": False,
+                "reason": "no_style_references",
+                "ocr_usage": "text_truth_and_slot_assistance_only",
+            },
         }
 
     by_path: dict[str, Any] = {}
@@ -2536,12 +2812,30 @@ def build_font_style_reference(
     preferred_best_available = (
         min(preferred_scores, key=lambda item: item["score"]) if preferred_scores else None
     )
+    style_profile_summary = style_reference_profile_summary(best_available)
     return {
         "enabled": best_available is not None,
         "reference_text": references[0]["reference_text"],
         "reference_box": references[0]["reference_box"],
         "primary_reference_kind": references[0]["kind"],
         "references": references,
+        "style_profile_references": style_profile_summary,
+        "numeric_rhythm_profile": numeric_rhythm_reference_profile(references),
+        "style_profile_contract": {
+            "enabled": bool(style_profile_summary),
+            "profile_type": "local_explainable_style_profile",
+            "features": [
+                "ink_density",
+                "aspect_ratio",
+                "row_projection_std",
+                "col_projection_std",
+                "horizontal_vertical_run_ratio",
+                "edge_density",
+            ],
+            "reference_sources": [item.get("kind") for item in references],
+            "ocr_usage": "text_truth_and_slot_assistance_only",
+            "background_refiner_provider": "not_configured",
+        },
         "best_available": best_available,
         "preferred_best_available": preferred_best_available,
         "preferred_categories": sorted(PREFERRED_STYLE_CATEGORIES),
@@ -2632,6 +2926,21 @@ def font_style_gate(
                 "best_available_font": best_available["font_name"],
             }
         )
+    candidate_profile_distance = candidate.get("style_profile_distance")
+    font_best_profile_distance = font_best.get("style_profile_distance")
+    if candidate_profile_distance is not None and font_best_profile_distance is not None:
+        profile_limit = max(float(font_best_profile_distance) * (max_score_ratio + 0.18), float(font_best_profile_distance) + 0.10)
+        if float(candidate_profile_distance) > profile_limit:
+            issues.append(
+                {
+                    "type": "font_style_profile_distance_ratio",
+                    "font": params.font_name,
+                    "actual": round(float(candidate_profile_distance), 5),
+                    "limit": round(profile_limit, 5),
+                    "font_best_profile_distance": round(float(font_best_profile_distance), 5),
+                    "best_available_font": best_available["font_name"],
+                }
+            )
     preferred_best = font_style_reference.get("preferred_best_available")
     preferred_categories = set(font_style_reference.get("preferred_categories") or [])
     if (
@@ -2656,6 +2965,7 @@ def font_style_gate(
         "pass": not issues,
         "issues": issues,
         "max_score_ratio": max_score_ratio,
+        "style_profile_contract": font_style_reference.get("style_profile_contract"),
         "best_available": best_available,
         "preferred_best_available": preferred_best,
         "font_best": {

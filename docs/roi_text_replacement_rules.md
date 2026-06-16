@@ -92,7 +92,7 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 
 `text_shape` 的判断不能因为同时存在黑芯过量而被隐藏。若一个候选既偏黑又存在字体结构、字号、槽位、基线、字距或严重姿态问题，应继续把阻塞阶段记为 `text_shape`。若剩余问题主要是笔画身体/中灰层不足、邻字核心密度不一致，且本地已判定黑芯过量，则应把这些问题记录为 `text_shape.deferred_issues`，允许 `ink_gray_balance` 成为当前阻塞阶段。
 
-当 `text_shape` 阻塞时，求解流程必须重新生成形态候选：主搜索键只包含字体排名、字号、字槽偏移、基线、放置策略和局部姿态继承；`stroke_opacity` 只能作为次级 `stroke_body_shape` 轴。放置策略必须按场景限制枚举，并按 `font × placement_strategy` 分桶配额保留候选，不能被全局 top-N 截断吞掉。不能只在当前候选上累加 `core_ink_gain`、`ink_gain`、`alpha_contrast`、`blur`、`photo_warp` 或照片噪声。
+当 `text_shape` 阻塞时，求解流程必须重新生成形态候选：主搜索键只包含字体排名、字号、字槽偏移、基线、放置策略和局部姿态继承；`stroke_opacity` 只能作为次级 `stroke_body_shape` 轴。放置策略必须按场景限制枚举，并按 `font × placement_strategy` 分桶配额保留候选，不能被全局 top-N 截断吞掉。字体排名必须记录旧 ROI、邻字/标签和 protected text 的本地可解释 `style_profile`、参考质量和权重；弱参考只能降权，不能强行锁错字体族；数字/日期节奏必须单独记录。OCR/MMOCR/PaddleOCR 只辅助文字真值和槽位，不参与字体风格裁决。不能只在当前候选上累加 `core_ink_gain`、`ink_gain`、`alpha_contrast`、`blur`、`photo_warp` 或照片噪声。
 
 当 `text_shape` 阻塞且本地已经判定黑芯严重过量时，允许生成单独标记的
 `ink_guard` 候选。`ink_guard` 不是把降黑并入 `text_shape`，而是在形态仍为主阶段时执行横向保护：

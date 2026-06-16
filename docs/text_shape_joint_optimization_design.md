@@ -177,6 +177,10 @@ shape_change_large =
 
 本阶段排序指标：
 
+- 字体风格参考必须扩展为本地可解释 `style_profile`：分别记录旧 ROI、同一行邻字/标签、protected text 的参考质量和权重，包含 ink density、aspect ratio、投影节奏、横竖 run ratio、edge density 等特征；弱旧 ROI 自动降权，邻字/保护字只能作为上下文锚点。
+- 数字/日期节奏单独记录为 `numeric_rhythm_profile`，避免 CJK 字体族判断污染数字形态。
+- PaddleOCR/MMOCR 只允许辅助文字真值、槽位和行上下文，不参与字体风格裁决。
+
 - 字高、字宽、字距、基线。
 - 候选整体行基线相对旧槽位和同一行未修改文字的偏移。
 - 单字中心与旧槽位中心误差。
@@ -479,7 +483,9 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 - 放置策略只能按文档允许的场景枚举：同字数 CJK 且形态变化大或不确定时允许 `top_left_anchor` 与 `center_primary` 并行，字数增减只用 `left_anchor_span`，数字/日期只用 `baseline_numeric`，manual exact 无旧值时才用 `manual_fallback`。
 - 候选保留必须先按 `font × placement_strategy` 分桶配额，再全局轴优先排序；`photo_scan` 每桶至少保留 4 个，`clean_digital` 每桶至少保留 2 个，避免字体池或枚举顺序变化导致候选跳变。
 - 被选中的 shape 候选必须携带对应 `RenderPlan` 进入后续轮次，不能只在报告中记录 `placement_strategy` 而实际渲染继续使用旧 plan。
+- 字体 rank 和 `font_style_gate` 必须写入 `style_profile_contract`、每个参考源的质量/权重和 `style_profile_distance`；profile 距离异常属于 `text_shape` 字体风格问题。
 - 禁止 photo texture 参数抢先修复。
+- 本切片不引入 LaMa、BrushNet、PowerPaint 或其它生成式背景清除 provider；背景流程保持现有 deterministic cleanup/inpaint 与本地验收。
 
 ### Slice 5: 分层候选产物
 

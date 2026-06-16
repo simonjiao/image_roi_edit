@@ -145,15 +145,19 @@ def font_style_component(report: dict[str, Any], plan: RenderPlan) -> dict[str, 
     font_best = font.get("font_best") if isinstance(font.get("font_best"), dict) else {}
     score_ratio = candidate.get("score_ratio_to_best")
     font_family_ratio = font_best.get("score_ratio_to_best")
+    profile_distance = candidate.get("style_profile_distance")
     params = report.get("params") if isinstance(report.get("params"), dict) else {}
     missing_chars = render_missing_chars(params.get("font_path"), plan.target_text)
     issue_count = len(font.get("issues") or []) if isinstance(font, dict) else 0
     ratio_value = float(score_ratio) if score_ratio is not None else 1.0
-    score = max(0.0, ratio_value - 1.0) * 250.0 + issue_count * 80.0 + len(missing_chars) * 500.0
+    profile_penalty = float(profile_distance or 0.0) * 80.0
+    score = max(0.0, ratio_value - 1.0) * 250.0 + profile_penalty + issue_count * 80.0 + len(missing_chars) * 500.0
     return {
         "score": round(score, 4),
         "font_style_score_ratio": None if score_ratio is None else round(ratio_value, 4),
         "font_family_score_ratio": None if font_family_ratio is None else round(float(font_family_ratio), 4),
+        "style_profile_distance": None if profile_distance is None else round(float(profile_distance), 5),
+        "style_profile_penalty": round(profile_penalty, 4),
         "font_style_pass": font.get("pass") if isinstance(font, dict) else None,
         "renderable_text_check": {
             "checked": bool(params.get("font_path")),
