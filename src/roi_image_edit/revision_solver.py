@@ -23,7 +23,7 @@ from roi_image_edit.roi_locator import max_font_size_for_plan, text_chars
 from roi_image_edit.stages import stage_gate_for_report
 
 
-TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS = frozenset(
+TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS = frozenset(
     {
         "font_name",
         "font_path",
@@ -31,18 +31,29 @@ TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS = frozenset(
         "text_dx",
         "text_dy",
         "char_offsets",
+        "placement_strategy",
+        "shear",
+    }
+)
+TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS = frozenset(
+    {
         "stroke_opacity",
+    }
+)
+TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS = frozenset(
+    key
+    for key in (TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS | TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS)
+    if key not in {"placement_strategy", "shear"}
+)
+TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
+    {
+        "opacity",
         "ink_gain",
         "alpha_contrast",
         "core_ink_gain",
         "core_darken_strength",
         "core_darken_threshold",
         "core_darken_target_gray",
-    }
-)
-TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS = frozenset(
-    {
-        "opacity",
         "blur",
         "mask_threshold",
         "mask_dilate_iterations",
@@ -59,7 +70,6 @@ TEXT_SHAPE_GRID_BUDGET_RANGE = (300, 1500)
 INK_GRAY_GRID_ALLOWED_DELTA_KEYS = frozenset(
     {
         "opacity",
-        "stroke_opacity",
         "ink_gain",
         "alpha_contrast",
         "core_ink_gain",
@@ -73,6 +83,7 @@ INK_GRAY_GRID_BLOCKED_DELTA_KEYS = frozenset(
         "font_name",
         "font_path",
         "font_size",
+        "stroke_opacity",
         "blur",
         "text_dx",
         "text_dy",
@@ -92,7 +103,6 @@ INK_GRAY_GRID_BUDGET_RANGE = (100, 800)
 PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS = frozenset(
     {
         "blur",
-        "alpha_contrast",
         "photo_warp",
         "edge_breakup",
         "photo_noise",
@@ -107,6 +117,7 @@ PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS = frozenset(
         "opacity",
         "stroke_opacity",
         "ink_gain",
+        "alpha_contrast",
         "core_ink_gain",
         "core_darken_strength",
         "core_darken_threshold",
@@ -157,18 +168,18 @@ _PRUNE_REASON_SOURCES = {
         "character_spacing": ("char_offsets", "slot_boxes", "placement_strategy"),
         "protected_distance": ("protected_boxes", "target_roi", "right_boundary"),
         "font_style": ("font_name", "font_path", "font_style_reference.ranked_fonts"),
-        "stroke_body": ("stroke_opacity", "ink_gain", "alpha_contrast", "core_ink_gain"),
-        "pose_inheritance": ("char_offsets", "source_slot_shear", "neighbor_shear"),
+        "stroke_body": ("stroke_opacity", "stroke_body_shape_metrics"),
+        "pose_inheritance": ("char_offsets", "shear", "source_slot_shear", "neighbor_shear"),
     },
     "ink_gray_balance": {
         "true_black_core": ("opacity", "core_ink_gain", "core_darken_strength", "lt55"),
         "deep_core_density": ("core_darken_threshold", "core_darken_target_gray", "lt90"),
-        "outer_gray_edge": ("stroke_opacity", "alpha_contrast", "outer_gray_halo"),
-        "mid_gray_body": ("stroke_opacity", "ink_gain", "gray_band_metrics"),
+        "outer_gray_edge": ("alpha_contrast", "outer_gray_halo"),
+        "mid_gray_body": ("ink_gain", "gray_band_metrics"),
         "complexity_adjustment": ("reference_profile", "target_source_complexity_ratio"),
     },
     "photo_texture": {
-        "over_sharp": ("blur", "alpha_contrast", "photo_texture_too_sharp"),
+        "over_sharp": ("blur", "photo_texture_too_sharp"),
         "over_blurry": ("blur", "photo_texture_too_blurry"),
         "missing_edge_breakup": ("edge_breakup", "photo_texture_edge_breakup_missing"),
         "background_too_smooth": ("photo_noise", "background_fill_too_smooth"),
@@ -220,17 +231,12 @@ def _candidate_reason_categories(stage_id: str, delta_keys: frozenset[str]) -> l
             "text_dy": ("center_alignment", "baseline_alignment"),
             "char_offsets": ("baseline_alignment", "character_spacing", "pose_inheritance"),
             "stroke_opacity": ("stroke_body",),
-            "ink_gain": ("stroke_body",),
-            "alpha_contrast": ("stroke_body",),
-            "core_ink_gain": ("stroke_body",),
-            "core_darken_strength": ("stroke_body",),
-            "core_darken_threshold": ("stroke_body",),
-            "core_darken_target_gray": ("stroke_body",),
+            "placement_strategy": ("character_spacing",),
+            "shear": ("pose_inheritance",),
         }
     elif stage_id == "ink_gray_balance":
         mapping = {
             "opacity": ("true_black_core", "deep_core_density"),
-            "stroke_opacity": ("mid_gray_body", "outer_gray_edge"),
             "ink_gain": ("mid_gray_body",),
             "alpha_contrast": ("outer_gray_edge",),
             "core_ink_gain": ("true_black_core", "complexity_adjustment"),
@@ -241,7 +247,6 @@ def _candidate_reason_categories(stage_id: str, delta_keys: frozenset[str]) -> l
     else:
         mapping = {
             "blur": ("over_sharp", "over_blurry"),
-            "alpha_contrast": ("over_sharp",),
             "photo_warp": ("roi_gradient_break",),
             "edge_breakup": ("missing_edge_breakup", "roi_gradient_break"),
             "photo_noise": ("background_too_smooth", "old_residual"),
@@ -433,26 +438,12 @@ def shape_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     }
 
 
-def shape_stroke_body_grid(flags: dict[str, bool]) -> tuple[tuple[float, float, float, float, float], ...]:
+def shape_stroke_body_grid(flags: dict[str, bool]) -> tuple[float, ...]:
     if flags.get("outer_halo"):
-        return (
-            (0.02, 0.02, 0.16, 0.12, 0.10),
-            (0.04, 0.02, 0.14, 0.14, 0.12),
-            (0.04, 0.03, 0.12, 0.16, 0.12),
-            (0.06, 0.01, 0.20, 0.12, 0.10),
-        )
+        return (0.02, 0.04, 0.06)
     if flags.get("body_gap"):
-        return (
-            (0.03, 0.00, 0.18, 0.00, 0.00),
-            (0.04, 0.00, 0.16, 0.04, 0.04),
-            (0.04, 0.01, 0.14, 0.08, 0.06),
-            (0.04, 0.04, 0.10, 0.18, 0.14),
-        )
-    return (
-        (0.04, 0.03, 0.12, 0.16, 0.12),
-        (0.04, 0.03, 0.10, 0.18, 0.14),
-        (0.06, 0.02, 0.16, 0.14, 0.12),
-    )
+        return (0.03, 0.04)
+    return (0.04, 0.06)
 
 
 def text_shape_reset_candidate_grid(
@@ -509,13 +500,7 @@ def text_shape_reset_candidate_grid(
             for offsets in offset_candidates:
                 for text_dx in text_dx_candidates:
                     for text_dy in text_dy_candidates:
-                        for (
-                            stroke_opacity,
-                            ink_gain,
-                            alpha_contrast,
-                            core_ink_gain,
-                            core_darken_strength,
-                        ) in stroke_body_grid:
+                        for stroke_opacity in stroke_body_grid:
                             variants.append(
                                 mutate_params(
                                     params,
@@ -523,12 +508,12 @@ def text_shape_reset_candidate_grid(
                                     font_path=font_path,
                                     font_size=font_size,
                                     stroke_opacity=stroke_opacity,
-                                    ink_gain=ink_gain,
-                                    alpha_contrast=alpha_contrast,
-                                    core_ink_gain=core_ink_gain,
-                                    core_darken_strength=core_darken_strength,
-                                    core_darken_threshold=130,
-                                    core_darken_target_gray=28,
+                                    ink_gain=params.ink_gain,
+                                    alpha_contrast=params.alpha_contrast,
+                                    core_ink_gain=params.core_ink_gain,
+                                    core_darken_strength=params.core_darken_strength,
+                                    core_darken_threshold=params.core_darken_threshold,
+                                    core_darken_target_gray=params.core_darken_target_gray,
                                     text_dx=text_dx,
                                     text_dy=text_dy,
                                     char_offsets=offsets,
@@ -587,9 +572,13 @@ def text_shape_reset_candidate_grid(
             "char_offsets_count": len(offset_candidates),
             "protected_box_count": len(plan.protected_boxes),
             "stroke_body_grid_count": len(stroke_body_grid),
+            "primary_search_keys": sorted(TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS),
+            "secondary_search_keys": sorted(TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS),
             "pose_shear_source": "renderer_reference_slot_shear_from_source_slots_and_neighbors",
         },
         "issue_flags": flags,
+        "primary_search_keys": sorted(TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS),
+        "secondary_search_keys": sorted(TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS),
         "allowed_delta_keys": sorted(TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS),
         "blocked_delta_keys": sorted(TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS),
         "candidate_count": len(candidates),
@@ -963,7 +952,6 @@ def ink_gray_axes(
     combined_core_light_outer_halo = flags["core_too_light"] and flags["outer_gray_halo"]
     if visual_shape_arbitration and flags["core_too_light"]:
         opacity_deltas = (0.0, 0.04, 0.08, 0.12)
-        stroke_deltas = (0.0,)
         ink_deltas = (0.0, 0.04)
         alpha_deltas = (0.04, 0.08)
         core_deltas = (
@@ -977,30 +965,25 @@ def ink_gray_axes(
         )
     elif flags["excess_black_core"] or flags["needs_thinner_strokes"]:
         opacity_deltas = (0.0, -0.02, -0.04, -0.06)
-        stroke_deltas = (0.0, -0.02, -0.04, 0.01)
         ink_deltas = (0.0, -0.02)
         alpha_deltas = (0.0, -0.04)
         core_deltas = ((0.0, 0.0, 0, 0), (-0.04, -0.04, -6, 4), (-0.08, -0.06, -10, 8), (-0.02, -0.08, -4, 10))
     elif combined_core_light_outer_halo:
         opacity_deltas = (0.0, 0.01, 0.02, 0.03)
-        stroke_deltas = (0.0, -0.01, -0.02, -0.03)
         ink_deltas = (0.0, -0.01)
         alpha_deltas = (0.04, 0.08)
         core_deltas = ((0.02, 0.03, 4, -2), (0.04, 0.04, 6, -4), (0.06, 0.06, 10, -6), (0.03, 0.08, 5, -8))
     elif flags["outer_gray_halo"]:
         opacity_deltas = (0.0, 0.01, -0.02, 0.02)
-        stroke_deltas = (0.0, -0.01, -0.03, 0.01)
         ink_deltas = (0.0, 0.01)
         alpha_deltas = (0.0, -0.04)
         core_deltas = ((0.0, 0.0, 0, 0), (0.02, 0.02, 3, -2), (-0.02, -0.02, -4, 4), (0.04, 0.01, 6, -4))
     else:
         opacity_deltas = (0.0, 0.02, 0.04, -0.02)
-        stroke_deltas = (0.0, 0.02, 0.04, -0.01)
         ink_deltas = (0.0, 0.02)
         alpha_deltas = (0.0, 0.04)
         core_deltas = ((0.0, 0.0, 0, 0), (0.04, 0.04, 6, -4), (0.08, 0.06, 10, -8), (0.02, 0.08, 4, -10))
 
-    stroke_target_len = 1 if visual_shape_arbitration and flags["core_too_light"] else 4
     core_axis = tuple(
         (
             _float_axis(params.core_ink_gain, (core_delta,), low=0.0, high=1.0, target_len=1)[0],
@@ -1012,9 +995,8 @@ def ink_gray_axes(
     )
     return {
         "opacity": _float_axis(params.opacity, opacity_deltas, low=0.2, high=1.0, target_len=4),
-        "stroke_opacity": _float_axis(params.stroke_opacity, stroke_deltas, low=0.0, high=1.0, target_len=stroke_target_len),
-        "ink_gain": _float_axis(params.ink_gain, ink_deltas, low=0.0, high=1.0, target_len=2),
-        "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=2),
+        "ink_gain": _float_axis(params.ink_gain, ink_deltas, low=0.0, high=1.0, target_len=3),
+        "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=3),
         "core_tone": core_axis,
     }
 
@@ -1060,13 +1042,11 @@ def ink_gray_candidate_grid(
         visual_shape_arbitration=visual_shape_arbitrated,
     )
     opacity_values = axes["opacity"]
-    stroke_values = axes["stroke_opacity"]
     ink_values = axes["ink_gain"]
     alpha_values = axes["alpha_contrast"]
     core_values = axes["core_tone"]
     axis_raw_budget = (
         len(opacity_values)
-        * len(stroke_values)
         * len(ink_values)
         * len(alpha_values)
         * len(core_values)
@@ -1075,28 +1055,27 @@ def ink_gray_candidate_grid(
 
     axis_variants: list[CandidateParams] = []
     for opacity in opacity_values:
-        for stroke_opacity in stroke_values:
-            for ink_gain in ink_values:
-                for alpha_contrast in alpha_values:
-                    for (
-                        core_ink_gain,
-                        core_darken_strength,
-                        core_darken_threshold,
-                        core_darken_target_gray,
-                    ) in core_values:
-                        axis_variants.append(
-                            mutate_params(
-                                params,
-                                opacity=opacity,
-                                stroke_opacity=stroke_opacity,
-                                ink_gain=ink_gain,
-                                alpha_contrast=alpha_contrast,
-                                core_ink_gain=core_ink_gain,
-                                core_darken_strength=core_darken_strength,
-                                core_darken_threshold=core_darken_threshold,
-                                core_darken_target_gray=core_darken_target_gray,
-                            )
+        for ink_gain in ink_values:
+            for alpha_contrast in alpha_values:
+                for (
+                    core_ink_gain,
+                    core_darken_strength,
+                    core_darken_threshold,
+                    core_darken_target_gray,
+                ) in core_values:
+                    axis_variants.append(
+                        mutate_params(
+                            params,
+                            opacity=opacity,
+                            stroke_opacity=params.stroke_opacity,
+                            ink_gain=ink_gain,
+                            alpha_contrast=alpha_contrast,
+                            core_ink_gain=core_ink_gain,
+                            core_darken_strength=core_darken_strength,
+                            core_darken_threshold=core_darken_threshold,
+                            core_darken_target_gray=core_darken_target_gray,
                         )
+                    )
     retained_limit = min(limit, INK_GRAY_GRID_TOP_LIMIT)
     max_axis_retain = max(0, retained_limit - len(micro_variants))
     retained_axis = dedupe_params(axis_variants, max(1, max_axis_retain))
@@ -1218,7 +1197,6 @@ def ink_gray_candidate_grid(
             "prune_reason_contract": prune_reason_contract("ink_gray_balance", raw_budget, len(candidates)),
             "axes": {
                 "opacity_count": len(opacity_values),
-                "stroke_opacity_count": len(stroke_values),
                 "ink_gain_count": len(ink_values),
                 "alpha_contrast_count": len(alpha_values),
                 "core_tone_count": len(core_values),
@@ -1248,6 +1226,7 @@ def ink_gray_candidate_grid(
                 "font_name",
                 "font_path",
                 "font_size",
+                "stroke_opacity",
                 "text_dx",
                 "text_dy",
                 "char_offsets",
@@ -1293,14 +1272,12 @@ def photo_texture_axes(params: CandidateParams, report: dict[str, Any] | None) -
     flags = photo_texture_issue_flags(report)
     if flags["too_blurry"]:
         blur_deltas = (0.0, -0.06, -0.10)
-        alpha_deltas = (0.0, 0.02)
         warp_deltas = (0.0, -0.02)
         breakup_deltas = (0.0, -0.004, 0.004)
         noise_deltas = (0.0, -0.008, -0.014)
         jpeg_deltas = (0, 6)
     else:
         blur_deltas = (0.0, 0.04, 0.08)
-        alpha_deltas = (0.0, -0.02)
         warp_deltas = (0.0, 0.02)
         breakup_deltas = (0.0, 0.006, 0.012)
         noise_deltas = (0.0, 0.014, 0.024)
@@ -1312,7 +1289,6 @@ def photo_texture_axes(params: CandidateParams, report: dict[str, Any] | None) -
 
     return {
         "blur": _float_axis(params.blur, blur_deltas, low=0.0, high=2.0, target_len=2),
-        "alpha_contrast": _float_axis(params.alpha_contrast, alpha_deltas, low=0.0, high=2.0, target_len=2),
         "photo_warp": _float_axis(params.photo_warp, warp_deltas, low=0.0, high=1.0, target_len=2),
         "edge_breakup": _float_axis(params.edge_breakup, breakup_deltas, low=0.0, high=0.2, target_len=3),
         "photo_noise": _float_axis(params.photo_noise, noise_deltas, low=0.0, high=0.35, target_len=3),
@@ -1339,14 +1315,12 @@ def photo_texture_candidate_grid(
 
     axes = photo_texture_axes(params, report)
     blur_values = axes["blur"]
-    alpha_values = axes["alpha_contrast"]
     warp_values = axes["photo_warp"]
     breakup_values = axes["edge_breakup"]
     noise_values = axes["photo_noise"]
     jpeg_values = axes["jpeg_quality"]
     raw_budget = (
         len(blur_values)
-        * len(alpha_values)
         * len(warp_values)
         * len(breakup_values)
         * len(noise_values)
@@ -1355,22 +1329,21 @@ def photo_texture_candidate_grid(
 
     variants: list[CandidateParams] = []
     for blur in blur_values:
-        for alpha_contrast in alpha_values:
-            for photo_warp in warp_values:
-                for edge_breakup in breakup_values:
-                    for photo_noise in noise_values:
-                        for jpeg_quality in jpeg_values:
-                            variants.append(
-                                mutate_params(
-                                    params,
-                                    blur=blur,
-                                    alpha_contrast=alpha_contrast,
-                                    photo_warp=photo_warp,
-                                    edge_breakup=edge_breakup,
-                                    photo_noise=photo_noise,
-                                    jpeg_quality=jpeg_quality,
-                                )
+        for photo_warp in warp_values:
+            for edge_breakup in breakup_values:
+                for photo_noise in noise_values:
+                    for jpeg_quality in jpeg_values:
+                        variants.append(
+                            mutate_params(
+                                params,
+                                blur=blur,
+                                alpha_contrast=params.alpha_contrast,
+                                photo_warp=photo_warp,
+                                edge_breakup=edge_breakup,
+                                photo_noise=photo_noise,
+                                jpeg_quality=jpeg_quality,
                             )
+                        )
     retained_limit = min(limit, PHOTO_TEXTURE_GRID_TOP_LIMIT)
     candidates = dedupe_params(variants, retained_limit)
     candidate_records: list[dict[str, Any]] = []
@@ -1412,13 +1385,12 @@ def photo_texture_candidate_grid(
             "prune_reason_contract": prune_reason_contract("photo_texture", raw_budget, len(candidates)),
             "axes": {
                 "blur_count": len(blur_values),
-                "alpha_contrast_count": len(alpha_values),
                 "photo_warp_count": len(warp_values),
                 "edge_breakup_count": len(breakup_values),
                 "photo_noise_count": len(noise_values),
                 "jpeg_quality_count": len(jpeg_values),
                 "ranking_method": "local_photo_texture_issue_axis_priority",
-                "alpha_adjustment_scope": "small_alpha_degradation_or_recovery_only",
+                "alpha_adjustment_scope": "forbidden_in_photo_texture; use_ink_gray_balance",
                 "residual_retexture_keys": ["edge_breakup", "photo_noise", "jpeg_quality"],
             },
             "issue_flags": photo_texture_issue_flags(report),

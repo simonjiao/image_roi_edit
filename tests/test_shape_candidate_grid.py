@@ -24,7 +24,9 @@ import roi_image_edit.processing_service as processing_service
 from roi_image_edit.revision_solver import (
     TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS,
     TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS,
+    TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS,
     TEXT_SHAPE_PRUNE_REASON_CATEGORIES,
+    TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS,
     text_shape_reset_candidate_grid,
     text_shape_reset_candidates,
 )
@@ -443,6 +445,8 @@ class ShapeCandidateGridTest(unittest.TestCase):
         self.assertGreater(grid.report["budget"]["pruned_count"], 0)
         self.assertEqual(set(grid.report["allowed_delta_keys"]), TEXT_SHAPE_GRID_ALLOWED_DELTA_KEYS)
         self.assertEqual(set(grid.report["blocked_delta_keys"]), TEXT_SHAPE_GRID_BLOCKED_DELTA_KEYS)
+        self.assertEqual(set(grid.report["primary_search_keys"]), TEXT_SHAPE_GRID_PRIMARY_SEARCH_KEYS)
+        self.assertEqual(set(grid.report["secondary_search_keys"]), TEXT_SHAPE_GRID_SECONDARY_SEARCH_KEYS)
         self.assertEqual(grid.report["violations"], [])
         self.assertEqual(
             grid.report["axes"]["pose_shear_source"],
@@ -465,6 +469,12 @@ class ShapeCandidateGridTest(unittest.TestCase):
             self.assertTrue(set(audit["reason_categories"]) <= set(TEXT_SHAPE_PRUNE_REASON_CATEGORIES))
             self.assertEqual(candidate.opacity, base.opacity)
             self.assertEqual(candidate.blur, base.blur)
+            self.assertEqual(candidate.ink_gain, base.ink_gain)
+            self.assertEqual(candidate.alpha_contrast, base.alpha_contrast)
+            self.assertEqual(candidate.core_ink_gain, base.core_ink_gain)
+            self.assertEqual(candidate.core_darken_strength, base.core_darken_strength)
+            self.assertEqual(candidate.core_darken_threshold, base.core_darken_threshold)
+            self.assertEqual(candidate.core_darken_target_gray, base.core_darken_target_gray)
             self.assertEqual(candidate.mask_threshold, base.mask_threshold)
             self.assertEqual(candidate.mask_dilate_iterations, base.mask_dilate_iterations)
             self.assertEqual(candidate.inpaint_radius, base.inpaint_radius)

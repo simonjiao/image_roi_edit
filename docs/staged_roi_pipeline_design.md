@@ -60,7 +60,7 @@
 
 例如 `text_shape` 中的笔画体量失败时：
 
-1. 允许调整 `stroke_opacity`、`font_size`、`core_ink_gain`、`core_darken_strength`、局部字形宽度。
+1. 允许主搜索调整 `font_size`、位置/字槽和局部字形宽度；`stroke_opacity` 只作为次级 `stroke_body_shape`，`core_ink_gain`、`core_darken_strength` 归入 `ink_gray_balance`。
 2. 禁止 `blur`、`photo_noise`、`jpeg_quality` 抢先主导。
 3. 禁止只靠外层 `120-165` 浅灰边假装变粗。
 
@@ -339,7 +339,7 @@ Prompt 输入应包含：
   },
   "blocking_stage": "text_shape",
   "stage_status": {...},
-  "allowed_patch_keys": ["stroke_opacity", "core_ink_gain"],
+  "allowed_patch_keys": ["font_size_delta", "stroke_opacity_delta"],
   "blocked_patch_keys": ["blur", "photo_noise", "jpeg_quality"]
 }
 ```
@@ -355,7 +355,7 @@ internal_profile: photo_scan
 roi_policy: manual_anchor
 blocking_stage: text_shape
 reason: changed char core density below same-row neighbor
-allowed_params: stroke_opacity, font_size, core_ink_gain, core_darken_strength
+allowed_params: font_size_delta, text_dx_delta, text_dy_delta, char_offsets_delta, stroke_opacity_delta
 blocked_params: blur, photo_noise, jpeg_quality
 selected_optimization_step: stroke_body_search
 ```

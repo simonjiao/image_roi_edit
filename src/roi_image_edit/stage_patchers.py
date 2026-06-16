@@ -107,10 +107,6 @@ def _build_stage_patcher_spec(stage_id: str, patcher: StagePatcherFn) -> StagePa
     policy = optimization_policy_for_stage(stage_id)
     allowed_steps = tuple(str(step) for step in policy.get("allowed_steps") or [])
     secondary_steps = list(str(step) for step in policy.get("secondary_only_steps") or [])
-    if stage_id == "text_shape":
-        # Stroke-body repairs may carry small ink-balance deltas as coupled
-        # side effects; stage_policy still rejects ink-only patches.
-        secondary_steps.append("ink_gray_balance")
     forbidden_steps = tuple(str(step) for step in policy.get("forbidden_steps") or [])
     allowed_patch_keys = patch_keys_for_steps(allowed_steps)
     secondary_patch_keys = patch_keys_for_steps(tuple(secondary_steps))
@@ -134,8 +130,6 @@ def patch_keys_declared_for_stage(stage_id: str, patch: dict[str, Any] | None) -
     policy = optimization_policy_for_stage(stage_id)
     allowed_steps = list(str(step) for step in policy.get("allowed_steps") or [])
     secondary_steps = list(str(step) for step in policy.get("secondary_only_steps") or [])
-    if stage_id == "text_shape":
-        secondary_steps.append("ink_gray_balance")
     forbidden_steps = list(str(step) for step in policy.get("forbidden_steps") or [])
     declared = patch_keys_for_steps(tuple(allowed_steps + secondary_steps))
     blocked = patch_keys_for_steps(tuple(forbidden_steps))
@@ -637,10 +631,10 @@ def thin_dark_core_patches(acceptance: dict[str, Any]) -> list[dict[str, Any]]:
 
 def black_core_reduction_patches() -> list[dict[str, Any]]:
     return [
-        {"opacity_delta": -0.06, "stroke_opacity_delta": -0.02, "alpha_contrast_delta": -0.05},
-        {"opacity_delta": -0.06, "stroke_opacity_delta": -0.04, "alpha_contrast_delta": -0.08},
-        {"opacity_delta": -0.06, "blur_delta": -0.02, "stroke_opacity_delta": -0.04},
-        {"opacity_delta": -0.06, "blur_delta": 0.02, "stroke_opacity_delta": -0.02},
+        {"opacity_delta": -0.06, "alpha_contrast_delta": -0.05},
+        {"opacity_delta": -0.06, "alpha_contrast_delta": -0.08},
+        {"opacity_delta": -0.06, "blur_delta": -0.02},
+        {"opacity_delta": -0.06, "blur_delta": 0.02},
         {"opacity_delta": -0.04, "blur_delta": 0.06, "core_ink_gain_delta": -0.03},
         {"opacity_delta": -0.06, "blur_delta": 0.08, "core_darken_strength_delta": -0.03},
         {"core_ink_gain_delta": -0.06, "core_darken_strength_delta": -0.04},
@@ -690,19 +684,15 @@ def stroke_weight_shape_patches(acceptance: dict[str, Any]) -> list[dict[str, An
         return [
             {"font_size_delta": -1},
             {"stroke_opacity_delta": -0.03},
-            {"ink_gain_delta": -0.03},
             {"font_size_delta": -1, "stroke_opacity_delta": -0.02},
-            {"font_size_delta": -1, "ink_gain_delta": -0.02},
-            {"stroke_opacity_delta": -0.04, "ink_gain_delta": -0.02},
+            {"stroke_opacity_delta": -0.04},
         ]
     if stroke_weight in {"too_thin", "slightly_thin"}:
         return [
             {"font_size_delta": 1},
             {"stroke_opacity_delta": 0.03},
-            {"ink_gain_delta": 0.03},
             {"font_size_delta": 1, "stroke_opacity_delta": 0.02},
-            {"font_size_delta": 1, "ink_gain_delta": 0.02},
-            {"stroke_opacity_delta": 0.04, "ink_gain_delta": 0.02},
+            {"stroke_opacity_delta": 0.04},
         ]
     return []
 
@@ -714,19 +704,18 @@ def keep_patch_for_stroke_weight_shape(patch: dict[str, Any], acceptance: dict[s
     stroke_weight = str(findings.get("stroke_weight", "")).strip().lower()
     if stroke_weight not in {"too_bold", "slightly_bold", "too_thin", "slightly_thin"}:
         return False
-    allowed_keys = {"font_size_delta", "stroke_opacity_delta", "ink_gain_delta", "text_dx_delta", "text_dy_delta"}
+    allowed_keys = {"font_size_delta", "stroke_opacity_delta", "text_dx_delta", "text_dy_delta"}
     patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
     if not patch_keys or patch_keys - allowed_keys:
         return False
     try:
         font_size_delta = int(round(float(patch.get("font_size_delta") or 0.0)))
         stroke_opacity_delta = float(patch.get("stroke_opacity_delta") or 0.0)
-        ink_gain_delta = float(patch.get("ink_gain_delta") or 0.0)
     except (TypeError, ValueError):
         return False
     if stroke_weight in {"too_bold", "slightly_bold"}:
-        return font_size_delta < 0 or stroke_opacity_delta < 0.0 or ink_gain_delta < 0.0
-    return font_size_delta > 0 or stroke_opacity_delta > 0.0 or ink_gain_delta > 0.0
+        return font_size_delta < 0 or stroke_opacity_delta < 0.0
+    return font_size_delta > 0 or stroke_opacity_delta > 0.0
 
 
 def neighbor_outer_gray_cleanup_patches() -> list[dict[str, Any]]:
@@ -981,7 +970,6 @@ def photo_texture_recovery_patches(report: dict[str, Any] | None = None) -> list
             },
             {
                 "blur_delta": -0.12,
-                "alpha_contrast_delta": 0.08,
                 "photo_warp_delta": -0.010,
                 "jpeg_quality_delta": 6,
             },
@@ -1273,14 +1261,12 @@ def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[d
             [
                 {
                     "opacity_delta": 0.015,
-                    "stroke_opacity_delta": -0.01,
                     "alpha_contrast_delta": 0.06,
                     "core_ink_gain_delta": 0.03,
                     "core_darken_strength_delta": 0.03,
                 },
                 {
                     "opacity_delta": 0.01,
-                    "stroke_opacity_delta": -0.02,
                     "ink_gain_delta": -0.01,
                     "alpha_contrast_delta": 0.08,
                     "core_ink_gain_delta": 0.04,
@@ -1289,7 +1275,6 @@ def ink_balance_recovery_patches(report: dict[str, Any] | None = None) -> list[d
                     "core_darken_target_gray_delta": -4,
                 },
                 {
-                    "stroke_opacity_delta": -0.03,
                     "alpha_contrast_delta": 0.10,
                     "core_ink_gain_delta": 0.05,
                     "core_darken_strength_delta": 0.05,

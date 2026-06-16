@@ -72,7 +72,7 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
         self.assertGreater(grid.report["budget"]["pruned_count"], 0)
         self.assertEqual(set(grid.report["allowed_delta_keys"]), PHOTO_TEXTURE_GRID_ALLOWED_DELTA_KEYS)
         self.assertEqual(set(grid.report["blocked_delta_keys"]), PHOTO_TEXTURE_GRID_BLOCKED_DELTA_KEYS)
-        self.assertEqual(grid.report["axes"]["alpha_adjustment_scope"], "small_alpha_degradation_or_recovery_only")
+        self.assertEqual(grid.report["axes"]["alpha_adjustment_scope"], "forbidden_in_photo_texture; use_ink_gray_balance")
         self.assertEqual(
             grid.report["axes"]["residual_retexture_keys"],
             ["edge_breakup", "photo_noise", "jpeg_quality"],
@@ -94,7 +94,7 @@ class PhotoTextureCandidateGridTest(unittest.TestCase):
             self.assertTrue(set(audit["reason_categories"]) <= set(PHOTO_TEXTURE_PRUNE_REASON_CATEGORIES))
             self.assertEqual(audit["parent_candidate_id"], base.candidate_id)
             self.assertLessEqual(abs(candidate.blur - base.blur), 0.08)
-            self.assertLessEqual(abs(candidate.alpha_contrast - base.alpha_contrast), 0.02)
+            self.assertEqual(candidate.alpha_contrast, base.alpha_contrast)
             self.assertLessEqual(abs(candidate.photo_warp - base.photo_warp), 0.02)
             self.assertLessEqual(abs(candidate.edge_breakup - base.edge_breakup), 0.018)
             self.assertLessEqual(abs(candidate.photo_noise - base.photo_noise), 0.030)

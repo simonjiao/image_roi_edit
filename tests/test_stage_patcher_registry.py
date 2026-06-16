@@ -181,6 +181,7 @@ class StagePatcherRegistryTest(unittest.TestCase):
         forbidden = {
             "opacity_delta",
             "blur_delta",
+            "ink_gain_delta",
             "alpha_contrast_delta",
             "core_ink_gain_delta",
             "core_darken_strength_delta",
@@ -192,7 +193,6 @@ class StagePatcherRegistryTest(unittest.TestCase):
             any(
                 float(patch.get("font_size_delta") or 0.0) < 0.0
                 or float(patch.get("stroke_opacity_delta") or 0.0) < 0.0
-                or float(patch.get("ink_gain_delta") or 0.0) < 0.0
                 for patch in patches
             )
         )
@@ -206,18 +206,17 @@ class StagePatcherRegistryTest(unittest.TestCase):
             set(report["allowed_patch_keys"]),
             {
                 "blur_delta",
-                "alpha_contrast_delta",
                 "photo_warp_delta",
                 "edge_breakup_delta",
                 "photo_noise_delta",
                 "jpeg_quality_delta",
             },
         )
-        self.assertFalse(set(report["allowed_patch_keys"]) & {"opacity_delta", "stroke_opacity_delta", "font_size_delta"})
-        self.assertNotIn("alpha_contrast_delta", report["blocked_patch_keys"])
+        self.assertFalse(set(report["allowed_patch_keys"]) & {"opacity_delta", "stroke_opacity_delta", "font_size_delta", "alpha_contrast_delta"})
+        self.assertIn("alpha_contrast_delta", report["blocked_patch_keys"])
         audit = patch_key_audit_for_stage_patcher(
             "photo_texture",
-            {"blur_delta": 0.04, "alpha_contrast_delta": -0.02, "photo_noise_delta": 0.012},
+            {"blur_delta": 0.04, "photo_noise_delta": 0.012},
         )
         self.assertTrue(audit["declared"], audit)
 

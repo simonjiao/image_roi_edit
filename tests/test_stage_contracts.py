@@ -499,7 +499,7 @@ class StageContractsTest(unittest.TestCase):
             {"stroke_opacity_delta": 0.02, "blur_delta": 0.04},
         )
         self.assertEqual(audit["stage_id"], "text_shape")
-        self.assertEqual(audit["optimization_steps"], ["stroke_body_shape", "ink_gray_balance", "photo_texture"])
+        self.assertEqual(audit["optimization_steps"], ["stroke_body_shape", "photo_texture"])
         self.assertEqual(audit["primary_optimization_steps"], ["stroke_body_shape"])
         self.assertEqual(audit["optimization_step"], "stroke_body_shape")
         self.assertEqual(selected_optimization_step(audit), "stroke_body_shape")

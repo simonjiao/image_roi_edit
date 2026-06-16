@@ -70,7 +70,7 @@ background_cleanup 内部：
 | `hard_boundary` | 保证这是在原图 ROI 内修改，而不是改坏整图或无关文字。 | 检查尺寸、ROI 外像素、边缘、protected text；方向/字段/旧槽位不可靠时阻塞候选生成。protected text guard 不区分左、右、上、下，任何未修改文字与目标 ROI、旧字清理范围或实际改动像素交叠都必须失败。 | `orientation_check`、`field_roi_selection`、`slot_quality_gate`、`protected_text_guard`、`hard_check`。 | 不依赖视觉模型裁决。`candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt` 会看到 hard report，但不能覆盖该阶段失败。 |
 | `text_shape` | 先把文字形态放对、放像、放稳。 | 阻塞字体、字号、槽位、行基线、字距、笔画身体、局部姿态错误；行基线必须同时考虑旧文字原位置和同一行未修改文字，不能只按 ROI 中心放置；禁止黑灰、模糊、背景补丁抢先掩盖形态问题。 | `placement_strategy`、`shape_change_detection`、`font_style_search`、`font_size_search`、`slot_alignment_search`、`row_baseline_check`、`stroke_body_search`、`pose_shear_search`、`shape_reset`。 | `candidate_rank_prompt.txt` 可在本地 top candidates 中比较字体和形态；prompt 输入包含 `stage_context`；`final_acceptance_prompt.txt` 最终验收必须尊重本地 `text_shape` gate，模型建议会被本地 stage filter 过滤。 |
 | `ink_gray_balance` | 让新字黑灰比例接近旧字和邻字。 | 分开控制真黑核心、中灰笔画身体、外灰边，避免“太黑/太淡/太硬/太灰”混成一个方向。 | `core_black_search`、`mid_gray_body_search`、`outer_gray_control`、`opacity_search`、`core_gain_search`、`alpha_contrast_search`。 | `candidate_rank_prompt.txt` 可比较候选黑灰观感；`tuning_prompt.txt` 可建议 opacity/core/contrast 小步变化；`final_acceptance_prompt.txt` 不能接受本地黑灰 gate 失败的候选。 |
-| `photo_texture` | 匹配照片/扫描件的模糊、断裂、噪声和压缩质感。 | 在形态和黑灰过关后，修复过清晰、过干净、过糊、边缘无断裂等照片质感问题。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`、`alpha_degradation_search`。 | `candidate_rank_prompt.txt` 可比较 top candidates 的照片感；`tuning_prompt.txt` 可建议 blur/noise/compression；`final_acceptance_prompt.txt` 做最终自然度验收。 |
+| `photo_texture` | 匹配照片/扫描件的模糊、断裂、噪声和压缩质感。 | 在形态和黑灰过关后，修复过清晰、过干净、过糊、边缘无断裂等照片质感问题。 | `blur_match`、`edge_breakup_match`、`noise_texture_match`、`jpeg_texture_match`、`residual_retexture`。 | `candidate_rank_prompt.txt` 可比较 top candidates 的照片感；`tuning_prompt.txt` 可建议 blur/noise/compression；`final_acceptance_prompt.txt` 做最终自然度验收。 |
 | `background_cleanup` | 让最终候选周围背景自然，且没有旧字残留。 | 验收旧字残影、白影、暗影、平滑涂抹、背景纹理断裂和 ROI 边缘接缝。前置旧槽位清除失败不能拖到此阶段补救。 | `old_slot_cleanup_check`、`ghost_residual_repair`、`shadow_residual_repair`、`background_texture_repair`、`seam_gradient_repair`、`final_blend_check`。 | `candidate_rank_prompt.txt` 可指出候选补丁感；`final_acceptance_prompt.txt` 必须检查背景自然度和残影。视觉模型建议只能生成 JSON patch，不能放过本地 background gate。 |
 
 所有视觉 prompt 都以 `master_prompt.txt` 作为 system prompt。Web 路径当前加载 `candidate_rank_prompt.txt` 和 `final_acceptance_prompt.txt`；CLI 迭代路径还会加载 `tuning_prompt.txt`。`font_size_prompt.txt` 和 `darkness_blur_prompt.txt` 是保留的专项诊断 prompt 资产，不能替代阶段门禁。
@@ -172,7 +172,7 @@ shape_change_large =
 - 放置策略。
 - `text_dx/text_dy`。
 - 单字 `char_offsets`。
-- 轻描边或笔画身体参数。
+- 次级 `stroke_body_shape` 只允许 `stroke_opacity`，不能夹带 `ink_gain`、`alpha_contrast` 或 `core_*`。
 - 局部 shear/姿态继承。
 
 本阶段排序指标：
@@ -205,7 +205,7 @@ shape_change_large =
 - 核心不足但灰边多时，不能继续加 blur 或扩大灰边，应恢复核心密度并收紧外灰。
 - 只剩近阈值核心偏亮时，启用 `core_only_micro_recovery`：微步恢复核心黑度，候选必须排在普通 ink grid 前面，且不能改变字体、字号、槽位、行基线、模糊、mask 或背景参数。
 - 旧字和邻字指标冲突时，优先使用同一行邻字作为风格上限，但必须在报告中写出仲裁。
-- 黑灰阶段不能改变已经通过的字体、槽位和基线，除非重新回到形态阶段。
+- 黑灰阶段不能改变已经通过的字体、槽位、基线和 `stroke_opacity`，除非重新回到形态阶段。
 - 如果候选已经通过 `ink_gray_balance`，但后续被 `photo_texture` 或 `background_cleanup` 阻塞，选择器必须把它视为阶段推进候选并进入下一轮；不能因为最终仍未通过而把它丢弃为不可选择候选。
 
 ### 7. 照片质感搜索
@@ -218,7 +218,6 @@ shape_change_large =
 - edge breakup。
 - 局部噪声。
 - 压缩质感。
-- 轻微 alpha 退化。
 - 局部残差回填。
 
 要求：
@@ -476,7 +475,7 @@ micro-search 的候选不能被常规 top-N 轴优先剪枝吞掉。报告必须
 ### Slice 4: 形态联合搜索
 
 - 在 `text_shape` 阻塞时生成 shape candidate grid。
-- shape grid 只包含字体、字号、放置、offset、stroke body、shear。
+- shape grid 主搜索只包含字体、字号、放置、offset 和 shear；`stroke_opacity` 只作为次级 stroke body 轴，`ink_gain`、`alpha_contrast`、`core_*` 只属于 `ink_gray_balance`。
 - 本地评分后保留 top candidates。
 - 禁止 photo texture 参数抢先修复。
 

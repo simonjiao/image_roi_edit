@@ -92,13 +92,13 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
 
 `text_shape` 的判断不能因为同时存在黑芯过量而被隐藏。若一个候选既偏黑又存在字体结构、字号、槽位、基线、字距或严重姿态问题，应继续把阻塞阶段记为 `text_shape`。若剩余问题主要是笔画身体/中灰层不足、邻字核心密度不一致，且本地已判定黑芯过量，则应把这些问题记录为 `text_shape.deferred_issues`，允许 `ink_gray_balance` 成为当前阻塞阶段。
 
-当 `text_shape` 阻塞时，求解流程必须重新生成形态候选：从字体排名、字号、字槽偏移、基线、轻描边、局部姿态继承组成受控网格。不能只在当前候选上累加 `core_ink_gain`、`stroke_opacity`、`blur`、`photo_warp` 或照片噪声。
+当 `text_shape` 阻塞时，求解流程必须重新生成形态候选：主搜索键只包含字体排名、字号、字槽偏移、基线、放置策略和局部姿态继承；`stroke_opacity` 只能作为次级 `stroke_body_shape` 轴。不能只在当前候选上累加 `core_ink_gain`、`ink_gain`、`alpha_contrast`、`blur`、`photo_warp` 或照片噪声。
 
 当 `text_shape` 阻塞且本地已经判定黑芯严重过量时，允许生成单独标记的
 `ink_guard` 候选。`ink_guard` 不是把降黑并入 `text_shape`，而是在形态仍为主阶段时执行横向保护：
-只能调整 `opacity`、`stroke_opacity`、`ink_gain`、`alpha_contrast`、
+只能调整 `opacity`、`ink_gain`、`alpha_contrast`、
 `core_ink_gain`、`core_darken_strength`、`core_darken_threshold` 和
-`core_darken_target_gray`，不得改字体、字号、位置、字槽、mask、背景或照片质感。
+`core_darken_target_gray`，不得改字体、字号、`stroke_opacity`、位置、字槽、mask、背景或照片质感。
 `ink_guard` 候选只有在 `text_shape` 严重度不回退且 `ink_gray_balance` 严重度下降时才可进入下一轮。
 
 `photo_texture` 不能无条件通过。形态和墨色通过后，仍需用本地指标比较原图与候选在修改文字附近的边缘拉普拉斯、高频残差、模糊、边缘断裂、噪声和 JPEG 压缩权重；若文字过锐、过干净或过糊，应继续在照片质感阶段调参。
@@ -213,13 +213,13 @@ Web 入口只负责 HTTP/API/job 状态；处理编排集中在 `src/roi_image_e
    - 如果只剩 `core_mean_gray_too_light` / `core_lighten_too_high` 且超限很小，应进入核心微调：只做 `0.003~0.006` 级别的 `core_ink_gain`、`core_darken_strength`、`alpha_contrast` 或极小 `opacity` 调整，不改变字体、字号、位置、模糊、mask 或背景参数。
 5. 当问题是笔画不够粗但核心并不缺黑：
    - 先比较旧槽位和新字的 `<55`、`70-90`、`90-120`、`<165` 像素分布；
-   - 如果 `<55` 核心已经接近或偏多，但 `70-90 + 90-120` 中间灰阶不足，应增加 `stroke_opacity`、`ink_gain`、轻微 `blur` 和照片质感；
+   - 如果 `<55` 核心已经接近或偏多，但 `70-90 + 90-120` 中间灰阶不足，应优先调整 `ink_gain`、`alpha_contrast` 和核心参数；若必须改变 `stroke_opacity`，应显式退回 `text_shape` 的次级 `stroke_body_shape`；
    - 如果目标字比旧字更复杂，不能机械使用同字数 `dark_pixel_ratio <= 1.12`，应按本地渲染复杂度小幅放宽；
    - 更复杂目标字的 `<55` 核心增量门槛也应小幅放宽，但必须有上限，并继续受邻字核心密度和视觉验收约束；
    - 不能只依靠 `120-165` 浅灰边增加来通过验收，`70-120` 中间笔画主体仍要接近旧槽位；
    - 如果同一行保留邻字的核心更实，应优先用邻字风格门槛触发轻微描边、核心密度恢复和减少灰雾，而不是只继续参考被替换旧字；
-   - 一旦触发邻字核心密度问题，本轮补丁应禁止继续增加 `blur`、`photo_noise` 或 `edge_breakup`，优先小幅增加 `stroke_opacity`、`core_ink_gain`、`core_darken_strength` 或降低 blur；
-   - 一旦触发外圈灰边过多问题，本轮补丁应允许降低 `stroke_opacity`、`blur`、`photo_noise`、`edge_breakup`，并用 `core_ink_gain`/`core_darken_strength` 保住核心，不应继续扩大浅灰边；
+   - 一旦触发邻字核心密度问题，本轮补丁应禁止继续增加 `blur`、`photo_noise` 或 `edge_breakup`，优先小幅增加 `core_ink_gain`、`core_darken_strength` 或降低 blur；需要改变 `stroke_opacity` 时必须退回 `text_shape`；
+   - 一旦触发外圈灰边过多问题，本轮补丁应允许调整 `alpha_contrast`、降低 `blur`、`photo_noise`、`edge_breakup`，并用 `core_ink_gain`/`core_darken_strength` 保住核心，不应继续扩大浅灰边；`stroke_opacity` 不在黑灰阶段改变；
    - 外圈灰边过多时，可小幅增加 `alpha_contrast`，把浅灰抗锯齿边缘收紧为更干净的中深色边缘或背景，而不是简单糊化；
    - 如果清灰边后邻字核心密度和外圈灰边都合格，应允许旧槽位 `70-120` 中间灰阶存在合理缺口，并交给最终视觉验收判断是否过硬；
    - 如果局部细笔画仍偏细但灰边已经很多，应优先轻微描边并小幅降低 `blur`/灰边噪声，不能继续用灰雾撑厚；

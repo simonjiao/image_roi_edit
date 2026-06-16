@@ -30,16 +30,9 @@ OPTIMIZATION_STEP_KEYS = {
     },
     "stroke_body_shape": {
         "stroke_opacity_delta",
-        "ink_gain_delta",
-        "alpha_contrast_delta",
-        "core_ink_gain_delta",
-        "core_darken_strength_delta",
-        "core_darken_threshold_delta",
-        "core_darken_target_gray_delta",
     },
     "ink_gray_balance": {
         "opacity_delta",
-        "stroke_opacity_delta",
         "ink_gain_delta",
         "alpha_contrast_delta",
         "core_ink_gain_delta",
@@ -49,7 +42,6 @@ OPTIMIZATION_STEP_KEYS = {
     },
     "photo_texture": {
         "blur_delta",
-        "alpha_contrast_delta",
         "photo_warp_delta",
         "edge_breakup_delta",
         "photo_noise_delta",
@@ -150,18 +142,6 @@ def optimization_policy_audit(stage_id: str | None, patch: dict[str, Any] | None
     forbidden = set(policy["forbidden_steps"])
     secondary_only = set(policy.get("secondary_only_steps") or [])
     effective_steps = list(steps)
-    if stage_id == "text_shape" and "stroke_body_shape" in effective_steps:
-        effective_steps = [
-            step
-            for step in effective_steps
-            if step != "ink_gray_balance"
-        ]
-    if stage_id == "ink_gray_balance" and "ink_gray_balance" in effective_steps:
-        effective_steps = [
-            step
-            for step in effective_steps
-            if step != "stroke_body_shape"
-        ]
     if "photo_texture" in allowed and "photo_texture" in effective_steps:
         patch_keys = {str(key) for key, value in (patch or {}).items() if value is not None}
         if patch_keys and patch_keys <= OPTIMIZATION_STEP_KEYS["photo_texture"]:

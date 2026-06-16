@@ -204,7 +204,7 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertEqual(set(grid.report["blocked_delta_keys"]), INK_GRAY_GRID_BLOCKED_DELTA_KEYS)
         self.assertEqual(
             set(grid.report["preserved_shape_keys"]),
-            {"font_name", "font_path", "font_size", "text_dx", "text_dy", "char_offsets"},
+            {"font_name", "font_path", "font_size", "stroke_opacity", "text_dx", "text_dy", "char_offsets"},
         )
         self.assertEqual(grid.report["shape_key_changes_require_stage"], "text_shape")
         self.assertEqual(grid.report["violations"], [])
@@ -218,6 +218,7 @@ class InkGrayCandidateGridTest(unittest.TestCase):
             self.assertEqual(candidate.font_name, base.font_name)
             self.assertEqual(candidate.font_path, base.font_path)
             self.assertEqual(candidate.font_size, base.font_size)
+            self.assertEqual(candidate.stroke_opacity, base.stroke_opacity)
             self.assertEqual(candidate.blur, base.blur)
             self.assertEqual(candidate.text_dx, base.text_dx)
             self.assertEqual(candidate.text_dy, base.text_dy)
@@ -277,7 +278,7 @@ class InkGrayCandidateGridTest(unittest.TestCase):
         self.assertEqual(grid.report["stage_id"], "ink_gray_balance")
         self.assertTrue(grid.report["visual_shape_arbitration"])
         self.assertTrue(grid.report["axes"]["visual_shape_arbitration_core_recovery"])
-        self.assertEqual(grid.report["axes"]["stroke_opacity_count"], 1)
+        self.assertNotIn("stroke_opacity_count", grid.report["axes"])
         self.assertEqual(
             grid.report["parent_shape_contract"]["required_parent_state"],
             "text_shape_visually_arbitrated_before_ink_gray",
@@ -402,7 +403,7 @@ class InkGrayCandidateGridTest(unittest.TestCase):
 
         self.assertTrue(grid.report["axes"]["near_threshold_micro_tuning"]["enabled"])
         self.assertEqual(grid.report["axes"]["near_threshold_micro_candidate_count"], 10)
-        self.assertEqual(grid.report["budget"]["raw_candidate_budget"], 266)
+        self.assertEqual(grid.report["budget"]["raw_candidate_budget"], 154)
         first = grid.candidates[0]
         self.assertEqual(first.font_name, base.font_name)
         self.assertEqual(first.font_path, base.font_path)
