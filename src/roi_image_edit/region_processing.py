@@ -24,7 +24,6 @@ from roi_image_edit.iterative_pipeline import (
     find_best_candidate_from_model,
     filter_fonts_by_required_text,
     find_font_candidates,
-    generate_candidates,
     make_contact_sheet,
     mutate_params,
     params_label,
@@ -144,65 +143,6 @@ ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
-def longer_replacement_soft_scan_candidates(
-    current: CandidateParams,
-    *,
-    font_candidates: list[tuple[str, str]],
-    font_style_reference: dict[str, Any],
-    max_font_size: int,
-) -> list[CandidateParams]:
-    best_sizes = {
-        item["font_path"]: int(item["font_size"])
-        for item in font_style_reference.get("ranked_fonts", [])
-        if item.get("font_path") and item.get("font_size")
-    }
-    soft_grid = (
-        (0.64, 0.32, 0.00, 0.40, 0.00, 0.00),
-        (0.64, 0.36, 0.00, 0.40, 0.00, 0.00),
-        (0.64, 0.28, 0.00, 0.40, 0.00, 0.00),
-        (0.66, 0.36, 0.00, 0.30, 0.00, 0.00),
-        (0.62, 0.36, 0.00, 0.20, 0.00, 0.00),
-        (0.66, 0.44, 0.00, 0.25, 0.00, 0.00),
-        (0.64, 0.44, 0.00, 0.30, 0.00, 0.00),
-        (0.66, 0.48, 0.00, 0.22, 0.00, 0.00),
-        (0.60, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.62, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.64, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.66, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.60, 0.60, 0.00, 0.00, 0.00, 0.00),
-        (0.62, 0.60, 0.00, 0.00, 0.00, 0.00),
-        (0.70, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.78, 0.55, 0.00, 0.00, 0.00, 0.00),
-        (0.78, 0.75, 0.00, 0.00, 0.00, 0.00),
-        (0.82, 0.50, 0.00, 0.00, 0.00, 0.00),
-        (0.86, 0.50, 0.00, 0.00, 0.00, 0.00),
-        (0.90, 0.42, 0.00, 0.00, 0.00, 0.00),
-        (0.90, 0.42, 0.01, 0.00, 0.04, 0.00),
-    )
-    candidates: list[CandidateParams] = []
-    for font_name, font_path in font_candidates[: min(4, len(font_candidates))]:
-        base_size = best_sizes.get(font_path, current.font_size)
-        for size_delta in (-1, -2, 0):
-            for opacity, blur, ink_gain, alpha_contrast, core_ink_gain, core_darken_strength in soft_grid:
-                candidates.append(
-                    mutate_params(
-                        current,
-                        font_name=font_name,
-                        font_path=font_path,
-                        font_size=max(8, min(max_font_size, base_size + size_delta)),
-                        opacity=opacity,
-                        blur=blur,
-                        stroke_opacity=0.0,
-                        ink_gain=ink_gain,
-                        alpha_contrast=alpha_contrast,
-                        core_ink_gain=core_ink_gain,
-                        core_darken_strength=core_darken_strength,
-                        char_offsets=current.char_offsets,
-                    )
-                )
-    return candidates
-
-
 def cjk_longer_form_first_batch_candidates(
     current: CandidateParams,
     *,
@@ -210,80 +150,74 @@ def cjk_longer_form_first_batch_candidates(
     font_style_reference: dict[str, Any],
     max_font_size: int,
 ) -> list[CandidateParams]:
+    return shape_reference_first_batch_candidates(
+        current,
+        font_candidates=font_candidates,
+        font_style_reference=font_style_reference,
+        max_font_size=max_font_size,
+    )
+
+
+def shape_reference_first_batch_candidates(
+    current: CandidateParams,
+    *,
+    font_candidates: list[tuple[str, str]],
+    font_style_reference: dict[str, Any],
+    max_font_size: int,
+    font_limit: int = 4,
+) -> list[CandidateParams]:
     best_sizes = {
         item["font_path"]: int(item["font_size"])
         for item in font_style_reference.get("ranked_fonts", [])
         if item.get("font_path") and item.get("font_size")
     }
-    # First-pass seeds for photographed CJK form values must start near the
-    # source text's ink density. High-opacity/high-blur variants are left to
-    # later revision, not the initial frontier.
-    seed_grid = (
-        (0.66, 0.36, 0.00, 0.00, 0.18),
-        (0.64, 0.28, 0.00, 0.00, 0.22),
-        (0.69, 0.30, 0.00, 0.00, 0.08),
-        (0.70, 0.34, 0.00, 0.00, 0.10),
-        (0.72, 0.42, 0.00, 0.00, 0.06),
-        (0.62, 0.40, 0.00, 0.00, 0.14),
-        (0.66, 0.34, 0.01, 0.00, 0.12),
-        (0.68, 0.38, 0.01, 0.00, 0.10),
-    )
-    internal_darken_grid = (
-        (0.72, 0.32, 0.00, 0.00, 0.10, 0.06, 0.04),
-        (0.74, 0.32, 0.00, 0.00, 0.12, 0.08, 0.05),
-        (0.76, 0.30, 0.00, 0.00, 0.12, 0.10, 0.06),
-        (0.78, 0.30, 0.00, 0.00, 0.14, 0.12, 0.08),
-    )
+    target_count = len(current.char_offsets or ())
+    zero_offsets = tuple((0, 0) for _ in range(target_count))
+    offset_grid: list[tuple[tuple[int, int], ...]] = []
+
+    def add_offsets(offsets: tuple[tuple[int, int], ...]) -> None:
+        if len(offsets) != target_count:
+            return
+        if offsets not in offset_grid:
+            offset_grid.append(offsets)
+
+    add_offsets(tuple(current.char_offsets or ()))
+    add_offsets(zero_offsets)
+    if target_count >= 2:
+        add_offsets(tuple(((-1 if idx == 0 else 1 if idx == target_count - 1 else 0), 0) for idx in range(target_count)))
+        add_offsets(tuple(((0 if idx == 0 else -1 if idx == 1 else 1 if idx == target_count - 1 else 0), 0) for idx in range(target_count)))
+    if not offset_grid:
+        offset_grid.append(())
+
+    # Initial candidates are intentionally shape-only. Ink, alpha contrast,
+    # core darkening, blur, cleanup, and texture parameters are inherited from
+    # the neutral current params and left to later stages.
+    size_deltas = (0, -1, -2, -3, 1, 2)
+    stroke_grid = (0.0, 0.01, 0.02)
+    text_dx_grid = tuple(dict.fromkeys((current.text_dx, 0, -1, 1)))
+    text_dy_grid = tuple(dict.fromkeys((current.text_dy, 0, -1, 1)))
     candidates: list[CandidateParams] = []
 
-    def append_seed_group(
-        font_items: list[tuple[str, str]],
-        grid: tuple[tuple[float, ...], ...],
-        *,
-        size_deltas: tuple[int, ...],
-    ) -> None:
-        for font_name, font_path in font_items:
-            base_size = best_sizes.get(font_path, current.font_size)
-            for size_delta in size_deltas:
-                font_size = max(8, min(max_font_size, base_size + size_delta))
-                for item in grid:
-                    if len(item) == 5:
-                        opacity, blur, stroke_opacity, ink_gain, alpha_contrast = item
-                        core_ink_gain = 0.0
-                        core_darken_strength = 0.0
-                    else:
-                        (
-                            opacity,
-                            blur,
-                            stroke_opacity,
-                            ink_gain,
-                            alpha_contrast,
-                            core_ink_gain,
-                            core_darken_strength,
-                        ) = item
-                    candidates.append(
-                        mutate_params(
-                            current,
-                            font_name=font_name,
-                            font_path=font_path,
-                            font_size=font_size,
-                            opacity=opacity,
-                            blur=blur,
-                            stroke_opacity=stroke_opacity,
-                            ink_gain=ink_gain,
-                            alpha_contrast=alpha_contrast,
-                            core_ink_gain=core_ink_gain,
-                            core_darken_strength=core_darken_strength,
-                            char_offsets=current.char_offsets,
-                        )
-                    )
-
-    ranked_font_items = font_candidates[: min(4, len(font_candidates))]
-    primary_font_items = ranked_font_items[:1]
-    alternate_font_items = ranked_font_items[1:]
-    append_seed_group(primary_font_items, seed_grid, size_deltas=(-1, 0, 1, 2, -2, -3))
-    append_seed_group(alternate_font_items, internal_darken_grid, size_deltas=(-1, 0, 1, 2))
-    append_seed_group(alternate_font_items, seed_grid, size_deltas=(-1, 0, 1, 2, -2, -3))
+    for font_name, font_path in font_candidates[: min(font_limit, len(font_candidates))]:
+        base_size = best_sizes.get(font_path, current.font_size)
+        for size_delta in size_deltas:
+            font_size = max(8, min(max_font_size, base_size + size_delta))
+            for stroke_opacity in stroke_grid:
+                for text_dx in text_dx_grid:
+                    for text_dy in text_dy_grid:
+                        for offsets in offset_grid:
+                            candidates.append(
+                                mutate_params(
+                                    current,
+                                    font_name=font_name,
+                                    font_path=font_path,
+                                    font_size=font_size,
+                                    stroke_opacity=stroke_opacity,
+                                    text_dx=text_dx,
+                                    text_dy=text_dy,
+                                    char_offsets=offsets,
+                                )
+                            )
     return candidates
 
 
@@ -914,15 +848,22 @@ def initial_candidate_selection_key(
     item: tuple[CandidateParams, Image.Image, dict[str, Any], float],
 ) -> tuple[float, ...]:
     _params, _image, report, score = item
-    if report_is_longer_replacement(report):
-        return longer_stroke_candidate_selection_key(item)
+    fit = stroke_weight_fit_score(report)
+    selection_bucket = float(fit.get("selection_bucket") if isinstance(fit, dict) else 9)
+    fit_score = float(fit.get("score") if isinstance(fit, dict) else 9999.0)
     frontier = initial_candidate_stage_frontier(report)
     stage_gate = report.get("stage_gate") if isinstance(report, dict) else {}
     if not isinstance(stage_gate, dict):
         stage_gate = stage_gate_for_report(report if isinstance(report, dict) else {})
     blocking_stage = stage_gate.get("blocking_stage")
     severity = stage_issue_severity(report, str(blocking_stage)) if blocking_stage else 0.0
-    return (-frontier, float(severity), float(score))
+    shape_score = report.get("shape_score_breakdown") if isinstance(report, dict) else {}
+    shape_score_value = (
+        float(shape_score.get("score") or 0.0)
+        if isinstance(shape_score, dict) and shape_score.get("enabled")
+        else 9999.0
+    )
+    return (selection_bucket, fit_score, -frontier, shape_score_value, float(severity), float(score))
 
 
 def initial_candidate_fallback_tuple(
@@ -958,7 +899,13 @@ def longer_stroke_candidate_selection_key(
         stage_gate = stage_gate_for_report(report if isinstance(report, dict) else {})
     blocking_stage = str(stage_gate.get("blocking_stage") or "")
     stage_severity = stage_issue_severity(report, blocking_stage) if blocking_stage else 0.0
-    return (selection_bucket, fit_score, -float(frontier), float(stage_severity), float(score))
+    shape_score = report.get("shape_score_breakdown") if isinstance(report, dict) else {}
+    shape_score_value = (
+        float(shape_score.get("score") or 0.0)
+        if isinstance(shape_score, dict) and shape_score.get("enabled")
+        else 9999.0
+    )
+    return (selection_bucket, fit_score, -float(frontier), shape_score_value, float(stage_severity), float(score))
 
 
 def run_region_vision_checks(
@@ -1105,7 +1052,7 @@ def run_region_vision_checks(
             chosen_tuple = model_tuple
     chosen_params = chosen_tuple[0]
     candidate_rank_json["local_initial_selection"] = {
-        "selection_rule": "stage_frontier_then_stage_severity_then_local_score",
+        "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
         "chosen_candidate_id": chosen_params.candidate_id,
         "chosen_stage_frontier": initial_candidate_stage_frontier(chosen_tuple[2]),
         "fallback_candidate_id": fallback_tuple[0].candidate_id,
@@ -1426,12 +1373,16 @@ def run_region_vision_checks(
             )
             ink_gray_params = ink_candidate_grid.candidates
             if report_blocks_text_shape(current_report):
-                ink_guard_candidate_grid = ink_gray_candidate_grid(
-                    current_params,
-                    current_report,
-                    limit=8,
-                    parent_shape_candidate_id=current_shape_parent_candidate_id,
-                    allow_text_shape_guard=True,
+                ink_guard_candidate_grid = InkGrayCandidateGrid(
+                    candidates=[],
+                    report={
+                        "enabled": False,
+                        "reason": "text_shape_blocks_ink_gray_until_shape_passes",
+                        "stage_id": "ink_gray_balance",
+                        "guards_stage": "text_shape",
+                        "guard_mode": "disabled_shape_first",
+                        "candidate_count": 0,
+                    },
                 )
             else:
                 ink_guard_candidate_grid = InkGrayCandidateGrid(
@@ -2032,7 +1983,6 @@ def run_region_vision_checks(
                         or progresses_past_text_shape
                         or progresses_past_current_stage
                         or improves_current_stage
-                        or ink_guard_selection.get("selectable")
                     )
                 ):
                     round_candidates.append(
@@ -2072,25 +2022,6 @@ def run_region_vision_checks(
                     progressed_candidates.sort(key=lambda item: item[0])
                     selected_tuple = progressed_candidates[0]
                     selected_reason = "progresses_past_text_shape"
-                elif report_has_excess_black_core(current_report):
-                    ink_guard_candidates = [
-                        item
-                        for item in round_candidates
-                        if (
-                            item[5].get("origin") == "ink_guard_grid"
-                            and (item[5].get("ink_guard") or {}).get("selectable")
-                        )
-                    ]
-                    if ink_guard_candidates:
-                        ink_guard_candidates.sort(
-                            key=lambda item: (
-                                -float((item[5].get("ink_guard") or {}).get("ink_gray_improvement") or 0.0),
-                                item[0],
-                                item[1],
-                            )
-                        )
-                        selected_tuple = ink_guard_candidates[0]
-                        selected_reason = "text_shape_ink_guard_reduces_excess_black_core"
             current_blocking_stage = basis_blocking_stage
             if basis_stage_is_local and current_blocking_stage and current_blocking_stage != "text_shape":
                 improving_stage_candidates = [
@@ -2976,10 +2907,10 @@ def process_region(
         opacity=0.83 if centered_longer else 0.92 if centered else 1.0,
         blur=0.35 if centered_longer else 0.35 if centered else 0.18,
         stroke_opacity=0.0,
-        ink_gain=0.0 if centered else 0.04,
+        ink_gain=0.0,
         alpha_contrast=0.0,
-        core_ink_gain=0.0 if centered else 0.48,
-        core_darken_strength=0.0 if centered else 0.34,
+        core_ink_gain=0.0,
+        core_darken_strength=0.0,
         core_darken_threshold=130,
         core_darken_target_gray=28,
         text_dy=0,
@@ -2992,29 +2923,41 @@ def process_region(
         photo_noise=0.018 if not centered else 0.012,
         jpeg_quality=94,
     )
-    params_list = generate_candidates(
+    params_list = shape_reference_first_batch_candidates(
         current,
         font_candidates=font_candidates,
         font_style_reference=font_style_reference,
-        font_pool_size=min(8, len(font_candidates)),
-        iteration=0,
-        limit=max_candidates,
+        max_font_size=max_font_size,
+        font_limit=min(8, len(font_candidates)),
     )
-    if source_count and target_count > source_count:
-        params_list = [params for params in params_list if params.font_size <= max_font_size]
-        params_list.extend(
-            longer_replacement_soft_scan_candidates(
-                current,
-                font_candidates=font_candidates,
-                font_style_reference=font_style_reference,
-                max_font_size=max_font_size,
-            )
-        )
-        params_list = dedupe_params(params_list, max_candidates + 80)
+    params_list = dedupe_params(params_list, max_candidates)
     initial_candidate_policy = {
-        "enabled": False,
-        "reason": "default_initial_candidate_grid",
+        "enabled": True,
+        "rule": "text_shape.shape_reference_first_batch",
+        "reason": "initial candidates isolate text_shape and keep ink-gray params fixed",
         "class_key": region_classification.get("class_key"),
+        "retained_candidate_limit": max_candidates,
+        "font_count": min(8, len(font_candidates)),
+        "shape_search_keys": [
+            "font_name",
+            "font_path",
+            "font_size",
+            "text_dx",
+            "text_dy",
+            "char_offsets",
+            "stroke_opacity",
+        ],
+        "fixed_ink_gray_keys": [
+            "opacity",
+            "blur",
+            "ink_gain",
+            "alpha_contrast",
+            "core_ink_gain",
+            "core_darken_strength",
+            "core_darken_threshold",
+            "core_darken_target_gray",
+        ],
+        "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
     }
     if cjk_longer_form_first_batch_enabled(region_classification, roi_plan):
         first_batch_seeds = cjk_longer_form_first_batch_candidates(
@@ -3032,15 +2975,10 @@ def process_region(
             "retained_candidate_limit": max_candidates,
             "general_candidate_pool": "excluded_from_first_batch",
             "font_count": min(4, len(font_candidates)),
-            "primary_font_size_deltas": [-1, 0, 1, 2, -2, -3],
-            "alternate_internal_darken_font_size_deltas": [-1, 0, 1, 2],
-            "opacity_range": [0.62, 0.78],
-            "blur_range": [0.28, 0.42],
-            "alpha_contrast_range": [0.06, 0.22],
-            "stroke_opacity_policy": "zero_or_minimal_seed_only; no outline stroke for internal darken candidates",
-            "internal_darken_pool": "alternate thin fonts receive only small internal core darkening before alternate low-core seeds",
-            "internal_darken_params": ["opacity", "core_ink_gain", "core_darken_strength"],
-            "selection_rule": "stroke_weight_fit_then_stage_frontier_then_stage_severity_then_local_score",
+            "font_size_deltas": [0, -1, -2, -3, 1, 2],
+            "stroke_opacity_values": [0.0, 0.01, 0.02],
+            "ink_gray_params": "fixed_from_neutral_current; no initial alpha_contrast/core/ink search",
+            "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
         }
     write_json(region_dir / "initial_candidate_policy.json", initial_candidate_policy)
     if centered:
@@ -3226,7 +3164,7 @@ def process_region(
     if not rendered:
         raise RuntimeError("no candidate could be rendered")
 
-    rendered.sort(key=lambda item: item[3])
+    rendered.sort(key=initial_candidate_selection_key)
     stage_evidence = save_stage_candidate_evidence(
         original,
         rendered,

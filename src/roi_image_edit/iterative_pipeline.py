@@ -3980,15 +3980,15 @@ def generate_candidates(
                                 font_name=font_name,
                                 font_path=font_path,
                                 font_size=base_size + size_delta,
-                                opacity=opacity,
-                                blur=blur,
+                                opacity=current.opacity,
+                                blur=current.blur,
                                 stroke_opacity=stroke_opacity,
-                                ink_gain=ink_gain,
-                                alpha_contrast=alpha_contrast,
-                                core_ink_gain=core_ink_gain,
-                                core_darken_strength=core_darken_strength,
-                                core_darken_threshold=core_darken_threshold,
-                                core_darken_target_gray=core_darken_target_gray,
+                                ink_gain=current.ink_gain,
+                                alpha_contrast=current.alpha_contrast,
+                                core_ink_gain=current.core_ink_gain,
+                                core_darken_strength=current.core_darken_strength,
+                                core_darken_threshold=current.core_darken_threshold,
+                                core_darken_target_gray=current.core_darken_target_gray,
                                 char_offsets=offsets,
                             )
                         )
@@ -4012,12 +4012,12 @@ def generate_candidates(
                                 font_name=font_name,
                                 font_path=font_path,
                                 font_size=base_size + size_delta,
-                                opacity=opacity,
-                                blur=blur,
+                                opacity=current.opacity,
+                                blur=current.blur,
                                 stroke_opacity=stroke_opacity,
-                                ink_gain=ink_gain,
-                                alpha_contrast=alpha_contrast,
-                                core_ink_gain=core_ink_gain,
+                                ink_gain=current.ink_gain,
+                                alpha_contrast=current.alpha_contrast,
+                                core_ink_gain=current.core_ink_gain,
                                 char_offsets=offsets,
                             )
                         )
@@ -4058,8 +4058,8 @@ def generate_candidates(
                                 font_name=font_name,
                                 font_path=font_path,
                                 font_size=base_size + size_delta,
-                                opacity=opacity,
-                                blur=blur,
+                                opacity=current.opacity,
+                                blur=current.blur,
                                 char_offsets=offsets,
                             )
                         )
@@ -4073,8 +4073,8 @@ def generate_candidates(
                             font_name=font_name,
                             font_path=font_path,
                             font_size=base_size + size_delta,
-                            opacity=opacity,
-                            blur=blur,
+                            opacity=current.opacity,
+                            blur=current.blur,
                         )
                     )
     else:

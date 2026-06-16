@@ -17,7 +17,7 @@ import roi_image_edit.region_processing as region_processing
 from roi_image_edit.region_processing import (
     cjk_longer_form_first_batch_candidates,
     cjk_longer_form_first_batch_enabled,
-    longer_replacement_soft_scan_candidates,
+    shape_reference_first_batch_candidates,
     select_vision_rendered_candidates,
 )
 import roi_image_edit.processing_service as processing_service
@@ -147,67 +147,27 @@ class ShapeCandidateGridTest(unittest.TestCase):
         self.assertIn("(0.56, 0.72, 0.00, 0.00, 0.00, 0.00, 0.00", source)
         self.assertIn("(0.58, 0.65, 0.00, 0.00, 0.00, 0.04, 0.00", source)
 
-    def test_longer_replacement_soft_scan_grid_preserves_geometry_with_low_core_ink(self) -> None:
+    def test_shape_reference_first_batch_preserves_ink_gray_params(self) -> None:
         base = params()
-        candidates = longer_replacement_soft_scan_candidates(
+        candidates = shape_reference_first_batch_candidates(
             base,
             font_candidates=[("Songti", "/tmp/songti.ttf")],
             font_style_reference=font_style_reference(),
             max_font_size=24,
         )
 
+        self.assertTrue(candidates)
+        self.assertTrue(all(candidate.opacity == base.opacity for candidate in candidates))
+        self.assertTrue(all(candidate.blur == base.blur for candidate in candidates))
+        self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.alpha_contrast == base.alpha_contrast for candidate in candidates))
+        self.assertTrue(all(candidate.core_ink_gain == base.core_ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.core_darken_strength == base.core_darken_strength for candidate in candidates))
         self.assertTrue(
             any(
                 candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.64
-                and candidate.blur == 0.32
-                and candidate.alpha_contrast == 0.40
-                and candidate.ink_gain == 0.0
-                and candidate.core_ink_gain == 0.0
-                and candidate.core_darken_strength == 0.0
-                and candidate.char_offsets == base.char_offsets
-                for candidate in candidates
-            )
-        )
-        self.assertTrue(
-            any(
-                candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.66
-                and candidate.blur == 0.44
-                and candidate.alpha_contrast == 0.25
-                and candidate.ink_gain == 0.0
-                and candidate.core_ink_gain == 0.0
-                and candidate.core_darken_strength == 0.0
-                and candidate.char_offsets == base.char_offsets
-                for candidate in candidates
-            )
-        )
-        self.assertTrue(
-            any(
-                candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.60
-                and candidate.blur == 0.55
-                and candidate.alpha_contrast == 0.0
-                and candidate.ink_gain == 0.0
-                and candidate.core_ink_gain == 0.0
-                and candidate.core_darken_strength == 0.0
-                and candidate.char_offsets == base.char_offsets
-                for candidate in candidates
-            )
-        )
-        self.assertTrue(
-            any(
-                candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.78
-                and candidate.blur == 0.75
-                and candidate.alpha_contrast == 0.0
-                and candidate.ink_gain == 0.0
-                and candidate.core_ink_gain == 0.0
-                and candidate.core_darken_strength == 0.0
+                and candidate.font_size == 15
+                and candidate.stroke_opacity == 0.0
                 and candidate.char_offsets == base.char_offsets
                 for candidate in candidates
             )
@@ -236,19 +196,17 @@ class ShapeCandidateGridTest(unittest.TestCase):
         )
 
         self.assertTrue(candidates)
-        self.assertTrue(all(0.62 <= candidate.opacity <= 0.72 for candidate in candidates))
-        self.assertTrue(all(0.28 <= candidate.blur <= 0.42 for candidate in candidates))
-        self.assertTrue(all(0.06 <= candidate.alpha_contrast <= 0.22 for candidate in candidates))
-        self.assertTrue(all(candidate.core_ink_gain == 0.0 for candidate in candidates))
-        self.assertTrue(all(candidate.core_darken_strength == 0.0 for candidate in candidates))
-        self.assertTrue(all(candidate.char_offsets == base.char_offsets for candidate in candidates))
+        self.assertTrue(all(candidate.opacity == base.opacity for candidate in candidates))
+        self.assertTrue(all(candidate.blur == base.blur for candidate in candidates))
+        self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.alpha_contrast == base.alpha_contrast for candidate in candidates))
+        self.assertTrue(all(candidate.core_ink_gain == base.core_ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.core_darken_strength == base.core_darken_strength for candidate in candidates))
         self.assertTrue(
             any(
                 candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.66
-                and candidate.blur == 0.36
-                and candidate.alpha_contrast == 0.18
+                and candidate.font_size == 15
+                and candidate.stroke_opacity == 0.0
                 for candidate in candidates
             )
         )
@@ -256,24 +214,12 @@ class ShapeCandidateGridTest(unittest.TestCase):
             any(
                 candidate.font_name == "Songti"
                 and candidate.font_size == 20
-                and candidate.opacity == 0.72
-                and candidate.blur == 0.42
-                and candidate.alpha_contrast == 0.06
-                for candidate in candidates
-            )
-        )
-        self.assertTrue(
-            any(
-                candidate.font_name == "Songti"
-                and candidate.font_size == 17
-                and candidate.opacity == 0.69
-                and candidate.blur == 0.30
-                and candidate.alpha_contrast == 0.08
+                and candidate.stroke_opacity == 0.02
                 for candidate in candidates
             )
         )
 
-    def test_cjk_longer_form_first_batch_includes_thin_font_internal_darken_pool(self) -> None:
+    def test_cjk_longer_form_first_batch_includes_alternate_fonts_without_ink_changes(self) -> None:
         base = params()
 
         candidates = cjk_longer_form_first_batch_candidates(
@@ -283,20 +229,18 @@ class ShapeCandidateGridTest(unittest.TestCase):
             max_font_size=24,
         )
 
-        internal_darken = [
+        alternate_font_candidates = [
             candidate
             for candidate in candidates
             if candidate.font_name == "GBSN"
             and candidate.stroke_opacity == 0.0
-            and candidate.ink_gain == 0.0
-            and candidate.core_ink_gain > 0.0
-            and candidate.core_darken_strength > 0.0
         ]
-        self.assertTrue(internal_darken)
-        self.assertTrue(all(17 <= candidate.font_size <= 20 for candidate in internal_darken))
-        self.assertTrue(all(candidate.blur <= 0.32 for candidate in internal_darken))
-        self.assertTrue(all(candidate.core_ink_gain <= 0.12 for candidate in internal_darken))
-        self.assertTrue(all(candidate.core_darken_strength <= 0.08 for candidate in internal_darken))
+        self.assertTrue(alternate_font_candidates)
+        self.assertTrue(all(15 <= candidate.font_size <= 20 for candidate in alternate_font_candidates))
+        self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in alternate_font_candidates))
+        self.assertTrue(all(candidate.alpha_contrast == base.alpha_contrast for candidate in alternate_font_candidates))
+        self.assertTrue(all(candidate.core_ink_gain == base.core_ink_gain for candidate in alternate_font_candidates))
+        self.assertTrue(all(candidate.core_darken_strength == base.core_darken_strength for candidate in alternate_font_candidates))
 
     def test_source_slot_for_added_cjk_char_reuses_source_slots_only(self) -> None:
         render_plan = RenderPlan(
@@ -406,8 +350,9 @@ class ShapeCandidateGridTest(unittest.TestCase):
         )
 
     def test_initial_candidate_grid_includes_row_baseline_y_offsets(self) -> None:
+        base = params()
         candidates = generate_candidates(
-            params(),
+            base,
             font_candidates=[
                 ("Songti", "/tmp/songti.ttf"),
                 ("GBSN", "/tmp/gbsn.ttf"),
@@ -422,6 +367,51 @@ class ShapeCandidateGridTest(unittest.TestCase):
         self.assertIn(-2, text_dy_values)
         self.assertIn(-1, text_dy_values)
         self.assertIn(1, text_dy_values)
+        self.assertTrue(all(candidate.opacity == base.opacity for candidate in candidates))
+        self.assertTrue(all(candidate.blur == base.blur for candidate in candidates))
+        self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.alpha_contrast == base.alpha_contrast for candidate in candidates))
+        self.assertTrue(all(candidate.core_ink_gain == base.core_ink_gain for candidate in candidates))
+        self.assertTrue(all(candidate.core_darken_strength == base.core_darken_strength for candidate in candidates))
+
+    def test_text_shape_too_bold_reset_searches_smaller_body_sizes_first(self) -> None:
+        report = {
+            "pass": True,
+            "pipeline_profile": "photo_scan",
+            "stage_gate": {
+                "pass": False,
+                "blocking_stage": "text_shape",
+                "stages": [
+                    {
+                        "id": "text_shape",
+                        "pass": False,
+                        "issues": [
+                            {
+                                "type": "changed_char_alpha_stroke_body_too_bold",
+                                "body_area_ratio": 0.89,
+                                "limit": 0.72,
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+
+        grid = text_shape_reset_candidate_grid(
+            params(),
+            font_style_reference(),
+            plan(),
+            report,
+            limit=48,
+        )
+
+        retained_sizes = {candidate.font_size for candidate in grid.candidates}
+        self.assertIn(14, retained_sizes)
+        self.assertEqual(grid.report["issue_flags"]["too_bold"], True)
+        self.assertEqual(
+            set(grid.report["candidate_delta_audit"][0]["blocked_delta_keys"]),
+            set(),
+        )
 
     def test_text_shape_grid_reports_budget_and_allowed_delta_keys(self) -> None:
         base = params()
@@ -460,13 +450,13 @@ class ShapeCandidateGridTest(unittest.TestCase):
         )
         self.assertEqual(
             grid.report["retention"]["method"],
-            "stratified_font_strategy_quota_then_global_axis_priority",
+            "stratified_font_strategy_size_quota_then_global_axis_priority",
         )
         self.assertEqual(grid.report["retention"]["profile_id"], "photo_scan")
         self.assertEqual(grid.report["retention"]["bucket_quota"], 4)
-        self.assertEqual(grid.report["retention"]["bucket_count"], 8)
+        self.assertEqual(grid.report["retention"]["bucket_count"], 24)
         for bucket in grid.report["retention"]["buckets"]:
-            self.assertGreaterEqual(bucket["retained_count"], bucket["quota"], bucket)
+            self.assertGreaterEqual(bucket["retained_count"], grid.report["retention"]["effective_bucket_quota"], bucket)
         retained_strategies = {audit["placement_strategy"] for audit in grid.report["candidate_delta_audit"]}
         self.assertEqual(retained_strategies, {"center_primary", "top_left_anchor"})
         top_left_candidate_id = next(
@@ -523,9 +513,9 @@ class ShapeCandidateGridTest(unittest.TestCase):
 
         self.assertEqual(grid.report["retention"]["profile_id"], "clean_digital")
         self.assertEqual(grid.report["retention"]["bucket_quota"], 2)
-        self.assertEqual(grid.report["retention"]["bucket_count"], 8)
+        self.assertEqual(grid.report["retention"]["bucket_count"], 24)
         for bucket in grid.report["retention"]["buckets"]:
-            self.assertGreaterEqual(bucket["retained_count"], bucket["quota"], bucket)
+            self.assertGreaterEqual(bucket["retained_count"], grid.report["retention"]["effective_bucket_quota"], bucket)
 
     def test_length_change_shape_grid_does_not_enumerate_unrelated_placement_strategies(self) -> None:
         length_plan = RenderPlan(

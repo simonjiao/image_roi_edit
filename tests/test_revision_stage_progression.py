@@ -132,12 +132,12 @@ class RevisionStageProgressionTest(unittest.TestCase):
         self.assertTrue(guard["ink_gray_improved"])
         self.assertFalse(guard["selectable"])
 
-    def test_revision_loop_records_ink_guard_selection_condition(self) -> None:
+    def test_revision_loop_disables_ink_guard_selection_while_text_shape_blocks(self) -> None:
         source = inspect.getsource(run_region_vision_checks)
 
-        self.assertIn("text_shape_ink_guard_selectable", source)
-        self.assertIn("text_shape_ink_guard_reduces_excess_black_core", source)
-        self.assertIn('or ink_guard_selection.get("selectable")', source)
+        self.assertIn("text_shape_blocks_ink_gray_until_shape_passes", source)
+        self.assertNotIn("text_shape_ink_guard_reduces_excess_black_core", source)
+        self.assertNotIn('or ink_guard_selection.get("selectable")', source)
 
 
 if __name__ == "__main__":

@@ -213,7 +213,7 @@ class ShapeCandidateGrid:
 class _ShapeCandidateRecord:
     params: CandidateParams
     plan: RenderPlan
-    bucket_key: tuple[str, str, str]
+    bucket_key: tuple[str, str, str, str]
     priority: tuple[int, ...]
 
 
@@ -436,6 +436,11 @@ def params_delta_keys(base: CandidateParams, candidate: CandidateParams) -> froz
 
 def shape_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
     shape_issues = stage_issues(report, "text_shape")
+    issue_types = {
+        str(issue.get("type") or "")
+        for issue in shape_issues
+        if isinstance(issue, dict)
+    }
     has_outer_halo = any(
         str(issue.get("type") or "") == "changed_char_neighbor_outer_gray_halo_too_high"
         for issue in shape_issues
@@ -452,19 +457,51 @@ def shape_issue_flags(report: dict[str, Any] | None) -> dict[str, bool]:
         for issue in shape_issues
         if isinstance(issue, dict)
     )
+    has_too_bold = any(
+        "too_bold" in issue_type or "slightly_bold" in issue_type
+        for issue_type in issue_types
+    )
+    has_too_thin = any("too_thin" in issue_type for issue_type in issue_types)
+    has_too_large = any(
+        "too_large" in issue_type
+        or "glyph_height" in issue_type
+        or "size_too_large" in issue_type
+        for issue_type in issue_types
+    )
+    initial_reference_search = "initial_shape_reference_search" in issue_types
     return {
         "outer_halo": has_outer_halo,
         "body_gap": has_body_gap,
         "pose_gap": has_pose_gap,
+        "too_bold": has_too_bold,
+        "too_thin": has_too_thin,
+        "too_large": has_too_large,
+        "initial_reference_search": initial_reference_search,
     }
 
 
 def shape_stroke_body_grid(flags: dict[str, bool]) -> tuple[float, ...]:
+    if flags.get("too_bold") or flags.get("too_large") or flags.get("initial_reference_search"):
+        return (0.0, 0.01, 0.02)
+    if flags.get("too_thin"):
+        return (0.0, 0.02, 0.04, 0.06)
     if flags.get("outer_halo"):
         return (0.02, 0.04, 0.06)
     if flags.get("body_gap"):
         return (0.03, 0.04)
     return (0.04, 0.06)
+
+
+def shape_size_delta_grid(flags: dict[str, bool]) -> tuple[int, ...]:
+    if flags.get("too_bold") or flags.get("too_large"):
+        return (0, -1, -2, -3, -4, 1)
+    if flags.get("initial_reference_search"):
+        return (0, -1, -2, -3, 1, 2)
+    if flags.get("too_thin"):
+        return (0, 1, 2, -1)
+    if flags.get("body_gap"):
+        return (0, 1, -1)
+    return (0, -1, 1)
 
 
 def _shape_change_large_from_report(plan: RenderPlan, report: dict[str, Any] | None) -> bool | None:
@@ -641,13 +678,14 @@ def _retain_shape_records_stratified(
     final_keys = {_shape_record_key(record) for record in final_records}
     bucket_reports: list[dict[str, Any]] = []
     for bucket in bucket_order:
-        font_name, font_path, placement_strategy = bucket
+        font_name, font_path, placement_strategy, size_band = bucket
         retained_count = sum(1 for record in buckets[bucket] if _shape_record_key(record) in final_keys)
         bucket_reports.append(
             {
                 "font_name": font_name,
                 "font_path": font_path,
                 "placement_strategy": placement_strategy,
+                "size_band": size_band,
                 "raw_count": len(buckets[bucket]),
                 "retained_count": retained_count,
                 "quota": effective_quota,
@@ -655,8 +693,8 @@ def _retain_shape_records_stratified(
         )
 
     report = {
-        "method": "stratified_font_strategy_quota_then_global_axis_priority",
-        "bucket_key": ["font_name", "font_path", "placement_strategy"],
+        "method": "stratified_font_strategy_size_quota_then_global_axis_priority",
+        "bucket_key": ["font_name", "font_path", "placement_strategy", "size_band"],
         "bucket_quota": int(bucket_quota),
         "effective_bucket_quota": int(effective_quota),
         "quota_exceeds_limit": quota_exceeds_limit,
@@ -691,9 +729,7 @@ def text_shape_reset_candidate_grid(
 
     flags = shape_issue_flags(report)
     stroke_body_grid = shape_stroke_body_grid(flags)
-    size_deltas = (0, -1, 1)
-    if flags.get("body_gap"):
-        size_deltas = (0, 1, -1)
+    size_deltas = shape_size_delta_grid(flags)
     if flags.get("pose_gap"):
         size_deltas = tuple(dict.fromkeys(size_deltas + (0,)))
 
@@ -732,6 +768,7 @@ def text_shape_reset_candidate_grid(
             bucket_key = (font_name, font_path, placement_strategy)
             for size_index, size_delta in enumerate(size_deltas):
                 font_size = max(8, min(max_font_size, base_size + int(size_delta)))
+                size_band = f"delta:{int(size_delta)}"
                 for offset_index, offsets in enumerate(offset_candidates):
                     for text_dx_index, text_dx in enumerate(text_dx_candidates):
                         for text_dy_index, text_dy in enumerate(text_dy_candidates):
@@ -765,7 +802,12 @@ def text_shape_reset_candidate_grid(
                                     _ShapeCandidateRecord(
                                         params=candidate,
                                         plan=plan_variant,
-                                        bucket_key=bucket_key,
+                                        bucket_key=(
+                                            bucket_key[0],
+                                            bucket_key[1],
+                                            bucket_key[2],
+                                            size_band,
+                                        ),
                                         priority=(
                                             font_index,
                                             strategy_index,
@@ -813,6 +855,7 @@ def text_shape_reset_candidate_grid(
                 "font_name": retained_record.bucket_key[0],
                 "font_path": retained_record.bucket_key[1],
                 "placement_strategy": retained_record.bucket_key[2],
+                "size_band": retained_record.bucket_key[3],
             },
         }
         candidate_records.append(record)
