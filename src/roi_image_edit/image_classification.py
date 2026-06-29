@@ -23,6 +23,8 @@ def length_change_for_texts(source_text: str, target_text: str) -> str:
     target_count = len(text_chars(target_text))
     if source_count and target_count > source_count:
         return "longer"
+    if source_count and target_count == 0:
+        return "removed"
     if source_count and target_count < source_count:
         return "shorter"
     if source_count and target_count:
@@ -90,7 +92,14 @@ def _scenario_for(
     field_key: str | None,
     evidence: dict[str, Any],
     source_explicit: bool,
+    operation: str,
+    removal_context: dict[str, Any] | None,
 ) -> str:
+    if operation == "remove_text":
+        context = removal_context if isinstance(removal_context, dict) else {}
+        if context.get("anchor_relation") == "below" or context.get("anchor_text"):
+            return "anchored_text_removal"
+        return "text_removal"
     if image_type == "clean_digital" and script == "numeric_or_date":
         return "numeric_or_date_replace"
     if int(evidence.get("line_count") or 0) >= 4 and not field_key:
@@ -119,6 +128,8 @@ def _internal_profile(image_type: str, roi_policy: str) -> str:
 
 
 def _prompt_pack(image_type: str, scenario: str, script: str) -> str:
+    if scenario in {"anchored_text_removal", "text_removal"}:
+        return scenario
     if image_type == "clean_digital" and script == "numeric_or_date":
         return "clean_numeric_or_date_replace"
     if image_type == "low_res_thumbnail":
@@ -130,7 +141,11 @@ def _prompt_pack(image_type: str, scenario: str, script: str) -> str:
     return "inline_text_replace"
 
 
-def _parameter_family(image_type: str, roi_policy: str) -> str:
+def _parameter_family(image_type: str, roi_policy: str, scenario: str) -> str:
+    if scenario in {"anchored_text_removal", "text_removal"}:
+        if image_type == "clean_digital":
+            return "clean_digital_text_removal"
+        return "photo_document_text_removal"
     if roi_policy == "manual_exact":
         return "manual_roi_conservative"
     if image_type == "clean_digital":
@@ -151,6 +166,12 @@ def classify_image_workflow(
     field_key = instruction_details.get("field_key")
     field_key = str(field_key) if field_key else None
     source_explicit = bool(instruction_details.get("source_explicit"))
+    operation = str(instruction_details.get("operation") or "replace_text")
+    removal_context = (
+        instruction_details.get("removal_context")
+        if isinstance(instruction_details.get("removal_context"), dict)
+        else {}
+    )
     region_count = len(regions or [])
     roi_input = "manual" if region_count else "auto"
     initial_roi_policy = (
@@ -174,6 +195,8 @@ def classify_image_workflow(
         field_key=field_key,
         evidence=evidence,
         source_explicit=source_explicit,
+        operation=operation,
+        removal_context=removal_context,
     )
     roi_policy = initial_roi_policy
     internal_profile = _internal_profile(image_type, roi_policy)
@@ -186,12 +209,13 @@ def classify_image_workflow(
         "image_type": image_type,
         "scenario": scenario,
         "script": script,
+        "operation": operation,
         "length_change": length_change_for_texts(source_text, target_text),
         "roi_input": roi_input,
         "roi_policy": roi_policy,
         "class_key": _class_key(image_type, scenario, script),
         "prompt_pack": _prompt_pack(image_type, scenario, script),
-        "parameter_family": _parameter_family(image_type, roi_policy),
+        "parameter_family": _parameter_family(image_type, roi_policy, scenario),
         "confidence": round(confidence, 3),
         "evidence": {
             **evidence,
@@ -199,6 +223,8 @@ def classify_image_workflow(
             "source_explicit": source_explicit,
             "manual_region_count": int(region_count),
             "classifier_version": 1,
+            "operation": operation,
+            "removal_context": removal_context,
         },
         "internal_profile": internal_profile,
         "profile_source": "classification",

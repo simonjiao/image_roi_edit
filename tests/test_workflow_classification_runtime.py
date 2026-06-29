@@ -83,6 +83,52 @@ class WorkflowClassificationRuntimeTest(unittest.TestCase):
         }
         return region_image.copy(), region_image.copy(), [], summary, True
 
+    def fake_text_removal_processor(self, region_image, roi, *, run_dir, region_id, **kwargs):
+        region_dir = Path(run_dir) / "regions" / region_id
+        region_dir.mkdir(parents=True, exist_ok=True)
+        selected_candidate = region_dir / "selected_text_removal.png"
+        selected_compare = region_dir / "selected_text_removal_compare.png"
+        report_path = region_dir / "text_removal_report.json"
+        roi_plan_report = region_dir / "roi_plan_report.json"
+        region_image.save(selected_candidate)
+        region_image.save(selected_compare)
+        classification = dict(kwargs.get("classification") or {})
+        roi_plan = {
+            "search_roi": list(roi),
+            "edit_roi": list(roi),
+            "expanded_edit_roi": None,
+            "roi_policy": classification.get("roi_policy"),
+        }
+        report_path.write_text(json.dumps({"pass": True, "operation": "remove_text"}), encoding="utf-8")
+        roi_plan_report.write_text(json.dumps(roi_plan), encoding="utf-8")
+        summary = {
+            "plan": {
+                "classification": classification,
+                "class_key": classification.get("class_key"),
+                "roi_policy": classification.get("roi_policy"),
+                "internal_profile": classification.get("internal_profile"),
+                "profile_source": classification.get("profile_source"),
+                "roi_plan": roi_plan,
+            },
+            "hard_check": {"pass": True},
+            "vision": {"artifacts": {}, "revision_rounds": [], "enabled": False},
+            "trace": {
+                "accepted": True,
+                "final_is_rejected_candidate": False,
+                "final_blocking_stage": None,
+            },
+            "accepted": True,
+            "applied": True,
+            "artifacts": {
+                "selected_candidate": str(selected_candidate),
+                "selected_compare": str(selected_compare),
+                "text_removal_report": str(report_path),
+                "roi_plan_report": str(roi_plan_report),
+                "display_image_is_candidate": False,
+            },
+        }
+        return region_image.copy(), region_image.copy(), [], summary, True
+
     def test_manual_roi_is_classified_before_region_processing_and_progress_records_manual_anchor(self) -> None:
         image = text_image()
         progress_records: list[dict] = []
@@ -204,6 +250,52 @@ class WorkflowClassificationRuntimeTest(unittest.TestCase):
         self.assertEqual(image_started[1]["internal_profile"], "clean_digital")
         self.assertEqual(response["images"][0]["classification"]["class_key"], first_classification["class_key"])
         self.assertEqual(response["images"][1]["classification"]["class_key"], second_classification["class_key"])
+
+    def test_text_removal_class_uses_isolated_processor(self) -> None:
+        image = text_image()
+        progress_records: list[dict] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "output"
+            with patch.object(processing_service, "OUTPUT_DIR", output_dir):
+                with patch.object(processing_service, "load_processing_prompts", return_value=("master", "rank", "final")):
+                    with patch.object(processing_service, "VisionClient", return_value=object()):
+                        with patch.object(processing_service, "process_region", side_effect=AssertionError("replacement path used")):
+                            with patch.object(
+                                processing_service,
+                                "process_text_removal_region",
+                                side_effect=self.fake_text_removal_processor,
+                            ) as text_removal_processor:
+                                response = process_payload(
+                                    {
+                                        "images": [
+                                            {
+                                                "id": "remove",
+                                                "filename": "remove.png",
+                                                "instruction": "将图片中的提示区下面的甲乙丙丁四个字抹除",
+                                                "dataUrl": image_to_data_url(image),
+                                                "regions": [
+                                                    {
+                                                        "id": "manual_remove",
+                                                        "rect": {"x": 20, "y": 30, "w": 100, "h": 30},
+                                                        "sourceText": "甲乙丙丁",
+                                                        "targetText": "",
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                    progress=lambda _event, record: progress_records.append(record),
+                                )
+
+        text_removal_processor.assert_called_once()
+        classification = text_removal_processor.call_args.kwargs["classification"]
+        self.assertEqual(classification["scenario"], "anchored_text_removal")
+        self.assertEqual(classification["class_key"], "photo_document.anchored_text_removal.cjk")
+        self.assertEqual(classification["operation"], "remove_text")
+        self.assertTrue(response["images"][0]["accepted"])
+        region_started = [record for record in progress_records if record.get("event") == "region_started"][0]
+        self.assertEqual(region_started["class_key"], "photo_document.anchored_text_removal.cjk")
 
 
 if __name__ == "__main__":

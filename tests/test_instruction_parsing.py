@@ -74,6 +74,16 @@ class InstructionParsingTest(unittest.TestCase):
         self.assertEqual(details["confidence"], 0.0)
         self.assertEqual(details["failure_reason"], "empty_instruction")
 
+    def test_parse_anchored_text_removal_instruction(self) -> None:
+        details = parse_instruction_details("将图片中的提示区下面的甲乙丙丁四个字抹除")
+        self.assertEqual(details["operation"], "remove_text")
+        self.assertEqual(details["source_text"], "甲乙丙丁")
+        self.assertEqual(details["target_text"], "")
+        self.assertTrue(details["source_explicit"])
+        self.assertEqual(details["removal_context"]["anchor_text"], "提示区")
+        self.assertEqual(details["removal_context"]["anchor_relation"], "below")
+        self.assertIsNone(details["failure_reason"])
+
     def test_process_cli_json_summary_includes_instruction_details(self) -> None:
         instruction_details = parse_instruction_details("姓名甲修改为乙")
         summary = build_process_summary(

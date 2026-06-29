@@ -91,6 +91,19 @@ class ImageClassificationTest(unittest.TestCase):
         self.assertEqual(region_policy, "manual_anchor")
         self.assertEqual(region_classification["profile_source"], "classification")
 
+    def test_anchored_text_removal_gets_dedicated_class(self) -> None:
+        result = classify_image_workflow(
+            text_like_image((360, 260), lines=3, color=(238, 236, 232)),
+            instruction_details=parse_instruction_details("将图片中的提示区下面的甲乙丙丁四个字抹除"),
+        )
+
+        self.assertEqual(result["operation"], "remove_text")
+        self.assertEqual(result["scenario"], "anchored_text_removal")
+        self.assertEqual(result["class_key"], "photo_document.anchored_text_removal.cjk")
+        self.assertEqual(result["length_change"], "removed")
+        self.assertEqual(result["prompt_pack"], "anchored_text_removal")
+        self.assertEqual(result["parameter_family"], "photo_document_text_removal")
+
 
 if __name__ == "__main__":
     unittest.main()

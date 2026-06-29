@@ -22,6 +22,11 @@ from roi_image_edit.run_artifacts import (
     result_audit_payload,
 )
 from roi_image_edit.stage_profiles import resolve_internal_stage_profile
+from roi_image_edit.text_removal import (
+    auto_select_text_removal_regions,
+    is_text_removal_classification,
+    process_text_removal_region,
+)
 from roi_image_edit.region_processing import (
     ENV_PATH,
     OUTPUT_DIR,
@@ -89,7 +94,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
             target_text = instruction_details["target_text"]
-            if not target_text:
+            is_removal_instruction = instruction_details.get("operation") == "remove_text"
+            if not target_text and not is_removal_instruction:
                 raise ValueError("missing replacement instruction")
             image = image_from_data_url(str(image_item.get("dataUrl") or ""))
             failure_image = image.copy()
@@ -145,46 +151,93 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             image_accepted = True
             display_image: Image.Image | None = None
             regions = list(image_item.get("regions", []))
+            text_removal_mode = is_text_removal_classification(classification)
             if not regions:
-                try:
-                    image, regions, orientation_summary = auto_orient_for_instruction(
-                        image,
-                        instruction=str(image_item.get("instruction") or ""),
-                        source_text=source_text,
-                        target_text=target_text,
-                    )
-                except Exception as exc:
-                    pre_candidate_report = pre_candidate_gate_report(
-                        candidate_count=0,
-                        orientation_summary=orientation_summary,
-                        regions=[],
-                        failure_step="field_roi_selection",
-                        error=str(exc),
-                    )
+                if text_removal_mode:
+                    try:
+                        regions, text_removal_auto_report = auto_select_text_removal_regions(
+                            image,
+                            instruction_details=instruction_details,
+                            classification=classification,
+                        )
+                        orientation_summary = {
+                            "applied": False,
+                            "orientation": "none",
+                            "attempts": [],
+                            "text_removal_auto_report": text_removal_auto_report,
+                        }
+                    except Exception as exc:
+                        pre_candidate_report = pre_candidate_gate_report(
+                            candidate_count=0,
+                            orientation_summary=orientation_summary,
+                            regions=[],
+                            failure_step="text_removal_roi_selection",
+                            error=str(exc),
+                        )
+                        emit(
+                            "pre_candidate_gate_failed",
+                            {
+                                "image_id": image_id,
+                                "candidate_count": 0,
+                                "failed_gate": pre_candidate_report["failed_gate"],
+                                "pre_candidate_gate_report": pre_candidate_report,
+                                **workflow_fields,
+                            },
+                        )
+                        raise
                     emit(
-                        "pre_candidate_gate_failed",
+                        "auto_roi_finished",
                         {
                             "image_id": image_id,
-                            "candidate_count": 0,
-                            "failed_gate": pre_candidate_report["failed_gate"],
-                            "pre_candidate_gate_report": pre_candidate_report,
+                            "orientation": orientation_summary.get("orientation"),
+                            "direction_score": None,
+                            "selected_score": None,
+                            "attempt_count": 0,
+                            "region_count": len(regions),
+                            "text_removal_auto_report": text_removal_auto_report,
                             **workflow_fields,
                         },
                     )
-                    raise
-                emit(
-                    "auto_roi_finished",
-                    {
-                        "image_id": image_id,
-                        "orientation": orientation_summary.get("orientation"),
-                        "direction_score": (orientation_summary.get("selected_attempt") or {}).get("direction_score"),
-                        "selected_score": orientation_summary.get("selected_score"),
-                        "attempt_count": len(orientation_summary.get("attempts") or []),
-                        "region_count": len(regions),
-                        **workflow_fields,
-                    },
-                )
-                original_image = image.copy()
+                else:
+                    try:
+                        image, regions, orientation_summary = auto_orient_for_instruction(
+                            image,
+                            instruction=str(image_item.get("instruction") or ""),
+                            source_text=source_text,
+                            target_text=target_text,
+                        )
+                    except Exception as exc:
+                        pre_candidate_report = pre_candidate_gate_report(
+                            candidate_count=0,
+                            orientation_summary=orientation_summary,
+                            regions=[],
+                            failure_step="field_roi_selection",
+                            error=str(exc),
+                        )
+                        emit(
+                            "pre_candidate_gate_failed",
+                            {
+                                "image_id": image_id,
+                                "candidate_count": 0,
+                                "failed_gate": pre_candidate_report["failed_gate"],
+                                "pre_candidate_gate_report": pre_candidate_report,
+                                **workflow_fields,
+                            },
+                        )
+                        raise
+                    emit(
+                        "auto_roi_finished",
+                        {
+                            "image_id": image_id,
+                            "orientation": orientation_summary.get("orientation"),
+                            "direction_score": (orientation_summary.get("selected_attempt") or {}).get("direction_score"),
+                            "selected_score": orientation_summary.get("selected_score"),
+                            "attempt_count": len(orientation_summary.get("attempts") or []),
+                            "region_count": len(regions),
+                            **workflow_fields,
+                        },
+                    )
+                    original_image = image.copy()
             display_image = image.copy()
             for region in regions:
                 rect = region.get("rect") or {}
@@ -245,23 +298,35 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         )
                     emit(event, {"image_id": image_id, **event_fields})
 
-                image, region_display_image, region_candidates, summary, accepted = process_region(
-                    image,
-                    roi,
-                    source_text=region_source_text,
-                    target_text=region_target_text,
-                    run_dir=run_dir,
-                    region_id=region_id,
-                    vision_client=vision_client,
-                    prompts=prompts,
-                    max_candidates=int(payload.get("maxCandidates") or 120),
-                    vision_candidate_limit=int(payload.get("visionCandidateLimit") or 8),
-                    max_revision_rounds=int(payload.get("maxRevisionRounds") or 8),
-                    pipeline_profile=pipeline_profile,
-                    progress=region_progress,
-                    field_context=field_context,
-                    classification=classification,
-                )
+                if text_removal_mode:
+                    image, region_display_image, region_candidates, summary, accepted = process_text_removal_region(
+                        image,
+                        roi,
+                        source_text=region_source_text,
+                        target_text=region_target_text,
+                        run_dir=run_dir,
+                        region_id=region_id,
+                        classification=classification,
+                        progress=region_progress,
+                    )
+                else:
+                    image, region_display_image, region_candidates, summary, accepted = process_region(
+                        image,
+                        roi,
+                        source_text=region_source_text,
+                        target_text=region_target_text,
+                        run_dir=run_dir,
+                        region_id=region_id,
+                        vision_client=vision_client,
+                        prompts=prompts,
+                        max_candidates=int(payload.get("maxCandidates") or 120),
+                        vision_candidate_limit=int(payload.get("visionCandidateLimit") or 8),
+                        max_revision_rounds=int(payload.get("maxRevisionRounds") or 8),
+                        pipeline_profile=pipeline_profile,
+                        progress=region_progress,
+                        field_context=field_context,
+                        classification=classification,
+                    )
                 region_classification = (
                     (summary.get("plan") or {}).get("classification")
                     if isinstance(summary.get("plan"), dict)

@@ -335,6 +335,8 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
         source_explicit: bool,
         confidence: float,
         failure_reason: str | None = None,
+        operation: str = "replace_text",
+        removal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         field_context = instruction_field_context(raw, field_key)
         return {
@@ -347,11 +349,26 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
             "old_value": source_text,
             "new_value": target_text,
             "source_explicit": source_explicit,
+            "operation": operation,
+            "removal_context": removal_context or {},
             "confidence": round(float(confidence), 3),
             "failure_reason": failure_reason,
         }
 
     op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|->|=>|→"
+    removal = parse_removal_instruction(raw)
+    if removal:
+        source_text = str(removal.get("source_text") or "")
+        return build_details(
+            field_key=infer_instruction_field(str(removal.get("anchor_text") or raw)),
+            source_text=source_text,
+            target_text="",
+            source_explicit=bool(source_text),
+            operation="remove_text",
+            removal_context=removal.get("context") if isinstance(removal.get("context"), dict) else {},
+            confidence=0.9 if source_text else 0.35,
+            failure_reason=None if source_text else "source_text_missing",
+        )
     field_aliases = sorted(
         (alias for aliases in FIELD_ALIASES.values() for alias in aliases),
         key=len,
@@ -415,6 +432,58 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
         confidence=0.0,
         failure_reason="empty_instruction",
     )
+
+
+REMOVAL_VERB_PATTERN = r"删除|删掉|去掉|去除|清除|移除|抹除|抹掉|擦除|擦掉|erase|remove"
+RELATION_PATTERN = r"下面|下方|下边|下一行|后面|之后"
+
+
+def parse_removal_instruction(raw: str) -> dict[str, Any] | None:
+    if not raw or not re.search(REMOVAL_VERB_PATTERN, raw, flags=re.IGNORECASE):
+        return None
+
+    quoted = re.findall(r"[“\"']([^”\"']+)[”\"']?", raw)
+    match = re.search(rf"(?P<src>.+?)(?:{REMOVAL_VERB_PATTERN})(?:掉|除)?$", raw, flags=re.IGNORECASE)
+    source_part = quoted[-1] if quoted else cleanup_instruction_part(match.group("src") if match else raw)
+    source_part = strip_removal_leading_context(source_part)
+    anchor_text = ""
+    relation = ""
+
+    relation_match = re.search(
+        rf"(?P<anchor>.+?)(?P<relation>{RELATION_PATTERN})\s*(?:的|这条|这一行|那条|那一行)?\s*(?P<src>.+)$",
+        source_part,
+    )
+    if relation_match:
+        anchor_text = cleanup_instruction_part(strip_removal_leading_context(relation_match.group("anchor")))
+        relation = relation_match.group("relation")
+        source_part = cleanup_instruction_part(relation_match.group("src"))
+
+    source_text = cleanup_removal_source_text(source_part)
+    context = {
+        "anchor_text": anchor_text,
+        "anchor_relation": "below" if relation else "",
+        "raw_source": source_part,
+        "source_extraction": "quoted" if quoted else "pre_removal_verb",
+    }
+    return {
+        "source_text": source_text,
+        "anchor_text": anchor_text,
+        "context": context,
+    }
+
+
+def strip_removal_leading_context(value: str) -> str:
+    text = cleanup_instruction_part(value)
+    text = re.sub(r"^(?:请|麻烦)?\s*(?:将|把)?\s*", "", text)
+    text = re.sub(r"^(?:图片中|文档中|报告中|图中|图片)\s*的?\s*", "", text)
+    return cleanup_instruction_part(text)
+
+
+def cleanup_removal_source_text(value: str) -> str:
+    text = cleanup_instruction_part(value)
+    text = re.sub(r"(?:这|这些|这几个|这[一二三四五六七八九十\d]+个|[一二三四五六七八九十\d]+个)?(?:字|字符|文字)$", "", text)
+    text = re.sub(r"\s+", "", text)
+    return cleanup_instruction_part(text)
 
 
 def cleanup_instruction_part(value: str) -> str:
