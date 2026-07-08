@@ -9,7 +9,10 @@ from roi_image_edit.iterative_pipeline import (
     CandidateParams,
     RenderPlan,
     TextRun,
+    apply_fractional_stroke,
+    dedupe_params,
     generate_candidates,
+    mutate_params,
     source_slot_for_target_index,
 )
 from roi_image_edit.local_validation import stroke_weight_fit_score
@@ -17,6 +20,9 @@ import roi_image_edit.region_processing as region_processing
 from roi_image_edit.region_processing import (
     cjk_longer_form_first_batch_candidates,
     cjk_longer_form_first_batch_enabled,
+    font_shape_fit_score,
+    initial_candidate_preview_label,
+    initial_candidate_selection_key,
     shape_reference_first_batch_candidates,
     select_vision_rendered_candidates,
 )
@@ -143,6 +149,58 @@ def longer_report(
     }
 
 
+def report_with_font_shape_fit(
+    *,
+    ratio: float,
+    direction: str = "ok",
+    font_pass: bool = True,
+    font_score: float = 0.0,
+    candidate_ratio: float = 1.0,
+    family_ratio: float = 1.0,
+) -> dict:
+    report = longer_report(
+        ratio=ratio,
+        direction=direction,
+        stage_pass=font_pass and direction == "ok",
+        blocking_stage=None if font_pass and direction == "ok" else "text_shape",
+    )
+    font_issues = [] if font_pass else [{"type": "font_render_style_score_ratio"}]
+    report["font_style_gate"] = {
+        "enabled": True,
+        "pass": font_pass,
+        "issues": font_issues,
+        "candidate": {
+            "score_ratio_to_best": candidate_ratio,
+            "style_profile_distance": max(0.0, candidate_ratio - 1.0) / 2.0,
+        },
+        "font_best": {"score_ratio_to_best": family_ratio},
+    }
+    report["shape_score_breakdown"] = {
+        "enabled": True,
+        "score": font_score + 10.0,
+        "components": {
+            "font_style": {
+                "score": font_score,
+                "font_style_score_ratio": candidate_ratio,
+                "font_family_score_ratio": family_ratio,
+                "style_profile_distance": max(0.0, candidate_ratio - 1.0) / 2.0,
+            }
+        },
+    }
+    report["strict_gate"]["pass"] = font_pass and direction == "ok"
+    report["strict_gate"]["issues"] = font_issues
+    report["stage_gate"]["stage_status"] = {
+        "text_shape": {
+            "id": "text_shape",
+            "pass": font_pass and direction == "ok",
+            "issues": font_issues
+            if font_issues
+            else ([] if direction == "ok" else [{"type": f"changed_char_alpha_stroke_body_{direction}"}]),
+        }
+    }
+    return report
+
+
 class ShapeCandidateGridTest(unittest.TestCase):
     def test_shorter_replacement_grid_includes_light_no_core_candidates(self) -> None:
         source = inspect.getsource(region_processing.process_region)
@@ -178,6 +236,44 @@ class ShapeCandidateGridTest(unittest.TestCase):
                 for candidate in candidates
             )
         )
+
+    def test_shape_reference_first_batch_retains_fonts_and_size_bands_before_truncation(self) -> None:
+        base = params()
+        candidates = shape_reference_first_batch_candidates(
+            base,
+            font_candidates=[
+                ("Songti", "/tmp/songti.ttf"),
+                ("GBSN", "/tmp/gbsn.ttf"),
+                ("SimSun", "/tmp/simsun.ttf"),
+                ("FangSong", "/tmp/fangsong.ttf"),
+            ],
+            font_style_reference=font_style_reference(),
+            max_font_size=24,
+            font_limit=4,
+        )
+
+        retained = dedupe_params(candidates, 120)
+        retained_fonts = {candidate.font_name for candidate in retained}
+        retained_sizes = {candidate.font_size for candidate in retained}
+
+        self.assertEqual(retained_fonts, {"Songti", "GBSN", "SimSun", "FangSong"})
+        self.assertLessEqual(min(retained_sizes), 14)
+        self.assertGreaterEqual(max(retained_sizes), 18)
+        self.assertTrue(any(candidate.stroke_opacity < 0 for candidate in retained))
+        self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in retained))
+
+    def test_negative_stroke_opacity_thins_alpha_body(self) -> None:
+        base = params()
+        mutated = mutate_params(base, stroke_opacity=-0.12)
+        layer = Image.new("L", (12, 12), 0)
+        for x in range(3, 9):
+            for y in range(3, 9):
+                layer.putpixel((x, y), 255)
+
+        thinned = apply_fractional_stroke(layer, mutated.stroke_opacity)
+
+        self.assertEqual(mutated.stroke_opacity, -0.12)
+        self.assertLess(sum(thinned.tobytes()), sum(layer.tobytes()))
 
     def test_cjk_longer_form_first_batch_uses_bounded_low_core_seed_rules(self) -> None:
         base = params()
@@ -239,10 +335,11 @@ class ShapeCandidateGridTest(unittest.TestCase):
             candidate
             for candidate in candidates
             if candidate.font_name == "GBSN"
-            and candidate.stroke_opacity == 0.0
         ]
         self.assertTrue(alternate_font_candidates)
-        self.assertTrue(all(15 <= candidate.font_size <= 20 for candidate in alternate_font_candidates))
+        self.assertLessEqual(min(candidate.font_size for candidate in alternate_font_candidates), 14)
+        self.assertGreaterEqual(max(candidate.font_size for candidate in alternate_font_candidates), 20)
+        self.assertTrue(any(candidate.stroke_opacity < 0 for candidate in alternate_font_candidates))
         self.assertTrue(all(candidate.ink_gain == base.ink_gain for candidate in alternate_font_candidates))
         self.assertTrue(all(candidate.alpha_contrast == base.alpha_contrast for candidate in alternate_font_candidates))
         self.assertTrue(all(candidate.core_ink_gain == base.core_ink_gain for candidate in alternate_font_candidates))
@@ -316,6 +413,104 @@ class ShapeCandidateGridTest(unittest.TestCase):
         selected = select_vision_rendered_candidates(rendered, 2)
 
         self.assertEqual([item[0].candidate_id for item in selected], [])
+
+    def test_initial_selection_ranks_font_shape_inside_natural_stroke_bucket(self) -> None:
+        image = Image.new("RGB", (16, 16), (255, 255, 255))
+        better_font = params().__class__(**{**params().__dict__, "candidate_id": "better_font"})
+        stronger_stroke = params().__class__(**{**params().__dict__, "candidate_id": "stronger_stroke"})
+        rendered = [
+            (
+                stronger_stroke,
+                image,
+                report_with_font_shape_fit(
+                    ratio=0.64,
+                    font_pass=False,
+                    font_score=260.0,
+                    candidate_ratio=1.42,
+                    family_ratio=1.12,
+                ),
+                1.0,
+            ),
+            (
+                better_font,
+                image,
+                report_with_font_shape_fit(
+                    ratio=0.60,
+                    font_pass=True,
+                    font_score=12.0,
+                    candidate_ratio=1.03,
+                    family_ratio=1.01,
+                ),
+                100.0,
+            ),
+        ]
+
+        self.assertEqual(min(rendered, key=initial_candidate_selection_key)[0].candidate_id, "better_font")
+
+    def test_initial_selection_does_not_let_font_shape_bypass_stroke_gate(self) -> None:
+        image = Image.new("RGB", (16, 16), (255, 255, 255))
+        natural_stroke = params().__class__(**{**params().__dict__, "candidate_id": "natural"})
+        too_thin = params().__class__(**{**params().__dict__, "candidate_id": "too_thin"})
+        rendered = [
+            (
+                too_thin,
+                image,
+                report_with_font_shape_fit(
+                    ratio=0.54,
+                    direction="too_thin",
+                    font_pass=True,
+                    font_score=1.0,
+                    candidate_ratio=1.0,
+                    family_ratio=1.0,
+                ),
+                1.0,
+            ),
+            (
+                natural_stroke,
+                image,
+                report_with_font_shape_fit(
+                    ratio=0.62,
+                    font_pass=False,
+                    font_score=280.0,
+                    candidate_ratio=1.45,
+                    family_ratio=1.18,
+                ),
+                100.0,
+            ),
+        ]
+
+        self.assertEqual(min(rendered, key=initial_candidate_selection_key)[0].candidate_id, "natural")
+
+    def test_initial_candidate_preview_label_exposes_shape_sort_inputs(self) -> None:
+        label = initial_candidate_preview_label(
+            params(),
+            report_with_font_shape_fit(
+                ratio=0.62,
+                font_pass=True,
+                font_score=12.0,
+                candidate_ratio=1.03,
+                family_ratio=1.01,
+            ),
+        )
+
+        self.assertIn("st0.01", label)
+        self.assertIn("font1.03", label)
+        self.assertIn("sw0/0.62", label)
+
+    def test_font_shape_fit_falls_back_to_gate_ratio_when_shape_score_missing(self) -> None:
+        report = report_with_font_shape_fit(
+            ratio=0.62,
+            font_pass=True,
+            font_score=12.0,
+            candidate_ratio=1.36,
+            family_ratio=1.0,
+        )
+        report["shape_score_breakdown"] = {"enabled": False, "reason": "missing_shape_change_report"}
+
+        fit = font_shape_fit_score(report)
+
+        self.assertLess(fit["score"], 9999.0)
+        self.assertEqual(fit["candidate_score_ratio"], 1.36)
 
     def test_longer_vision_selection_rejects_visual_arbitrable_text_shape_candidate(self) -> None:
         image = Image.new("RGB", (16, 16), (255, 255, 255))

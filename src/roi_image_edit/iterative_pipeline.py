@@ -1348,9 +1348,16 @@ def default_char_offsets(text: str) -> tuple[tuple[int, int], ...]:
 
 
 def apply_fractional_stroke(alpha_layer: Image.Image, stroke_opacity: float) -> Image.Image:
-    stroke_opacity = max(0.0, min(1.0, float(stroke_opacity)))
-    if stroke_opacity <= 0:
+    stroke_opacity = max(-0.35, min(1.0, float(stroke_opacity)))
+    if stroke_opacity == 0:
         return alpha_layer
+    if stroke_opacity < 0:
+        eroded = alpha_layer.filter(ImageFilter.MinFilter(3))
+        base_arr = np.array(alpha_layer, dtype=np.float32)
+        eroded_arr = np.array(eroded, dtype=np.float32)
+        erosion_strength = min(1.0, abs(stroke_opacity) * 4.0)
+        combined = base_arr * (1.0 - erosion_strength) + eroded_arr * erosion_strength
+        return Image.fromarray(np.clip(combined, 0, 255).astype(np.uint8), mode="L")
     expanded = alpha_layer.filter(ImageFilter.MaxFilter(3))
     base_arr = np.array(alpha_layer, dtype=np.float32)
     expanded_arr = np.array(expanded, dtype=np.float32) * stroke_opacity
@@ -3864,7 +3871,7 @@ def mutate_params(params: CandidateParams, **updates: Any) -> CandidateParams:
     data.update(updates)
     data["opacity"] = round(float(data["opacity"]), 3)
     data["blur"] = round(max(0.0, float(data["blur"])), 3)
-    data["stroke_opacity"] = round(max(0.0, min(1.0, float(data.get("stroke_opacity", 0.0)))), 3)
+    data["stroke_opacity"] = round(max(-0.35, min(1.0, float(data.get("stroke_opacity", 0.0)))), 3)
     data["ink_gain"] = round(max(0.0, min(1.0, float(data.get("ink_gain", 0.0)))), 3)
     data["alpha_contrast"] = round(max(0.0, min(2.0, float(data.get("alpha_contrast", 0.0)))), 3)
     data["core_ink_gain"] = round(max(0.0, min(1.0, float(data.get("core_ink_gain", 0.0)))), 3)
@@ -4377,7 +4384,10 @@ def apply_suggested_patch(params: CandidateParams, patch: dict[str, Any] | None)
     font_size = params.font_size + bounded_int(patch.get("font_size_delta", 0), -1, 1)
     opacity = max(0.2, min(1.0, params.opacity + bounded_float(patch.get("opacity_delta", 0), -0.06, 0.06)))
     blur = max(0.0, min(2.0, params.blur + bounded_float(patch.get("blur_delta", 0), -0.2, 0.2)))
-    stroke_opacity = max(0.0, min(1.0, params.stroke_opacity + bounded_float(patch.get("stroke_opacity_delta", 0), -0.15, 0.15)))
+    stroke_opacity = max(
+        -0.35,
+        min(1.0, params.stroke_opacity + bounded_float(patch.get("stroke_opacity_delta", 0), -0.15, 0.15)),
+    )
     ink_gain = max(0.0, min(1.0, params.ink_gain + bounded_float(patch.get("ink_gain_delta", 0), -0.15, 0.15)))
     alpha_contrast = max(0.0, min(2.0, params.alpha_contrast + bounded_float(patch.get("alpha_contrast_delta", 0), -0.25, 0.25)))
     core_ink_gain = max(0.0, min(1.0, params.core_ink_gain + bounded_float(patch.get("core_ink_gain_delta", 0), -0.15, 0.15)))

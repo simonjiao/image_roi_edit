@@ -140,6 +140,9 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "output" / "web"
 ENV_PATH = ROOT / ".env"
 ProgressCallback = Callable[[str, dict[str, Any]], None]
+INITIAL_TEXT_SHAPE_SELECTION_RULE = (
+    "stroke_weight_gate_then_font_shape_fit_then_shape_score_then_stroke_score_then_stage_frontier_then_local_score"
+)
 
 
 def cjk_longer_form_first_batch_candidates(
@@ -191,13 +194,60 @@ def shape_reference_first_batch_candidates(
     # Initial candidates are intentionally shape-only. Ink, alpha contrast,
     # core darkening, blur, cleanup, and texture parameters are inherited from
     # the neutral current params and left to later stages.
-    size_deltas = (0, -1, -2, -3, 1, 2)
-    stroke_grid = (0.0, 0.01, 0.02)
+    size_deltas = (-6, -5, -4, -3, -2, -1, 0, 1, 2)
+    stroke_grid = (-0.18, -0.10, -0.04, 0.0, 0.01, 0.02)
     text_dx_grid = tuple(dict.fromkeys((current.text_dx, 0, -1, 1)))
     text_dy_grid = tuple(dict.fromkeys((current.text_dy, 0, -1, 1)))
     candidates: list[CandidateParams] = []
+    active_fonts = font_candidates[: min(font_limit, len(font_candidates))]
 
-    for font_name, font_path in font_candidates[: min(font_limit, len(font_candidates))]:
+    def add_candidate(
+        *,
+        font_name: str,
+        font_path: str,
+        font_size: int,
+        stroke_opacity: float,
+        text_dx: int,
+        text_dy: int,
+        offsets: tuple[tuple[int, int], ...],
+    ) -> None:
+        candidates.append(
+            mutate_params(
+                current,
+                font_name=font_name,
+                font_path=font_path,
+                font_size=font_size,
+                stroke_opacity=stroke_opacity,
+                text_dx=text_dx,
+                text_dy=text_dy,
+                char_offsets=offsets,
+            )
+        )
+
+    primary_offsets = tuple(offset_grid[:1]) or tuple(offset_grid)
+    primary_text_dx_grid = tuple(dict.fromkeys((current.text_dx, 0)))
+    primary_text_dy_grid = tuple(dict.fromkeys((current.text_dy, 0)))
+    primary_size_deltas = (-4, -3, -2, -1, 0)
+    primary_stroke_grid = (-0.18, -0.10, 0.0)
+    for size_delta in primary_size_deltas:
+        for font_name, font_path in active_fonts:
+            base_size = best_sizes.get(font_path, current.font_size)
+            font_size = max(8, min(max_font_size, base_size + size_delta))
+            for stroke_opacity in primary_stroke_grid:
+                for text_dx in primary_text_dx_grid:
+                    for text_dy in primary_text_dy_grid:
+                        for offsets in primary_offsets:
+                            add_candidate(
+                                font_name=font_name,
+                                font_path=font_path,
+                                font_size=font_size,
+                                stroke_opacity=stroke_opacity,
+                                text_dx=text_dx,
+                                text_dy=text_dy,
+                                offsets=offsets,
+                            )
+
+    for font_name, font_path in active_fonts:
         base_size = best_sizes.get(font_path, current.font_size)
         for size_delta in size_deltas:
             font_size = max(8, min(max_font_size, base_size + size_delta))
@@ -205,17 +255,14 @@ def shape_reference_first_batch_candidates(
                 for text_dx in text_dx_grid:
                     for text_dy in text_dy_grid:
                         for offsets in offset_grid:
-                            candidates.append(
-                                mutate_params(
-                                    current,
-                                    font_name=font_name,
-                                    font_path=font_path,
-                                    font_size=font_size,
-                                    stroke_opacity=stroke_opacity,
-                                    text_dx=text_dx,
-                                    text_dy=text_dy,
-                                    char_offsets=offsets,
-                                )
+                            add_candidate(
+                                font_name=font_name,
+                                font_path=font_path,
+                                font_size=font_size,
+                                stroke_opacity=stroke_opacity,
+                                text_dx=text_dx,
+                                text_dy=text_dy,
+                                offsets=offsets,
                             )
     return candidates
 
@@ -879,6 +926,7 @@ def text_shape_pre_gate_summary(
                 "reasons": gate.get("reasons", []),
                 "text_shape_issue_types": gate.get("text_shape_issue_types", []),
                 "stroke_weight_fit": gate.get("stroke_weight_fit"),
+                "font_shape_fit": font_shape_fit_score(report),
             }
         )
     passed = [candidate for candidate in candidates if candidate.get("pass")]
@@ -990,7 +1038,20 @@ def initial_candidate_selection_key(
         if isinstance(shape_score, dict) and shape_score.get("enabled")
         else 9999.0
     )
-    return (selection_bucket, fit_score, -frontier, shape_score_value, float(severity), float(score))
+    font_shape_fit = font_shape_fit_score(report)
+    return (
+        selection_bucket,
+        float(font_shape_fit["pass_bucket"]),
+        float(font_shape_fit["issue_count"]),
+        float(font_shape_fit["score"]),
+        float(font_shape_fit["candidate_score_ratio"]),
+        float(font_shape_fit["font_family_score_ratio"]),
+        shape_score_value,
+        fit_score,
+        -frontier,
+        float(severity),
+        float(score),
+    )
 
 
 def initial_candidate_fallback_tuple(
@@ -1044,7 +1105,108 @@ def longer_stroke_candidate_selection_key(
         if isinstance(shape_score, dict) and shape_score.get("enabled")
         else 9999.0
     )
-    return (selection_bucket, fit_score, -float(frontier), shape_score_value, float(stage_severity), float(score))
+    font_shape_fit = font_shape_fit_score(report)
+    return (
+        selection_bucket,
+        float(font_shape_fit["pass_bucket"]),
+        float(font_shape_fit["issue_count"]),
+        float(font_shape_fit["score"]),
+        float(font_shape_fit["candidate_score_ratio"]),
+        float(font_shape_fit["font_family_score_ratio"]),
+        shape_score_value,
+        fit_score,
+        -float(frontier),
+        float(stage_severity),
+        float(score),
+    )
+
+
+def font_shape_fit_score(report: dict[str, Any] | None) -> dict[str, float | int | bool | str]:
+    if not isinstance(report, dict):
+        return {
+            "enabled": False,
+            "pass": False,
+            "pass_bucket": 1,
+            "issue_count": 99,
+            "score": 9999.0,
+            "candidate_score_ratio": 9999.0,
+            "font_family_score_ratio": 9999.0,
+            "style_profile_distance": 9999.0,
+            "reason": "missing_report",
+        }
+
+    font_gate = report.get("font_style_gate") if isinstance(report.get("font_style_gate"), dict) else {}
+    enabled = bool(font_gate.get("enabled")) if isinstance(font_gate, dict) else False
+    font_pass = bool(font_gate.get("pass", True)) if isinstance(font_gate, dict) else True
+    issues = font_gate.get("issues") if isinstance(font_gate, dict) else []
+    issue_count = len(issues) if isinstance(issues, list) else 0
+
+    shape_score = report.get("shape_score_breakdown") if isinstance(report.get("shape_score_breakdown"), dict) else {}
+    components = shape_score.get("components") if isinstance(shape_score.get("components"), dict) else {}
+    font_component = components.get("font_style") if isinstance(components.get("font_style"), dict) else {}
+
+    def finite_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    candidate = font_gate.get("candidate") if isinstance(font_gate.get("candidate"), dict) else {}
+    font_best = font_gate.get("font_best") if isinstance(font_gate.get("font_best"), dict) else {}
+    candidate_ratio = finite_float(
+        candidate.get("score_ratio_to_best")
+        if isinstance(candidate, dict)
+        else font_component.get("font_style_score_ratio"),
+        9999.0 if enabled else 1.0,
+    )
+    family_ratio = finite_float(
+        font_best.get("score_ratio_to_best")
+        if isinstance(font_best, dict)
+        else font_component.get("font_family_score_ratio"),
+        9999.0 if enabled else 1.0,
+    )
+    profile_distance = finite_float(
+        candidate.get("style_profile_distance")
+        if isinstance(candidate, dict)
+        else font_component.get("style_profile_distance"),
+        9999.0 if enabled else 0.0,
+    )
+    component_score = finite_float(font_component.get("score"), 9999.0)
+    if component_score >= 9000.0 and candidate_ratio < 9000.0:
+        component_score = max(0.0, candidate_ratio - 1.0) * 250.0 + issue_count * 80.0
+        if profile_distance < 9000.0:
+            component_score += max(0.0, profile_distance) * 80.0
+    return {
+        "enabled": enabled,
+        "pass": font_pass,
+        "pass_bucket": 0 if (not enabled or font_pass) else 1,
+        "issue_count": issue_count,
+        "score": round(float(component_score), 4),
+        "candidate_score_ratio": round(float(candidate_ratio), 4),
+        "font_family_score_ratio": round(float(family_ratio), 4),
+        "style_profile_distance": round(float(profile_distance), 5),
+    }
+
+
+def initial_candidate_preview_label(params: CandidateParams, report: dict[str, Any] | None) -> str:
+    fit = stroke_weight_fit_score(report)
+    font_fit = font_shape_fit_score(report)
+
+    def fmt(value: Any, default: str = "na") -> str:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return default
+        if numeric >= 9000:
+            return default
+        return f"{numeric:.2f}"
+
+    return (
+        f"{params.font_name} {params.font_size}px st{params.stroke_opacity:.2f} "
+        f"font{fmt(font_fit.get('candidate_score_ratio'))} "
+        f"sw{fit.get('selection_bucket', 'na')}/{fmt(fit.get('mean_body_area_ratio'))} "
+        f"bl{params.blur:.2f} core{params.core_ink_gain:.2f} dark{params.core_darken_strength:.2f}"
+    )
 
 
 def run_region_vision_checks(
@@ -1132,7 +1294,7 @@ def run_region_vision_checks(
             "reason": "no_initial_text_shape_qualified_candidates",
             "blocking_stage": "text_shape",
             "local_initial_selection": {
-                "selection_rule": "text_shape_pre_gate_then_stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+                "selection_rule": f"text_shape_pre_gate_then_{INITIAL_TEXT_SHAPE_SELECTION_RULE}",
                 "candidate_count": 0,
                 "text_shape_pre_gate": pre_gate_summary,
             },
@@ -1302,7 +1464,7 @@ def run_region_vision_checks(
             chosen_tuple = model_tuple
     chosen_params = chosen_tuple[0]
     candidate_rank_json["local_initial_selection"] = {
-        "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+        "selection_rule": INITIAL_TEXT_SHAPE_SELECTION_RULE,
         "chosen_candidate_id": chosen_params.candidate_id,
         "chosen_stage_frontier": initial_candidate_stage_frontier(chosen_tuple[2]),
         "fallback_candidate_id": fallback_tuple[0].candidate_id,
@@ -3316,6 +3478,8 @@ def process_region(
         "class_key": region_classification.get("class_key"),
         "retained_candidate_limit": max_candidates,
         "font_count": min(8, len(font_candidates)),
+        "font_size_deltas": [-6, -5, -4, -3, -2, -1, 0, 1, 2],
+        "candidate_retention": "stratified_prefix_by_font_and_size_delta_before_detail_grid",
         "shape_search_keys": [
             "font_name",
             "font_path",
@@ -3325,6 +3489,7 @@ def process_region(
             "char_offsets",
             "stroke_opacity",
         ],
+        "stroke_opacity_values": [-0.18, -0.10, -0.04, 0.0, 0.01, 0.02],
         "fixed_ink_gray_keys": [
             "opacity",
             "blur",
@@ -3335,7 +3500,7 @@ def process_region(
             "core_darken_threshold",
             "core_darken_target_gray",
         ],
-        "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+        "selection_rule": INITIAL_TEXT_SHAPE_SELECTION_RULE,
     }
     if cjk_longer_form_first_batch_enabled(region_classification, roi_plan):
         first_batch_seeds = cjk_longer_form_first_batch_candidates(
@@ -3353,10 +3518,11 @@ def process_region(
             "retained_candidate_limit": max_candidates,
             "general_candidate_pool": "excluded_from_first_batch",
             "font_count": min(4, len(font_candidates)),
-            "font_size_deltas": [0, -1, -2, -3, 1, 2],
-            "stroke_opacity_values": [0.0, 0.01, 0.02],
+            "font_size_deltas": [-6, -5, -4, -3, -2, -1, 0, 1, 2],
+            "stroke_opacity_values": [-0.18, -0.10, -0.04, 0.0, 0.01, 0.02],
+            "candidate_retention": "stratified_prefix_by_font_and_size_delta_before_detail_grid",
             "ink_gray_params": "fixed_from_neutral_current; no initial alpha_contrast/core/ink search",
-            "selection_rule": "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+            "selection_rule": INITIAL_TEXT_SHAPE_SELECTION_RULE,
         }
     write_json(region_dir / "initial_candidate_policy.json", initial_candidate_policy)
     if centered:
@@ -3666,11 +3832,7 @@ def process_region(
                 "index": len(preview_items) + 1,
                 "kind": "initial_local_rank",
                 "candidate_id": params.candidate_id,
-                "label": (
-                    f"{params.font_name} {params.font_size}px "
-                    f"blur {params.blur:.2f} core {params.core_ink_gain:.2f} "
-                    f"dark {params.core_darken_strength:.2f}"
-                ),
+                "label": initial_candidate_preview_label(params, report),
                 "score": round(float(score), 3),
                 "patcher_source": "initial_local_rank",
                 "optimization_policy": stage_optimization_summary(

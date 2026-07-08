@@ -211,7 +211,7 @@ class VisionCandidateBoundaryTest(unittest.TestCase):
         self.assertNotIn("model_choice_overridden", summary["candidate_rank"])
         self.assertEqual(
             summary["candidate_rank"]["local_initial_selection"]["selection_rule"],
-            "stroke_weight_fit_then_stage_frontier_then_shape_score_then_local_score",
+            "stroke_weight_gate_then_font_shape_fit_then_shape_score_then_stroke_score_then_stage_frontier_then_local_score",
         )
 
     def test_model_choice_at_earlier_stage_is_overridden_by_frontier_fallback(self) -> None:
