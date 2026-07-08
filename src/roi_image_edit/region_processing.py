@@ -118,6 +118,7 @@ from roi_image_edit.vision_targets import (
     vision_target_recipe_report,
 )
 from roi_image_edit.stage_profiles import resolve_stage_profile
+from roi_image_edit.source_glyph_reuse import source_glyph_reuse_candidate
 from roi_image_edit.stages import stage_gate_for_report
 from roi_image_edit.roi_locator import (
     auto_orient_for_instruction,
@@ -2994,6 +2995,134 @@ def process_region(
         },
     )
     if source_count and not slot_report.get("pass", False):
+        glyph_image, glyph_report = source_glyph_reuse_candidate(original, plan)
+        glyph_report_path = region_dir / "source_glyph_reuse_report.json"
+        write_json(glyph_report_path, glyph_report)
+        if glyph_image is not None and glyph_report.get("pass"):
+            selected_candidate_path = region_dir / "source_glyph_reuse_candidate.png"
+            selected_compare_path = region_dir / "source_glyph_reuse_compare.png"
+            glyph_image.save(selected_candidate_path)
+            compare_region_preview(
+                original,
+                glyph_image,
+                tuple(glyph_report.get("allowed_roi") or plan.target_roi),
+            ).save(selected_compare_path)
+            hard_report = {
+                **(glyph_report.get("hard_check") or {}),
+                "pipeline_profile": pipeline_profile,
+                "stage_gate": {
+                    "profile": pipeline_profile,
+                    "blocking_stage": None,
+                    "pass": True,
+                    "stage_status": {
+                        "hard_boundary": {
+                            "pass": True,
+                            "reason": "source_glyph_reuse_local_boundary_pass",
+                            "issues": [],
+                        },
+                        "text_shape": {
+                            "pass": True,
+                            "reason": "target_glyph_reused_from_same_source_roi",
+                            "issues": [],
+                        },
+                    },
+                },
+                "slot_quality_report": slot_report,
+                "pre_candidate_gate_report": pre_candidate_report,
+                "source_glyph_reuse_report": glyph_report,
+            }
+            if progress:
+                progress(
+                    "source_glyph_reuse_applied",
+                    {
+                        "region_id": region_id,
+                        "pipeline_profile": pipeline_profile,
+                        "classification": region_classification,
+                        "class_key": region_classification.get("class_key"),
+                        "roi_policy": region_classification.get("roi_policy"),
+                        "internal_profile": region_classification.get("internal_profile"),
+                        "profile_source": region_classification.get("profile_source"),
+                        "roi_plan": roi_plan,
+                        "candidate_count": 1,
+                        "source_glyph_reuse_report": glyph_report,
+                    },
+                )
+            candidate_summary = {
+                "id": "source_glyph_reuse",
+                "kind": "source_glyph_reuse",
+                "label": "source_glyph_reuse",
+                "score": 0.0,
+                "dataUrl": image_to_data_url(glyph_image),
+                "patcher_source": "source_glyph_reuse",
+                "trace": {
+                    "blocking_stage": None,
+                    "stage_pass": True,
+                    "stage_severity": 0.0,
+                    "strategy": "source_glyph_reuse",
+                },
+            }
+            summary = {
+                "plan": {
+                    "search_roi": list(plan.search_roi),
+                    "target_roi": list(glyph_report.get("allowed_roi") or plan.target_roi),
+                    "slot_boxes": glyph_report.get("char_slots") or [asdict(item) for item in plan.slot_boxes],
+                    "protected_boxes": [list(item) for item in plan.protected_boxes],
+                    "field_key": plan.field_key,
+                    "field_label_text": plan.field_label_text,
+                    "field_separator_text": plan.field_separator_text,
+                    "protected_texts": list(plan.protected_texts),
+                    "draw_mode": "source_glyph_reuse",
+                    "pipeline_profile": pipeline_profile,
+                    "classification": region_classification,
+                    "class_key": region_classification.get("class_key"),
+                    "roi_policy": region_classification.get("roi_policy"),
+                    "internal_profile": region_classification.get("internal_profile"),
+                    "profile_source": region_classification.get("profile_source"),
+                    "roi_plan": {
+                        **roi_plan,
+                        "source_glyph_reuse": True,
+                        "source_glyph_reuse_allowed_roi": glyph_report.get("allowed_roi"),
+                    },
+                    "expanded_edit_roi": roi_plan.get("expanded_edit_roi"),
+                    "placement_strategy": "source_glyph_reuse",
+                    "placement_strategy_reason": "target glyph copied from same source ROI",
+                    "slot_quality_report": slot_report,
+                    "source_glyph_reuse_report": glyph_report,
+                    "text_angle_degrees": round(float(plan.text_angle_degrees), 3),
+                },
+                "score": 0.0,
+                "hard_check": hard_report,
+                "vision": {
+                    "enabled": False,
+                    "accepted": True,
+                    "reason": "source_glyph_reuse_local_strategy",
+                    "revision_rounds": [],
+                },
+                "trace": {
+                    "accepted": True,
+                    "final_is_rejected_candidate": False,
+                    "final_candidate_id": "source_glyph_reuse",
+                    "final_blocking_stage": None,
+                    "final_stage_severity": 0.0,
+                    "revision_round_count": 0,
+                    "last_round_stop_reason": "source_glyph_reuse_local_strategy",
+                    "pre_candidate_gate_report": pre_candidate_report,
+                },
+                "accepted": True,
+                "applied": True,
+                "artifacts": {
+                    "selected_candidate": str(selected_candidate_path),
+                    "selected_compare": str(selected_compare_path),
+                    "slot_quality_report": str(slot_quality_report_path),
+                    "pre_candidate_gate_report": str(pre_candidate_gate_report_path),
+                    "roi_plan_report": str(roi_plan_report_path),
+                    "source_glyph_reuse_report": str(glyph_report_path),
+                    "display_image_is_candidate": False,
+                },
+                "rejected_fonts": [],
+            }
+            return glyph_image.copy(), glyph_image.copy(), [candidate_summary], summary, True
+
         rejected_compare_path = region_dir / "slot_quality_rejected_compare.png"
         compare_region_preview(original, original, roi).save(rejected_compare_path)
         if progress:
