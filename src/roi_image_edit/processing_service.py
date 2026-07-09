@@ -25,6 +25,11 @@ from roi_image_edit.amount_replacement import (
     is_amount_replacement_classification,
     process_amount_replacement_region,
 )
+from roi_image_edit.amount_glyph_clone import (
+    AmountGlyphSource,
+    is_amount_glyph_clone_classification,
+    process_amount_glyph_clone_region,
+)
 from roi_image_edit.stage_profiles import resolve_internal_stage_profile
 from roi_image_edit.text_removal import (
     auto_select_text_removal_regions,
@@ -159,17 +164,24 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             image_accepted = True
             display_image: Image.Image | None = None
             regions = list(image_item.get("regions", []))
+            amount_glyph_clone_mode = is_amount_glyph_clone_classification(classification)
             amount_replacement_mode = is_amount_replacement_classification(classification)
             text_removal_mode = is_text_removal_classification(classification)
             text_redaction_mode = is_text_redaction_classification(classification)
             if not regions:
-                if amount_replacement_mode:
+                if amount_glyph_clone_mode or amount_replacement_mode:
+                    failure_step = "amount_glyph_clone_roi_selection" if amount_glyph_clone_mode else "amount_replacement_roi_selection"
+                    error = (
+                        "amount glyph clone requires an explicit ROI"
+                        if amount_glyph_clone_mode
+                        else "amount replacement requires an explicit ROI"
+                    )
                     pre_candidate_report = pre_candidate_gate_report(
                         candidate_count=0,
                         orientation_summary=orientation_summary,
                         regions=[],
-                        failure_step="amount_replacement_roi_selection",
-                        error="amount replacement requires an explicit ROI",
+                        failure_step=failure_step,
+                        error=error,
                     )
                     emit(
                         "pre_candidate_gate_failed",
@@ -181,7 +193,7 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                             **workflow_fields,
                         },
                     )
-                    raise ValueError("amount replacement requires an explicit ROI")
+                    raise ValueError(error)
                 if text_redaction_mode:
                     pre_candidate_report = pre_candidate_gate_report(
                         candidate_count=0,
@@ -346,7 +358,41 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         )
                     emit(event, {"image_id": image_id, **event_fields})
 
-                if amount_replacement_mode:
+                if amount_glyph_clone_mode:
+                    glyph_sources: list[AmountGlyphSource] = []
+                    for idx, source in enumerate(image_item.get("glyphSources", []) or [], start=1):
+                        if not isinstance(source, dict):
+                            continue
+                        rect = source.get("rect") or {}
+                        sx = int(round(float(rect.get("x", 0))))
+                        sy = int(round(float(rect.get("y", 0))))
+                        sw = int(round(float(rect.get("w", 0))))
+                        sh = int(round(float(rect.get("h", 0))))
+                        if sw <= 0 or sh <= 0:
+                            continue
+                        source_image = image_from_data_url(str(source.get("dataUrl") or image_item.get("dataUrl") or ""))
+                        glyph_sources.append(
+                            AmountGlyphSource(
+                                source_image,
+                                clamp_box((sx, sy, sx + sw, sy + sh), source_image.size),
+                                str(source.get("text") or ""),
+                                label=str(source.get("label") or f"glyph_source_{idx}"),
+                            )
+                        )
+                    if not glyph_sources:
+                        raise ValueError("amount glyph clone requires glyphSources")
+                    image, region_display_image, region_candidates, summary, accepted = process_amount_glyph_clone_region(
+                        image,
+                        roi,
+                        source_text=region_source_text,
+                        target_text=region_target_text,
+                        glyph_sources=glyph_sources,
+                        run_dir=run_dir,
+                        region_id=region_id,
+                        classification=classification,
+                        progress=region_progress,
+                    )
+                elif amount_replacement_mode:
                     image, region_display_image, region_candidates, summary, accepted = process_amount_replacement_region(
                         image,
                         roi,

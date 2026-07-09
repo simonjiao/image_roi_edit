@@ -107,6 +107,15 @@ class InstructionParsingTest(unittest.TestCase):
         self.assertEqual(amount["operation"], "replace_text")
         self.assertIsNone(amount["failure_reason"])
 
+    def test_parse_amount_glyph_clone_instruction_uses_separate_operation(self) -> None:
+        details = parse_instruction_details("金额+5739复用为+22882")
+
+        self.assertEqual(details["field"], "amount")
+        self.assertEqual(details["source_text"], "+5739")
+        self.assertEqual(details["target_text"], "+22882")
+        self.assertEqual(details["operation"], "amount_glyph_clone")
+        self.assertIsNone(details["failure_reason"])
+
     def test_process_cli_json_summary_includes_instruction_details(self) -> None:
         instruction_details = parse_instruction_details("姓名甲修改为乙")
         summary = build_process_summary(

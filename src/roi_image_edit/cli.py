@@ -11,6 +11,12 @@ from roi_image_edit.environment import (
     install_recommended_fonts,
     print_report,
 )
+from roi_image_edit.amount_glyph_clone import (
+    AmountGlyphEdit,
+    AmountGlyphSource,
+    clone_amounts_with_glyph_sources,
+    save_amount_glyph_clone_artifacts,
+)
 from roi_image_edit.iterative_pipeline import (
     DEFAULT_ENV,
     DEFAULT_MAX_ITERATIONS,
@@ -31,6 +37,33 @@ def parse_rect(value: str) -> dict[str, int]:
     if w <= 0 or h <= 0:
         raise argparse.ArgumentTypeError("rect width and height must be positive")
     return {"x": x, "y": y, "w": w, "h": h}
+
+
+def rect_dict_to_box(rect: dict[str, int]) -> tuple[int, int, int, int]:
+    return (int(rect["x"]), int(rect["y"]), int(rect["x"] + rect["w"]), int(rect["y"] + rect["h"]))
+
+
+def parse_amount_glyph_source(value: str) -> dict[str, object]:
+    try:
+        image_part, text, rect_part = str(value or "").rsplit(":", 2)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("glyph source must be image_path:text:x,y,w,h") from exc
+    if not image_part or not text:
+        raise argparse.ArgumentTypeError("glyph source requires image_path and text")
+    return {"image": Path(image_part), "text": text, "rect": parse_rect(rect_part)}
+
+
+def parse_amount_glyph_edit(value: str) -> dict[str, object]:
+    try:
+        mapping_part, rect_part = str(value or "").rsplit(":", 1)
+        source_text, target_text = mapping_part.split("=", 1)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("amount glyph edit must be source=target:x,y,w,h") from exc
+    source_text = source_text.strip()
+    target_text = target_text.strip()
+    if not source_text or not target_text:
+        raise argparse.ArgumentTypeError("amount glyph edit requires source and target text")
+    return {"source_text": source_text, "target_text": target_text, "rect": parse_rect(rect_part)}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +151,30 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--profile", choices=stage_profile_choices(), default=None, help=argparse.SUPPRESS)
     process.add_argument("--output", type=Path, default=None, help="Optional path to copy the final image.")
     process.add_argument("--json", action="store_true", dest="as_json")
+
+    glyph_clone = subparsers.add_parser(
+        "amount-glyph-clone",
+        help="Clone amount glyphs from reference amount rows instead of redrawing with fonts.",
+    )
+    glyph_clone.add_argument("--image", type=Path, required=True, help="Base image path.")
+    glyph_clone.add_argument(
+        "--reference",
+        action="append",
+        type=parse_amount_glyph_source,
+        default=[],
+        help="Reference amount as image_path:text:x,y,w,h. Repeat to build a glyph library.",
+    )
+    glyph_clone.add_argument(
+        "--edit",
+        action="append",
+        type=parse_amount_glyph_edit,
+        required=True,
+        help="Amount edit as source=target:x,y,w,h. Repeat for multiple edits.",
+    )
+    glyph_clone.add_argument("--output", type=Path, required=True, help="Output image path.")
+    glyph_clone.add_argument("--report", type=Path, default=None, help="Optional report JSON path.")
+    glyph_clone.add_argument("--ink-threshold", type=int, default=230)
+    glyph_clone.add_argument("--json", action="store_true", dest="as_json")
 
     return parser
 
@@ -390,6 +447,51 @@ def main() -> None:
         if not summary["ok"]:
             raise SystemExit(1)
         if not summary["accepted"]:
+            raise SystemExit(2)
+        return
+
+    if args.command == "amount-glyph-clone":
+        input_image = Image.open(args.image).convert("RGB")
+        glyph_sources = [
+            AmountGlyphSource(
+                Image.open(item["image"]).convert("RGB"),
+                rect_dict_to_box(item["rect"]),
+                str(item["text"]),
+                label=f"{Path(item['image']).name}:{item['text']}",
+            )
+            for item in args.reference
+        ]
+        edits = [
+            AmountGlyphEdit(
+                rect_dict_to_box(item["rect"]),
+                source_text=str(item["source_text"]),
+                target_text=str(item["target_text"]),
+                label=f"edit_{idx}",
+            )
+            for idx, item in enumerate(args.edit, start=1)
+        ]
+        edited, report = clone_amounts_with_glyph_sources(
+            input_image,
+            edits=edits,
+            glyph_sources=glyph_sources,
+            ink_threshold=args.ink_threshold,
+        )
+        artifacts = save_amount_glyph_clone_artifacts(
+            original=input_image,
+            edited=edited,
+            report=report,
+            output_path=args.output,
+            report_path=args.report,
+        )
+        summary = {"ok": bool(report.get("pass")), **artifacts, "report_summary": report}
+        if args.as_json:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        else:
+            print(f"accepted: {summary['ok']}")
+            print(f"output: {artifacts['output']}")
+            print(f"report: {artifacts['report']}")
+            print(f"preview: {artifacts['preview']}")
+        if not report.get("pass"):
             raise SystemExit(2)
         return
 

@@ -33,6 +33,8 @@ ROI 替换 workflow 的不可折中实施 checklist 见
 2. 金额替换默认采用右锚点：目标金额的右边界对齐旧金额右边界，用于保留 `USDT` 等后缀位置和间距。
 3. 金额场景需要显式 ROI；ROI 应覆盖金额变长时向左扩展的空间，但不能包含币种后缀。目标文字如果会超出显式 ROI，必须失败，不能自动覆盖后缀。
 4. 金额处理只允许修改显式 ROI 内像素，并写入独立 `amount_replacement_report`，记录 source/target box、clear box、右锚点策略和 hard check。
+5. 如果同批或同类账单中存在可复用的金额字形，应优先使用独立 `amount_glyph_clone` 场景：从明确来源金额 ROI 抽取 `+` 和数字 glyph，按目标金额右锚点拼贴，缺少目标字形时失败，不能回退到字体重绘伪成功。
+6. `amount_glyph_clone` 必须写入独立 `amount_glyph_clone_report`，记录每个目标字符的来源图片/来源金额/来源 slot、目标 slot、paste box、clear box、glyph source slot detection 和 hard check；该流程不能改变 `USDT` 后缀、打码区域或金额 ROI 外像素。
 
 ## 基本流程
 

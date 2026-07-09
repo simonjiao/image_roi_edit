@@ -133,6 +133,21 @@ class ImageClassificationTest(unittest.TestCase):
         self.assertEqual(result["parameter_family"], "clean_digital_amount_value_replace")
         self.assertEqual(result["internal_profile"], "clean_digital")
 
+    def test_amount_glyph_clone_gets_dedicated_class(self) -> None:
+        result = classify_image_workflow(
+            text_like_image((591, 1280), lines=8),
+            instruction_details=parse_instruction_details("金额+5739复用为+22882"),
+            regions=[{"id": "amount", "rect": {"x": 428, "y": 1154, "w": 84, "h": 28}}],
+        )
+
+        self.assertEqual(result["operation"], "amount_glyph_clone")
+        self.assertEqual(result["scenario"], "amount_glyph_clone")
+        self.assertEqual(result["script"], "numeric_or_date")
+        self.assertEqual(result["class_key"], "photo_document.amount_glyph_clone.numeric_or_date")
+        self.assertEqual(result["prompt_pack"], "amount_glyph_clone")
+        self.assertEqual(result["parameter_family"], "clean_digital_amount_glyph_clone")
+        self.assertEqual(result["internal_profile"], "clean_digital")
+
 
 if __name__ == "__main__":
     unittest.main()

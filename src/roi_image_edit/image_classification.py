@@ -96,6 +96,8 @@ def _scenario_for(
     removal_context: dict[str, Any] | None,
     redaction_context: dict[str, Any] | None = None,
 ) -> str:
+    if operation == "amount_glyph_clone":
+        return "amount_glyph_clone"
     if operation == "remove_text":
         context = removal_context if isinstance(removal_context, dict) else {}
         if context.get("anchor_relation") == "below" or context.get("anchor_text"):
@@ -142,6 +144,8 @@ def _prompt_pack(image_type: str, scenario: str, script: str) -> str:
         return scenario
     if scenario == "amount_value_replace":
         return "amount_value_replace"
+    if scenario == "amount_glyph_clone":
+        return "amount_glyph_clone"
     if image_type == "clean_digital" and script == "numeric_or_date":
         return "clean_numeric_or_date_replace"
     if image_type == "low_res_thumbnail":
@@ -164,6 +168,8 @@ def _parameter_family(image_type: str, roi_policy: str, scenario: str) -> str:
         return "photo_document_text_redaction"
     if scenario == "amount_value_replace":
         return "clean_digital_amount_value_replace"
+    if scenario == "amount_glyph_clone":
+        return "clean_digital_amount_glyph_clone"
     if roi_policy == "manual_exact":
         return "manual_roi_conservative"
     if image_type == "clean_digital":
@@ -224,7 +230,7 @@ def classify_image_workflow(
     )
     roi_policy = initial_roi_policy
     internal_profile = _internal_profile(image_type, roi_policy)
-    if scenario == "amount_value_replace":
+    if scenario in {"amount_value_replace", "amount_glyph_clone"}:
         internal_profile = "clean_digital"
     confidence = 0.88
     if image_type == "low_res_thumbnail":

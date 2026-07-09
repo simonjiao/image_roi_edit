@@ -357,7 +357,7 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
             "failure_reason": failure_reason,
         }
 
-    op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|->|=>|→"
+    op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|拼为|拼成|贴为|贴成|克隆为|克隆成|复用为|复用成|->|=>|→"
     redaction = parse_redaction_instruction(raw)
     if redaction:
         source_text = str(redaction.get("source_text") or "")
@@ -421,11 +421,13 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
             target = cleanup_instruction_part(strip_field_prefix(match.group("dst")))
             if source and target:
                 field_key = infer_instruction_field(raw) or infer_instruction_field(raw_source)
+                operation = "amount_glyph_clone" if field_key == "amount" and is_amount_glyph_clone_instruction(raw) else "replace_text"
                 return build_details(
                     field_key=field_key,
                     source_text=source,
                     target_text=target,
                     source_explicit=True,
+                    operation=operation,
                     confidence=0.96 if field_key else 0.84,
                 )
     if raw:
@@ -451,6 +453,7 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
 
 REMOVAL_VERB_PATTERN = r"删除|删掉|去掉|去除|清除|移除|抹除|抹掉|擦除|擦掉|erase|remove"
 REDACTION_VERB_PATTERN = r"打码|脱敏|遮挡|遮盖|隐藏|隐去|马赛克|模糊|mask|redact|blur|mosaic"
+AMOUNT_GLYPH_CLONE_VERB_PATTERN = r"字形|拼贴|拼字|克隆|复用|借用|取字|贴字|凑数字|贴过去|贴到"
 RELATION_PATTERN = r"下面|下方|下边|下一行|后面|之后"
 
 
@@ -523,6 +526,12 @@ def parse_redaction_instruction(raw: str) -> dict[str, Any] | None:
         "anchor_text": anchor_text,
         "context": context,
     }
+
+
+def is_amount_glyph_clone_instruction(raw: str) -> bool:
+    if not raw or not infer_instruction_field(raw) == "amount":
+        return False
+    return bool(re.search(AMOUNT_GLYPH_CLONE_VERB_PATTERN, raw, flags=re.IGNORECASE))
 
 
 def strip_removal_leading_context(value: str) -> str:

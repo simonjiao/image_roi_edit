@@ -222,6 +222,51 @@ class WorkflowClassificationRuntimeTest(unittest.TestCase):
         }
         return region_image.copy(), region_image.copy(), [], summary, True
 
+    def fake_amount_glyph_clone_processor(self, region_image, roi, *, run_dir, region_id, glyph_sources, **kwargs):
+        region_dir = Path(run_dir) / "regions" / region_id
+        region_dir.mkdir(parents=True, exist_ok=True)
+        selected_candidate = region_dir / "selected_amount_glyph_clone.png"
+        selected_compare = region_dir / "selected_amount_glyph_clone_preview.png"
+        report_path = region_dir / "amount_glyph_clone_report.json"
+        region_image.save(selected_candidate)
+        region_image.save(selected_compare)
+        classification = dict(kwargs.get("classification") or {})
+        report_path.write_text(
+            json.dumps(
+                {
+                    "pass": True,
+                    "operation": "amount_glyph_clone",
+                    "glyph_source_count": len(glyph_sources),
+                }
+            ),
+            encoding="utf-8",
+        )
+        summary = {
+            "plan": {
+                "classification": classification,
+                "class_key": classification.get("class_key"),
+                "roi_policy": classification.get("roi_policy"),
+                "internal_profile": classification.get("internal_profile"),
+                "profile_source": classification.get("profile_source"),
+            },
+            "hard_check": {"pass": True},
+            "vision": {"artifacts": {}, "revision_rounds": [], "enabled": False},
+            "trace": {
+                "accepted": True,
+                "final_is_rejected_candidate": False,
+                "final_blocking_stage": None,
+            },
+            "accepted": True,
+            "applied": True,
+            "artifacts": {
+                "selected_candidate": str(selected_candidate),
+                "selected_compare": str(selected_compare),
+                "amount_glyph_clone_report": str(report_path),
+                "display_image_is_candidate": False,
+            },
+        }
+        return region_image.copy(), region_image.copy(), [], summary, True
+
     def test_manual_roi_is_classified_before_region_processing_and_progress_records_manual_anchor(self) -> None:
         image = text_image()
         progress_records: list[dict] = []
@@ -496,6 +541,65 @@ class WorkflowClassificationRuntimeTest(unittest.TestCase):
         self.assertTrue(response["images"][0]["accepted"])
         region_started = [record for record in progress_records if record.get("event") == "region_started"][0]
         self.assertEqual(region_started["class_key"], "photo_document.amount_value_replace.numeric_or_date")
+
+    def test_amount_glyph_clone_class_uses_isolated_processor(self) -> None:
+        image = text_image(size=(591, 1280), color=(255, 255, 255))
+        progress_records: list[dict] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "output"
+            with patch.object(processing_service, "OUTPUT_DIR", output_dir):
+                with patch.object(processing_service, "load_processing_prompts", return_value=("master", "rank", "final")):
+                    with patch.object(processing_service, "VisionClient", return_value=object()):
+                        with patch.object(processing_service, "process_region", side_effect=AssertionError("replacement path used")):
+                            with patch.object(
+                                processing_service,
+                                "process_amount_replacement_region",
+                                side_effect=AssertionError("amount replacement path used"),
+                            ):
+                                with patch.object(
+                                    processing_service,
+                                    "process_amount_glyph_clone_region",
+                                    side_effect=self.fake_amount_glyph_clone_processor,
+                                ) as clone_processor:
+                                    response = process_payload(
+                                        {
+                                            "images": [
+                                                {
+                                                    "id": "amount",
+                                                    "filename": "amount.png",
+                                                    "instruction": "金额+5739复用为+22882",
+                                                    "dataUrl": image_to_data_url(image),
+                                                    "glyphSources": [
+                                                        {
+                                                            "text": "+5626",
+                                                            "dataUrl": image_to_data_url(image),
+                                                            "rect": {"x": 428, "y": 302, "w": 84, "h": 32},
+                                                        }
+                                                    ],
+                                                    "regions": [
+                                                        {
+                                                            "id": "manual_amount",
+                                                            "rect": {"x": 428, "y": 1154, "w": 84, "h": 28},
+                                                            "sourceText": "+5739",
+                                                            "targetText": "+22882",
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        },
+                                        progress=lambda _event, record: progress_records.append(record),
+                                    )
+
+        clone_processor.assert_called_once()
+        classification = clone_processor.call_args.kwargs["classification"]
+        self.assertEqual(classification["scenario"], "amount_glyph_clone")
+        self.assertEqual(classification["class_key"], "photo_document.amount_glyph_clone.numeric_or_date")
+        self.assertEqual(classification["internal_profile"], "clean_digital")
+        self.assertEqual(len(clone_processor.call_args.kwargs["glyph_sources"]), 1)
+        self.assertTrue(response["images"][0]["accepted"])
+        region_started = [record for record in progress_records if record.get("event") == "region_started"][0]
+        self.assertEqual(region_started["class_key"], "photo_document.amount_glyph_clone.numeric_or_date")
 
 
 if __name__ == "__main__":
