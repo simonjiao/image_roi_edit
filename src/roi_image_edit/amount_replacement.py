@@ -29,6 +29,14 @@ AMOUNT_FONT_CANDIDATES = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 )
 
+AMOUNT_FONT_PREFERENCE_PENALTY = {
+    "/System/Library/Fonts/SFNS.ttf": 0.0,
+    "/System/Library/Fonts/HelveticaNeue.ttc": 0.0,
+    "/System/Library/Fonts/SFCompact.ttf": 1.0,
+    "/System/Library/Fonts/Supplemental/Arial.ttf": 2.0,
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf": 3.0,
+}
+
 
 def is_amount_replacement_classification(classification: dict[str, Any] | None) -> bool:
     if not isinstance(classification, dict):
@@ -75,7 +83,8 @@ def _choose_amount_font(
             bbox = _font_bbox(font, source_text)
             width = max(1, bbox[2] - bbox[0])
             height = max(1, bbox[3] - bbox[1])
-            score = abs(width - source_w) + abs(height - source_h) * 2.0
+            geometric_score = abs(width - source_w) + abs(height - source_h) * 2.0
+            score = geometric_score + AMOUNT_FONT_PREFERENCE_PENALTY.get(path, 1.5)
             report = {
                 "font_path": path,
                 "font_size": size,
@@ -83,6 +92,8 @@ def _choose_amount_font(
                 "source_width": width,
                 "source_height": height,
                 "target_bbox": list(_font_bbox(font, target_text)),
+                "geometric_score": round(float(geometric_score), 3),
+                "preference_penalty": round(float(AMOUNT_FONT_PREFERENCE_PENALTY.get(path, 1.5)), 3),
                 "score": round(float(score), 3),
             }
             if best is None or score < best[0]:

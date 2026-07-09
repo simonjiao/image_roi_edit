@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from roi_image_edit.amount_replacement import replace_amount_in_roi
+from roi_image_edit.amount_replacement import _choose_amount_font, replace_amount_in_roi
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -22,6 +22,13 @@ def _font(size: int) -> ImageFont.ImageFont:
 
 
 class AmountReplacementTest(unittest.TestCase):
+    def test_amount_font_selection_avoids_bold_near_tie_for_longer_amount(self) -> None:
+        _font, report = _choose_amount_font("+5739", "+22882", (444, 1157, 509, 1176))
+
+        self.assertNotIn("Arial Bold", report["font_path"])
+        self.assertIn("geometric_score", report)
+        self.assertIn("preference_penalty", report)
+
     def test_amount_replacement_right_anchors_target_and_preserves_suffix_outside_roi(self) -> None:
         image = Image.new("RGB", (180, 70), (255, 255, 255))
         draw = ImageDraw.Draw(image)
