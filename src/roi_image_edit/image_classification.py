@@ -34,7 +34,7 @@ def length_change_for_texts(source_text: str, target_text: str) -> str:
 
 def script_for_texts(source_text: str, target_text: str, field_key: str | None = None) -> str:
     combined = f"{source_text}{target_text}".strip()
-    if field_key in {"date", "age", "number", "receive_time"}:
+    if field_key in {"date", "age", "number", "receive_time", "amount"}:
         return "numeric_or_date"
     if combined and NUMERIC_DATE_RE.match(combined):
         return "numeric_or_date"
@@ -94,12 +94,20 @@ def _scenario_for(
     source_explicit: bool,
     operation: str,
     removal_context: dict[str, Any] | None,
+    redaction_context: dict[str, Any] | None = None,
 ) -> str:
     if operation == "remove_text":
         context = removal_context if isinstance(removal_context, dict) else {}
         if context.get("anchor_relation") == "below" or context.get("anchor_text"):
             return "anchored_text_removal"
         return "text_removal"
+    if operation == "redact_text":
+        context = redaction_context if isinstance(redaction_context, dict) else {}
+        if context.get("anchor_relation") == "below" or context.get("anchor_text"):
+            return "anchored_text_redaction"
+        return "text_redaction"
+    if field_key == "amount" and script == "numeric_or_date":
+        return "amount_value_replace"
     if image_type == "clean_digital" and script == "numeric_or_date":
         return "numeric_or_date_replace"
     if int(evidence.get("line_count") or 0) >= 4 and not field_key:
@@ -130,6 +138,10 @@ def _internal_profile(image_type: str, roi_policy: str) -> str:
 def _prompt_pack(image_type: str, scenario: str, script: str) -> str:
     if scenario in {"anchored_text_removal", "text_removal"}:
         return scenario
+    if scenario in {"anchored_text_redaction", "text_redaction"}:
+        return scenario
+    if scenario == "amount_value_replace":
+        return "amount_value_replace"
     if image_type == "clean_digital" and script == "numeric_or_date":
         return "clean_numeric_or_date_replace"
     if image_type == "low_res_thumbnail":
@@ -146,6 +158,12 @@ def _parameter_family(image_type: str, roi_policy: str, scenario: str) -> str:
         if image_type == "clean_digital":
             return "clean_digital_text_removal"
         return "photo_document_text_removal"
+    if scenario in {"anchored_text_redaction", "text_redaction"}:
+        if image_type == "clean_digital":
+            return "clean_digital_text_redaction"
+        return "photo_document_text_redaction"
+    if scenario == "amount_value_replace":
+        return "clean_digital_amount_value_replace"
     if roi_policy == "manual_exact":
         return "manual_roi_conservative"
     if image_type == "clean_digital":
@@ -170,6 +188,11 @@ def classify_image_workflow(
     removal_context = (
         instruction_details.get("removal_context")
         if isinstance(instruction_details.get("removal_context"), dict)
+        else {}
+    )
+    redaction_context = (
+        instruction_details.get("redaction_context")
+        if isinstance(instruction_details.get("redaction_context"), dict)
         else {}
     )
     region_count = len(regions or [])
@@ -197,9 +220,12 @@ def classify_image_workflow(
         source_explicit=source_explicit,
         operation=operation,
         removal_context=removal_context,
+        redaction_context=redaction_context,
     )
     roi_policy = initial_roi_policy
     internal_profile = _internal_profile(image_type, roi_policy)
+    if scenario == "amount_value_replace":
+        internal_profile = "clean_digital"
     confidence = 0.88
     if image_type == "low_res_thumbnail":
         confidence = 0.82
@@ -210,7 +236,7 @@ def classify_image_workflow(
         "scenario": scenario,
         "script": script,
         "operation": operation,
-        "length_change": length_change_for_texts(source_text, target_text),
+        "length_change": "redacted" if operation == "redact_text" else length_change_for_texts(source_text, target_text),
         "roi_input": roi_input,
         "roi_policy": roi_policy,
         "class_key": _class_key(image_type, scenario, script),
@@ -225,6 +251,7 @@ def classify_image_workflow(
             "classifier_version": 1,
             "operation": operation,
             "removal_context": removal_context,
+            "redaction_context": redaction_context,
         },
         "internal_profile": internal_profile,
         "profile_source": "classification",

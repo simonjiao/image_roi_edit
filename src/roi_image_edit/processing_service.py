@@ -21,11 +21,19 @@ from roi_image_edit.run_artifacts import (
     request_audit_payload,
     result_audit_payload,
 )
+from roi_image_edit.amount_replacement import (
+    is_amount_replacement_classification,
+    process_amount_replacement_region,
+)
 from roi_image_edit.stage_profiles import resolve_internal_stage_profile
 from roi_image_edit.text_removal import (
     auto_select_text_removal_regions,
     is_text_removal_classification,
     process_text_removal_region,
+)
+from roi_image_edit.text_redaction import (
+    is_text_redaction_classification,
+    process_text_redaction_region,
 )
 from roi_image_edit.region_processing import (
     ENV_PATH,
@@ -94,8 +102,8 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             instruction_details = parse_instruction_details(str(image_item.get("instruction") or ""))
             source_text = instruction_details["source_text"]
             target_text = instruction_details["target_text"]
-            is_removal_instruction = instruction_details.get("operation") == "remove_text"
-            if not target_text and not is_removal_instruction:
+            allows_empty_target = instruction_details.get("operation") in {"remove_text", "redact_text"}
+            if not target_text and not allows_empty_target:
                 raise ValueError("missing replacement instruction")
             image = image_from_data_url(str(image_item.get("dataUrl") or ""))
             failure_image = image.copy()
@@ -151,9 +159,49 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
             image_accepted = True
             display_image: Image.Image | None = None
             regions = list(image_item.get("regions", []))
+            amount_replacement_mode = is_amount_replacement_classification(classification)
             text_removal_mode = is_text_removal_classification(classification)
+            text_redaction_mode = is_text_redaction_classification(classification)
             if not regions:
-                if text_removal_mode:
+                if amount_replacement_mode:
+                    pre_candidate_report = pre_candidate_gate_report(
+                        candidate_count=0,
+                        orientation_summary=orientation_summary,
+                        regions=[],
+                        failure_step="amount_replacement_roi_selection",
+                        error="amount replacement requires an explicit ROI",
+                    )
+                    emit(
+                        "pre_candidate_gate_failed",
+                        {
+                            "image_id": image_id,
+                            "candidate_count": 0,
+                            "failed_gate": pre_candidate_report["failed_gate"],
+                            "pre_candidate_gate_report": pre_candidate_report,
+                            **workflow_fields,
+                        },
+                    )
+                    raise ValueError("amount replacement requires an explicit ROI")
+                if text_redaction_mode:
+                    pre_candidate_report = pre_candidate_gate_report(
+                        candidate_count=0,
+                        orientation_summary=orientation_summary,
+                        regions=[],
+                        failure_step="text_redaction_roi_selection",
+                        error="text redaction requires an explicit ROI",
+                    )
+                    emit(
+                        "pre_candidate_gate_failed",
+                        {
+                            "image_id": image_id,
+                            "candidate_count": 0,
+                            "failed_gate": pre_candidate_report["failed_gate"],
+                            "pre_candidate_gate_report": pre_candidate_report,
+                            **workflow_fields,
+                        },
+                    )
+                    raise ValueError("text redaction requires an explicit ROI")
+                elif text_removal_mode:
                     try:
                         regions, text_removal_auto_report = auto_select_text_removal_regions(
                             image,
@@ -298,7 +346,29 @@ def process_payload(payload: dict[str, Any], progress: ProgressCallback | None =
                         )
                     emit(event, {"image_id": image_id, **event_fields})
 
-                if text_removal_mode:
+                if amount_replacement_mode:
+                    image, region_display_image, region_candidates, summary, accepted = process_amount_replacement_region(
+                        image,
+                        roi,
+                        source_text=region_source_text,
+                        target_text=region_target_text,
+                        run_dir=run_dir,
+                        region_id=region_id,
+                        classification=classification,
+                        progress=region_progress,
+                    )
+                elif text_redaction_mode:
+                    image, region_display_image, region_candidates, summary, accepted = process_text_redaction_region(
+                        image,
+                        roi,
+                        source_text=region_source_text,
+                        target_text=region_target_text,
+                        run_dir=run_dir,
+                        region_id=region_id,
+                        classification=classification,
+                        progress=region_progress,
+                    )
+                elif text_removal_mode:
                     image, region_display_image, region_candidates, summary, accepted = process_text_removal_region(
                         image,
                         roi,

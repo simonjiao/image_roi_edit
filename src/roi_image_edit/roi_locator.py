@@ -337,6 +337,7 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
         failure_reason: str | None = None,
         operation: str = "replace_text",
         removal_context: dict[str, Any] | None = None,
+        redaction_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         field_context = instruction_field_context(raw, field_key)
         return {
@@ -351,11 +352,25 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
             "source_explicit": source_explicit,
             "operation": operation,
             "removal_context": removal_context or {},
+            "redaction_context": redaction_context or {},
             "confidence": round(float(confidence), 3),
             "failure_reason": failure_reason,
         }
 
     op_pattern = r"调整为|调整成|更改为|更改成|变更为|变更成|修改为|修改成|替换为|替换成|改为|改成|换为|换成|->|=>|→"
+    redaction = parse_redaction_instruction(raw)
+    if redaction:
+        source_text = str(redaction.get("source_text") or "")
+        return build_details(
+            field_key=infer_instruction_field(str(redaction.get("anchor_text") or raw)),
+            source_text=source_text,
+            target_text="",
+            source_explicit=bool(source_text),
+            operation="redact_text",
+            redaction_context=redaction.get("context") if isinstance(redaction.get("context"), dict) else {},
+            confidence=0.9 if source_text else 0.35,
+            failure_reason=None if source_text else "source_text_missing",
+        )
     removal = parse_removal_instruction(raw)
     if removal:
         source_text = str(removal.get("source_text") or "")
@@ -402,7 +417,7 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
         match = re.search(pattern, raw)
         if match:
             raw_source = cleanup_instruction_part(match.group("src"))
-            source = cleanup_instruction_part(strip_field_prefix(raw_source))
+            source = cleanup_instruction_part(strip_field_prefix(strip_instruction_leading_context(raw_source)))
             target = cleanup_instruction_part(strip_field_prefix(match.group("dst")))
             if source and target:
                 field_key = infer_instruction_field(raw) or infer_instruction_field(raw_source)
@@ -435,6 +450,7 @@ def parse_instruction_details(text: str) -> dict[str, Any]:
 
 
 REMOVAL_VERB_PATTERN = r"删除|删掉|去掉|去除|清除|移除|抹除|抹掉|擦除|擦掉|erase|remove"
+REDACTION_VERB_PATTERN = r"打码|脱敏|遮挡|遮盖|隐藏|隐去|马赛克|模糊|mask|redact|blur|mosaic"
 RELATION_PATTERN = r"下面|下方|下边|下一行|后面|之后"
 
 
@@ -472,6 +488,43 @@ def parse_removal_instruction(raw: str) -> dict[str, Any] | None:
     }
 
 
+def parse_redaction_instruction(raw: str) -> dict[str, Any] | None:
+    if not raw or not re.search(REDACTION_VERB_PATTERN, raw, flags=re.IGNORECASE):
+        return None
+
+    quoted = re.findall(r"[“\"']([^”\"']+)[”\"']?", raw)
+    source_part = quoted[-1] if quoted else ""
+    extraction = "quoted" if quoted else "pre_redaction_verb"
+    if not source_part:
+        match = re.search(rf"(?P<src>.+?)(?:{REDACTION_VERB_PATTERN})(?:处理)?$", raw, flags=re.IGNORECASE)
+        source_part = cleanup_instruction_part(match.group("src") if match else raw)
+    source_part = strip_removal_leading_context(source_part)
+    anchor_text = ""
+    relation = ""
+
+    relation_match = re.search(
+        rf"(?P<anchor>.+?)(?P<relation>{RELATION_PATTERN})\s*(?:的|这条|这一行|那条|那一行)?\s*(?P<src>.+)$",
+        source_part,
+    )
+    if relation_match:
+        anchor_text = cleanup_instruction_part(strip_removal_leading_context(relation_match.group("anchor")))
+        relation = relation_match.group("relation")
+        source_part = cleanup_instruction_part(relation_match.group("src"))
+
+    source_text = cleanup_redaction_source_text(source_part)
+    context = {
+        "anchor_text": anchor_text,
+        "anchor_relation": "below" if relation else "",
+        "raw_source": source_part,
+        "source_extraction": extraction,
+    }
+    return {
+        "source_text": source_text,
+        "anchor_text": anchor_text,
+        "context": context,
+    }
+
+
 def strip_removal_leading_context(value: str) -> str:
     text = cleanup_instruction_part(value)
     text = re.sub(r"^(?:请|麻烦)?\s*(?:将|把)?\s*", "", text)
@@ -486,6 +539,12 @@ def cleanup_removal_source_text(value: str) -> str:
     return cleanup_instruction_part(text)
 
 
+def cleanup_redaction_source_text(value: str) -> str:
+    text = cleanup_removal_source_text(value)
+    text = re.sub(r"(?:名称|名字|姓名|转入人|收款人|付款人|用户名|用户|姓名名)$", "", text)
+    return cleanup_instruction_part(text)
+
+
 def cleanup_instruction_part(value: str) -> str:
     return str(value or "").strip(" ：:，,。.;；\"'`[]()（）")
 
@@ -497,6 +556,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "date": ("日期", "时间", "检查日期", "报告日期", "出生日期", "date"),
     "age": ("年龄", "岁数", "age"),
     "number": ("编号", "数字编号", "号码", "序号", "number"),
+    "amount": ("金额", "数额", "转账金额", "账单金额", "usdt", "USDT", "amount"),
 }
 
 
@@ -552,6 +612,13 @@ def strip_field_prefix(value: str) -> str:
         if stripped != text:
             return stripped
     return text
+
+
+def strip_instruction_leading_context(value: str) -> str:
+    text = cleanup_instruction_part(value)
+    text = re.sub(r"^(?:请|麻烦)?\s*(?:将|把)?\s*", "", text)
+    text = re.sub(r"^(?:图片中|文档中|报告中|图中|图里|账单中|账单里|图片|账单)\s*的?\s*", "", text)
+    return cleanup_instruction_part(text)
 
 
 def text_chars(value: str) -> list[str]:

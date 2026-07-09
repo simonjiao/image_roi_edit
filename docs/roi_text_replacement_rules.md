@@ -20,6 +20,20 @@ ROI 替换 workflow 的不可折中实施 checklist 见
 8. Profile 只能作为后端内部策略，由分类结果推导；Web 前端不能把 profile 暴露为用户需要理解或选择的控件。
 9. 字数可能变化，但新文字不能覆盖旧文字后面的未修改内容；需要时可自动扩大实际编辑区域。字数增加不能因为用户原始框选空间不足或右侧间距不足，在候选生成前直接失败；最终仍必须由 hard report 验证 protected text、ROI 外像素和图像边缘未被改变。
 
+## 打码和脱敏边界
+
+1. `redact_text` 是独立 workflow 分类，不属于普通 `replace_text`，也不属于 `remove_text`。
+2. 打码/脱敏/马赛克/遮挡类指令必须进入 `text_redaction` 或 `anchored_text_redaction` 场景，并记录独立 `class_key`、`prompt_pack` 和 `parameter_family`。
+3. 打码处理只允许修改目标 ROI 内像素；默认使用不可逆遮罩块覆盖源文字，不执行文字重绘，也不复用清除文字的 inpaint 语义。
+4. 没有显式 ROI 的打码任务不能静默退回替换流程或清除流程；在自动定位能力明确实现前，应以独立前置门禁失败结束。
+
+## 金额数值替换边界
+
+1. 右侧金额或带币种后缀的金额数值替换必须进入 `amount_value_replace` 场景，不能混入普通数字/日期替换。
+2. 金额替换默认采用右锚点：目标金额的右边界对齐旧金额右边界，用于保留 `USDT` 等后缀位置和间距。
+3. 金额场景需要显式 ROI；ROI 应覆盖金额变长时向左扩展的空间，但不能包含币种后缀。目标文字如果会超出显式 ROI，必须失败，不能自动覆盖后缀。
+4. 金额处理只允许修改显式 ROI 内像素，并写入独立 `amount_replacement_report`，记录 source/target box、clear box、右锚点策略和 hard check。
+
 ## 基本流程
 
 固定流程如下：

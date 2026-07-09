@@ -104,6 +104,35 @@ class ImageClassificationTest(unittest.TestCase):
         self.assertEqual(result["prompt_pack"], "anchored_text_removal")
         self.assertEqual(result["parameter_family"], "photo_document_text_removal")
 
+    def test_text_redaction_gets_dedicated_class(self) -> None:
+        result = classify_image_workflow(
+            text_like_image((360, 260), lines=3, color=(238, 236, 232)),
+            instruction_details=parse_instruction_details("将 Tim 打码"),
+            regions=[{"id": "r1", "rect": {"x": 220, "y": 32, "w": 42, "h": 24}}],
+        )
+
+        self.assertEqual(result["operation"], "redact_text")
+        self.assertEqual(result["scenario"], "text_redaction")
+        self.assertEqual(result["class_key"], "photo_document.text_redaction.latin")
+        self.assertEqual(result["length_change"], "redacted")
+        self.assertEqual(result["prompt_pack"], "text_redaction")
+        self.assertEqual(result["parameter_family"], "photo_document_text_redaction")
+
+    def test_amount_replacement_gets_dedicated_class(self) -> None:
+        result = classify_image_workflow(
+            text_like_image((591, 1280), lines=8),
+            instruction_details=parse_instruction_details("金额+9764修改为+12749"),
+            regions=[{"id": "amount", "rect": {"x": 428, "y": 306, "w": 84, "h": 26}}],
+        )
+
+        self.assertEqual(result["operation"], "replace_text")
+        self.assertEqual(result["scenario"], "amount_value_replace")
+        self.assertEqual(result["script"], "numeric_or_date")
+        self.assertEqual(result["class_key"], "photo_document.amount_value_replace.numeric_or_date")
+        self.assertEqual(result["prompt_pack"], "amount_value_replace")
+        self.assertEqual(result["parameter_family"], "clean_digital_amount_value_replace")
+        self.assertEqual(result["internal_profile"], "clean_digital")
+
 
 if __name__ == "__main__":
     unittest.main()

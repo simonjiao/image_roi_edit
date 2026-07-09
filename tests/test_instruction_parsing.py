@@ -84,6 +84,29 @@ class InstructionParsingTest(unittest.TestCase):
         self.assertEqual(details["removal_context"]["anchor_relation"], "below")
         self.assertIsNone(details["failure_reason"])
 
+    def test_parse_text_redaction_instruction_is_not_removal_or_replacement(self) -> None:
+        details = parse_instruction_details("将账单中的转入人名称打码“转入自Tim”")
+        self.assertEqual(details["operation"], "redact_text")
+        self.assertEqual(details["source_text"], "转入自Tim")
+        self.assertEqual(details["target_text"], "")
+        self.assertTrue(details["source_explicit"])
+        self.assertEqual(details["redaction_context"]["source_extraction"], "quoted")
+        self.assertEqual(details["removal_context"], {})
+        self.assertIsNone(details["failure_reason"])
+
+    def test_parse_amount_instruction_strips_visual_context_and_infers_amount_field(self) -> None:
+        contextual = parse_instruction_details("将图里 9764 修改为 12749")
+        self.assertEqual(contextual["source_text"], "9764")
+        self.assertEqual(contextual["target_text"], "12749")
+        self.assertEqual(contextual["operation"], "replace_text")
+
+        amount = parse_instruction_details("金额+9764修改为+12749")
+        self.assertEqual(amount["field"], "amount")
+        self.assertEqual(amount["source_text"], "+9764")
+        self.assertEqual(amount["target_text"], "+12749")
+        self.assertEqual(amount["operation"], "replace_text")
+        self.assertIsNone(amount["failure_reason"])
+
     def test_process_cli_json_summary_includes_instruction_details(self) -> None:
         instruction_details = parse_instruction_details("姓名甲修改为乙")
         summary = build_process_summary(
